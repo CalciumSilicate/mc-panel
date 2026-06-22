@@ -225,18 +225,10 @@ class PluginManager:
                     return r
         return releases[0]
 
-    async def install_from_catalogue(
-        self,
-        instance_dir: Path,
-        plugin_id: str,
-        version: str | None,
-        python_executable: str,
-        progress=None,
-    ) -> dict:
-        data = await self.fetch_catalogue()
-        entry = (data.get("plugins") or {}).get(plugin_id)
-        if entry is None:
-            raise ValueError(f"插件库中未找到 {plugin_id}")
+    async def _install_one(
+        self, entry: dict, version: str | None, pdir: Path, python_executable: str, progress
+    ) -> tuple[str, list[str]]:
+        """下载并安装单个插件,返回 (文件名, 依赖插件 id 列表)。"""
         release = self._find_release(entry, version)
         if release is None:
             raise ValueError("该插件没有可用发布")
@@ -244,11 +236,7 @@ class PluginManager:
         url = asset.get("browser_download_url")
         if not url:
             raise ValueError("该发布没有下载地址")
-        file_name = asset.get("name") or f"{plugin_id}.mcdr"
-
-        pdir = self.plugins_dir(instance_dir)
-        pdir.mkdir(parents=True, exist_ok=True)
-        dest = pdir / Path(file_name).name
+        dest = pdir / Path(asset.get("name") or "plugin.mcdr").name
         await jar_cache.cached_download(
             url,
             dest,
@@ -257,14 +245,54 @@ class PluginManager:
             size=asset.get("size", 0) or 0,
             progress=progress,
         )
-
-        # 安装 Python 依赖(best-effort)
-        requirements = (release.get("meta") or {}).get("requirements") or []
-        requirements = [r for r in requirements if isinstance(r, str) and "mcdreforged" not in r.lower()]
-        deps_ok = True
+        meta = release.get("meta") or {}
+        requirements = [
+            r for r in (meta.get("requirements") or [])
+            if isinstance(r, str) and "mcdreforged" not in r.lower()
+        ]
         if requirements:
-            deps_ok = await self._pip_install(python_executable, requirements)
-        return {"file_name": dest.name, "requirements": requirements, "requirements_ok": deps_ok}
+            await self._pip_install(python_executable, requirements)
+        deps = meta.get("dependencies") or {}
+        dep_ids = [k for k in deps.keys() if k != "mcdreforged"]
+        return dest.name, dep_ids
+
+    async def install_from_catalogue(
+        self,
+        instance_dir: Path,
+        plugin_id: str,
+        version: str | None,
+        python_executable: str,
+        progress=None,
+    ) -> dict:
+        """安装插件并递归(BFS)安装其依赖的其他插件(排除 mcdreforged 自身)。"""
+        data = await self.fetch_catalogue()
+        plugins_map = data.get("plugins") or {}
+        pdir = self.plugins_dir(instance_dir)
+        pdir.mkdir(parents=True, exist_ok=True)
+        installed_now = {p["id"] for p in self.scan_dir(pdir) if p["id"]}
+
+        primary_name: str | None = None
+        installed_files: list[str] = []
+        visited: set[str] = set()
+        queue: list[tuple[str, str | None]] = [(plugin_id, version)]
+        while queue:
+            pid, ver = queue.pop(0)
+            if pid in visited or pid in installed_now:
+                continue
+            visited.add(pid)
+            entry = plugins_map.get(pid)
+            if entry is None:
+                if pid == plugin_id:
+                    raise ValueError(f"插件库中未找到 {plugin_id}")
+                continue  # 依赖不在库中,跳过
+            name, dep_ids = await self._install_one(entry, ver, pdir, python_executable, progress)
+            installed_files.append(name)
+            if primary_name is None:
+                primary_name = name
+            for dep_id in dep_ids:
+                if dep_id not in visited and dep_id not in installed_now:
+                    queue.append((dep_id, None))
+        return {"file_name": primary_name or "", "installed": installed_files}
 
     async def _pip_install(self, python_executable: str, requirements: list[str]) -> bool:
         try:

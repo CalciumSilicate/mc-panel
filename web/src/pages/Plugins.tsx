@@ -347,8 +347,7 @@ function CatalogueTab({
   const { showToast } = useGlobalToast()
   const { data, loading, error, refresh } = useResource(() => getCatalogue(), [])
   const [query, setQuery] = useState('')
-  const [installing, setInstalling] = useState<string | null>(null)
-  const [pct, setPct] = useState<number | null>(null)
+  const [progress, setProgress] = useState<Record<string, number | null>>({})
 
   const filtered = useMemo(() => {
     const list = data ?? []
@@ -360,11 +359,10 @@ function CatalogueTab({
   }, [data, query])
 
   const install = async (p: CataloguePlugin) => {
-    setInstalling(p.id)
-    setPct(null)
+    setProgress((prev) => ({ ...prev, [p.id]: null }))
     try {
       const { job_id } = await installPlugin(serverId, p.id)
-      const final = await pollJob(job_id, setPct)
+      const final = await pollJob(job_id, (pc) => setProgress((prev) => ({ ...prev, [p.id]: pc })))
       if (final.status === 'error') showToast('error', final.message || '安装失败')
       else {
         showToast('success', '已安装')
@@ -373,8 +371,11 @@ function CatalogueTab({
     } catch (err) {
       showToast('error', err instanceof ApiError ? err.message : '安装失败')
     } finally {
-      setInstalling(null)
-      setPct(null)
+      setProgress((prev) => {
+        const next = { ...prev }
+        delete next[p.id]
+        return next
+      })
     }
   }
 
@@ -421,11 +422,11 @@ function CatalogueTab({
                     {installedIds.has(p.id) ? (
                       <InstalledChip />
                     ) : (
-                      <Button type="button" variant="outline" size="sm" className="min-w-24 gap-1.5" disabled={installing !== null} onClick={() => install(p)}>
-                        {installing === p.id ? (
+                      <Button type="button" variant="outline" size="sm" className="min-w-24 gap-1.5" disabled={p.id in progress} onClick={() => install(p)}>
+                        {p.id in progress ? (
                           <>
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            {pct != null ? `${pct}%` : '安装中'}
+                            {progress[p.id] != null ? `${progress[p.id]}%` : '安装中'}
                           </>
                         ) : (
                           <>

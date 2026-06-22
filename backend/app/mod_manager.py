@@ -195,26 +195,62 @@ class ModManager:
             for v in versions
         ]
 
-    async def install_from_modrinth(self, instance_dir: Path, version_id: str, progress=None) -> str:
+    async def _fetch_version(self, version_id: str) -> dict:
         async with net.client(timeout=30) as client:
             resp = await client.get(f"{MODRINTH_API}/version/{version_id}")
             resp.raise_for_status()
-            version = resp.json()
+            return resp.json()
+
+    async def _download_version_file(self, version: dict, instance_dir: Path, progress) -> str:
         files = version.get("files") or []
         chosen = next((f for f in files if f.get("primary")), files[0] if files else None)
         if not chosen:
             raise ValueError("该版本没有可下载文件")
-        url = chosen["url"]
-        file_name = Path(chosen.get("filename") or f"{version_id}.jar").name
-        sha1 = (chosen.get("hashes") or {}).get("sha1", "")
-
-        mdir = self.mods_dir(instance_dir)
-        mdir.mkdir(parents=True, exist_ok=True)
-        dest = mdir / file_name
+        dest = self.mods_dir(instance_dir) / Path(chosen.get("filename") or "mod.jar").name
+        dest.parent.mkdir(parents=True, exist_ok=True)
         await jar_cache.cached_download(
-            url, dest, algo="sha1", hexhash=sha1, size=chosen.get("size", 0) or 0, progress=progress
+            chosen["url"],
+            dest,
+            algo="sha1",
+            hexhash=(chosen.get("hashes") or {}).get("sha1", ""),
+            size=chosen.get("size", 0) or 0,
+            progress=progress,
         )
         return dest.name
+
+    async def install_from_modrinth(self, instance_dir: Path, version_id: str, progress=None) -> str:
+        """安装模组并递归(BFS)安装其 required 依赖(可选依赖跳过)。"""
+        primary_name: str | None = None
+        visited_versions: set[str] = set()
+        visited_projects: set[str] = set()
+        queue: list[str] = [version_id]
+        while queue:
+            vid = queue.pop(0)
+            if vid in visited_versions:
+                continue
+            visited_versions.add(vid)
+            version = await self._fetch_version(vid)
+            name = await self._download_version_file(version, instance_dir, progress)
+            if primary_name is None:
+                primary_name = name
+            if version.get("project_id"):
+                visited_projects.add(version["project_id"])
+            loaders = version.get("loaders") or []
+            loader = loaders[0] if loaders else None
+            game_versions = version.get("game_versions") or []
+            mc_version = game_versions[0] if game_versions else None
+            for dep in version.get("dependencies") or []:
+                if dep.get("dependency_type") != "required":
+                    continue
+                dep_vid = dep.get("version_id")
+                dep_pid = dep.get("project_id")
+                if dep_vid and dep_vid not in visited_versions:
+                    queue.append(dep_vid)
+                elif dep_pid and dep_pid not in visited_projects:
+                    dep_versions = await self.list_versions(dep_pid, mc_version, loader)
+                    if dep_versions:
+                        queue.append(dep_versions[0]["id"])
+        return primary_name or ""
 
 
 manager = ModManager()

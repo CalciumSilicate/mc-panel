@@ -352,8 +352,7 @@ function ModrinthTab({
   const [filterMc, setFilterMc] = useState(true)
   const [hits, setHits] = useState<ModrinthHit[]>([])
   const [searching, setSearching] = useState(false)
-  const [installing, setInstalling] = useState<string | null>(null)
-  const [pct, setPct] = useState<number | null>(null)
+  const [progress, setProgress] = useState<Record<string, number | null>>({})
 
   const search = async () => {
     setSearching(true)
@@ -367,8 +366,7 @@ function ModrinthTab({
   }
 
   const install = async (hit: ModrinthHit) => {
-    setInstalling(hit.project_id)
-    setPct(null)
+    setProgress((prev) => ({ ...prev, [hit.project_id]: null }))
     try {
       const versions = await modVersions(hit.project_id, filterMc ? mcVersion : undefined, loader)
       if (versions.length === 0) {
@@ -376,7 +374,9 @@ function ModrinthTab({
         return
       }
       const { job_id } = await installMod(serverId, versions[0].id)
-      const final = await pollJob(job_id, setPct)
+      const final = await pollJob(job_id, (pc) =>
+        setProgress((prev) => ({ ...prev, [hit.project_id]: pc })),
+      )
       if (final.status === 'error') showToast('error', final.message || '安装失败')
       else {
         showToast('success', `已安装 ${versions[0].version_number}`)
@@ -385,8 +385,11 @@ function ModrinthTab({
     } catch (err) {
       showToast('error', err instanceof ApiError ? err.message : '安装失败')
     } finally {
-      setInstalling(null)
-      setPct(null)
+      setProgress((prev) => {
+        const next = { ...prev }
+        delete next[hit.project_id]
+        return next
+      })
     }
   }
 
@@ -445,11 +448,11 @@ function ModrinthTab({
                     {installedIds.has(h.slug.toLowerCase()) ? (
                       <InstalledChip />
                     ) : (
-                      <Button type="button" variant="outline" size="sm" className="min-w-28 gap-1.5" disabled={installing !== null} onClick={() => install(h)}>
-                        {installing === h.project_id ? (
+                      <Button type="button" variant="outline" size="sm" className="min-w-28 gap-1.5" disabled={h.project_id in progress} onClick={() => install(h)}>
+                        {h.project_id in progress ? (
                           <>
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            {pct != null ? `${pct}%` : '安装中'}
+                            {progress[h.project_id] != null ? `${progress[h.project_id]}%` : '安装中'}
                           </>
                         ) : (
                           <>
