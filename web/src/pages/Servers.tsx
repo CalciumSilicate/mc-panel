@@ -732,7 +732,6 @@ function EditServerDialog({
                 value={extraJvm}
                 onChange={(e) => setExtraJvm(e.target.value)}
                 rows={2}
-                placeholder="如 -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
                 className="font-mono"
               />
             </div>
