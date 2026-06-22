@@ -125,6 +125,16 @@ export default function Overview() {
   )
 }
 
+// 占用率配色(参考 AMP-Manager 排行榜:灰/绿/蓝/黄/橙/红,按压力递增)
+function usageClasses(p: number): { text: string; bar: string } {
+  if (p <= 0) return { text: 'text-muted-foreground', bar: 'bg-muted-foreground/60' }
+  if (p < 10) return { text: 'text-emerald-600 dark:text-emerald-400', bar: 'bg-emerald-500' }
+  if (p < 50) return { text: 'text-blue-600 dark:text-blue-400', bar: 'bg-blue-500' }
+  if (p < 75) return { text: 'text-yellow-600 dark:text-yellow-400', bar: 'bg-yellow-500' }
+  if (p < 90) return { text: 'text-orange-600 dark:text-orange-400', bar: 'bg-orange-500' }
+  return { text: 'text-red-600 dark:text-red-400', bar: 'bg-red-500' }
+}
+
 function ResourceCard({
   icon: Icon,
   label,
@@ -136,6 +146,7 @@ function ResourceCard({
   value: string
   percent: number
 }) {
+  const c = usageClasses(percent)
   return (
     <PageSurface>
       <div className="flex items-center gap-3">
@@ -146,9 +157,9 @@ function ResourceCard({
           <p className="text-sm text-muted-foreground">{label}</p>
           <p className="truncate font-mono text-sm font-medium text-foreground">{value}</p>
         </div>
-        <span className="ml-auto text-lg font-semibold tabular-nums">{percent.toFixed(0)}%</span>
+        <span className={cn('ml-auto text-lg font-semibold tabular-nums', c.text)}>{percent.toFixed(0)}%</span>
       </div>
-      <Progress value={percent} className="mt-3 h-1.5" />
+      <Progress value={percent} className="mt-3 h-1.5" indicatorClassName={c.bar} />
     </PageSurface>
   )
 }
