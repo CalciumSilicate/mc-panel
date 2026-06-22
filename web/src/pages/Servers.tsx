@@ -245,6 +245,24 @@ export default function Servers() {
   )
 }
 
+function JavaHintText({ info }: { info: JavaInfo }) {
+  return (
+    <span
+      className={cn(
+        'min-w-0 truncate text-right text-xs',
+        info.satisfied ? 'text-muted-foreground' : 'text-destructive',
+      )}
+    >
+      {info.required_major ? `需要 Java ${info.required_major}+` : '所需 Java 版本未知'}
+      {info.satisfied
+        ? info.chosen_major
+          ? ` · 将使用 Java ${info.chosen_major}`
+          : ' · 将使用默认 Java'
+        : ` · ${info.message ?? '没有满足要求的 Java'}`}
+    </span>
+  )
+}
+
 function CreateServerDialog({
   open,
   onOpenChange,
@@ -343,7 +361,10 @@ function CreateServerDialog({
             <Input id="srv-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="如 survival" autoFocus />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="srv-version">Minecraft 版本</Label>
+            <div className="flex items-center justify-between gap-3">
+              <Label htmlFor="srv-version" className="shrink-0">Minecraft 版本</Label>
+              {javaInfo ? <JavaHintText info={javaInfo} /> : null}
+            </div>
             <div className="flex items-center gap-2">
               <Select value={version} onValueChange={setVersion} disabled={versionsLoading}>
                 <SelectTrigger id="srv-version" className="flex-1">
@@ -369,18 +390,6 @@ function CreateServerDialog({
                 <RefreshCw className={cn('h-4 w-4', versionsLoading && 'animate-spin')} />
               </Button>
             </div>
-            {javaInfo ? (
-              <p className={cn('text-xs', javaInfo.satisfied ? 'text-muted-foreground' : 'text-destructive')}>
-                {javaInfo.required_major
-                  ? `需要 Java ${javaInfo.required_major}+`
-                  : '所需 Java 版本未知(可能为快照)'}
-                {javaInfo.satisfied
-                  ? javaInfo.chosen_major
-                    ? ` · 将使用 Java ${javaInfo.chosen_major}`
-                    : ' · 将使用默认 Java'
-                  : ` · ${javaInfo.message ?? '没有满足要求的 Java,请先到设置添加'}`}
-              </p>
-            ) : null}
           </div>
           <div className="grid grid-cols-3 gap-3">
             <div className="space-y-2">
@@ -519,7 +528,14 @@ function EditServerDialog({
             <Input id="edit-name" value={name} onChange={(e) => setName(e.target.value)} />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="edit-version">Minecraft 版本</Label>
+            <div className="flex items-center justify-between gap-3">
+              <Label htmlFor="edit-version" className="shrink-0">Minecraft 版本</Label>
+              {running ? (
+                <span className="min-w-0 truncate text-right text-xs text-muted-foreground">运行中不可更换版本,请先停止</span>
+              ) : javaInfo ? (
+                <JavaHintText info={javaInfo} />
+              ) : null}
+            </div>
             <div className="flex items-center gap-2">
               <Select value={version} onValueChange={setVersion} disabled={versionsLoading || running}>
                 <SelectTrigger id="edit-version" className="flex-1">
@@ -548,20 +564,6 @@ function EditServerDialog({
                 <RefreshCw className={cn('h-4 w-4', versionsLoading && 'animate-spin')} />
               </Button>
             </div>
-            {running ? (
-              <p className="text-xs text-muted-foreground">运行中不可更换版本,请先停止。</p>
-            ) : javaInfo ? (
-              <p className={cn('text-xs', javaInfo.satisfied ? 'text-muted-foreground' : 'text-destructive')}>
-                {javaInfo.required_major
-                  ? `需要 Java ${javaInfo.required_major}+`
-                  : '所需 Java 版本未知(可能为快照)'}
-                {javaInfo.satisfied
-                  ? javaInfo.chosen_major
-                    ? ` · 将使用 Java ${javaInfo.chosen_major}`
-                    : ' · 将使用默认 Java'
-                  : ` · ${javaInfo.message ?? '没有满足要求的 Java,请先到设置添加'}`}
-              </p>
-            ) : null}
           </div>
           <div className="grid grid-cols-3 gap-3">
             <div className="space-y-2">
