@@ -221,7 +221,7 @@ async def update_server(
 
     version_changed = bool(payload.mc_version) and payload.mc_version != server.mc_version
     if version_changed:
-        if status in ("running", "installing"):
+        if status in ("running", "starting", "installing"):
             raise HTTPException(status_code=400, detail="更换版本需先停止实例")
         server.mc_version = payload.mc_version
 

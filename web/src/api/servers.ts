@@ -8,6 +8,7 @@ import { apiRequest } from '@/api/client'
 export type ServerStatus =
   | 'installing'
   | 'new_setup'
+  | 'starting'
   | 'running'
   | 'stopped'
   | 'error'

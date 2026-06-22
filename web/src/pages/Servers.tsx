@@ -147,6 +147,8 @@ export default function Servers() {
                     const meta = SERVER_STATUS_META[server.status]
                     const busy = busyId === server.id
                     const installing = server.status === 'installing'
+                    const starting = server.status === 'starting'
+                    const active = server.status === 'running' || starting
                     return (
                       <TableRow key={server.id}>
                         <TableCell className="font-medium">{server.name}</TableCell>
@@ -157,7 +159,7 @@ export default function Servers() {
                         <TableCell className="font-mono text-muted-foreground">{server.port}</TableCell>
                         <TableCell>
                           <Badge variant="outline" className={cn('gap-1 text-[11px]', meta.tone)}>
-                            {installing ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                            {installing || starting ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
                             {meta.label}
                             {installing && server.install ? ` ${server.install.percent}%` : ''}
                           </Badge>
@@ -190,7 +192,7 @@ export default function Servers() {
                                 <Terminal className="h-4 w-4" />
                               </Button>
                             ) : null}
-                            {canOperate && server.status === 'running' ? (
+                            {canOperate && active ? (
                               <Button
                                 type="button"
                                 variant="outline"
@@ -203,7 +205,7 @@ export default function Servers() {
                                 停止
                               </Button>
                             ) : null}
-                            {canOperate && server.status !== 'running' ? (
+                            {canOperate && !active ? (
                               <Button
                                 type="button"
                                 variant="outline"
@@ -520,7 +522,7 @@ function EditServerDialog({
   const [submitting, setSubmitting] = useState(false)
 
   const open = server !== null
-  const running = server?.status === 'running'
+  const running = server?.status === 'running' || server?.status === 'starting'
 
   useEffect(() => {
     if (!server) return

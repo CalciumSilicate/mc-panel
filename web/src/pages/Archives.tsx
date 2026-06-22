@@ -319,7 +319,8 @@ function ServerPickDialog({
   const [busy, setBusy] = useState(false)
   const [pct, setPct] = useState<number | null>(null)
 
-  const selectable = (s: ServerSummary) => s.status !== 'running' && s.status !== 'installing'
+  const selectable = (s: ServerSummary) =>
+    s.status !== 'running' && s.status !== 'starting' && s.status !== 'installing'
 
   useEffect(() => {
     if (open) {
@@ -360,7 +361,13 @@ function ServerPickDialog({
               {servers.map((s) => (
                 <SelectItem key={s.id} value={String(s.id)} disabled={!selectable(s)}>
                   {s.name}
-                  {s.status === 'running' ? '(运行中,不可选)' : s.status === 'installing' ? '(安装中,不可选)' : ''}
+                  {s.status === 'running'
+                    ? '(运行中,不可选)'
+                    : s.status === 'starting'
+                      ? '(启动中,不可选)'
+                      : s.status === 'installing'
+                        ? '(安装中,不可选)'
+                        : ''}
                 </SelectItem>
               ))}
             </SelectContent>

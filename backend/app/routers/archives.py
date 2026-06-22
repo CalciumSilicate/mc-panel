@@ -91,7 +91,7 @@ async def create_from_server(
     server_id: int, user: User = Depends(require_helper), db: Session = Depends(get_db)
 ) -> dict:
     server = _get_server(db, server_id)
-    if mcdr_manager.get_status(server) in ("running", "installing"):
+    if mcdr_manager.get_status(server) in ("running", "starting", "installing"):
         raise HTTPException(status_code=400, detail="请先停止实例再创建存档")
     job_id = jobstore.create()
     asyncio.create_task(_do_create(server_id, am.new_archive_filename(), job_id, user.id))
@@ -197,7 +197,7 @@ async def restore_archive(
 ) -> dict:
     _get_archive(db, archive_id)
     server = _get_server(db, server_id)
-    if mcdr_manager.get_status(server) in ("running", "installing"):
+    if mcdr_manager.get_status(server) in ("running", "starting", "installing"):
         raise HTTPException(status_code=400, detail="请先停止目标实例再恢复存档")
     job_id = jobstore.create()
     asyncio.create_task(_do_restore(archive_id, server_id, job_id))

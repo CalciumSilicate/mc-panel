@@ -29,8 +29,12 @@ from .versions import get_server_download
 STATUS_INSTALLING = "installing"
 STATUS_ERROR = "error"
 STATUS_NEW_SETUP = "new_setup"
+STATUS_STARTING = "starting"
 STATUS_RUNNING = "running"
 STATUS_STOPPED = "stopped"
+
+# 服务端加载完成标志:vanilla 输出 'Done (12.345s)! For help, ...'
+_DONE_RE = re.compile(r"Done \([\d.,]+s\)!")
 
 _INSTALLING_MARKER = ".installing"
 _FAILED_MARKER = ".install_failed"
@@ -133,6 +137,8 @@ class MCDRManager:
         self._install_progress: dict[int, tuple[int, int]] = {}
         # server_id -> 安装(下载)任务,用于中止
         self._install_tasks: dict[int, asyncio.Task] = {}
+        # 已完成启动(出现 Done 行)的实例 id 集合;用于区分「启动中 / 运行中」
+        self._ready: set[int] = set()
         # 逐行钩子(如玩家绑定验证):每条输出行都会调用,异常被吞掉
         self.line_hook: "Callable[[int, str], None] | None" = None
 
@@ -164,7 +170,7 @@ class MCDRManager:
             return STATUS_NEW_SETUP
         proc = self._procs.get(server.id)
         if proc is not None and proc.returncode is None:
-            return STATUS_RUNNING
+            return STATUS_RUNNING if server.id in self._ready else STATUS_STARTING
         return STATUS_STOPPED
 
     # ---------- 安装进度 / 任务 ----------
@@ -253,6 +259,9 @@ class MCDRManager:
     def _append_line(self, server_id: int, line: str) -> None:
         buf = self._buffers.setdefault(server_id, deque(maxlen=_CONSOLE_BUFFER_LINES))
         buf.append(line)
+        # 检测服务端加载完成,把状态从「启动中」翻成「运行中」
+        if server_id not in self._ready and "Done (" in line and _DONE_RE.search(line):
+            self._ready.add(server_id)
         for queue in list(self._subscribers.get(server_id, set())):
             try:
                 queue.put_nowait(line)
@@ -286,6 +295,7 @@ class MCDRManager:
                 break
             self._append_line(server_id, raw.decode("utf-8", errors="replace").rstrip("\r\n"))
         rc = proc.returncode
+        self._ready.discard(server_id)
         self._append_line(server_id, f"[mc-panel] 进程已退出 (return code: {rc})")
 
     def _reconcile_config(self, inst: Path) -> None:
@@ -415,7 +425,8 @@ class MCDRManager:
             env=env,
         )
         self._procs[server.id] = proc
-        # 新一轮运行清空旧缓冲,并启动输出读取任务
+        # 新一轮运行:清空旧缓冲、重置启动完成标志,并启动输出读取任务
+        self._ready.discard(server.id)
         self._buffers[server.id] = deque(maxlen=_CONSOLE_BUFFER_LINES)
         self._append_line(server.id, "[mc-panel] 实例已启动")
         self._reader_tasks[server.id] = asyncio.create_task(self._read_output(server.id, proc))
