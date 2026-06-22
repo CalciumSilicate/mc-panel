@@ -5,61 +5,61 @@
 @layer base {
   :root {
     --background: 0 0% 100%;
-    --foreground: 336 30% 8%;
+    --foreground: 270 25% 9%;
     --card: 0 0% 100%;
-    --card-foreground: 336 30% 8%;
+    --card-foreground: 270 25% 9%;
     --popover: 0 0% 100%;
-    --popover-foreground: 336 30% 8%;
-    --primary: 343 94% 72%;
-    --primary-foreground: 350 60% 98%;
-    --secondary: 343 62% 97%;
-    --secondary-foreground: 336 28% 14%;
-    --muted: 343 54% 97%;
-    --muted-foreground: 334 13% 46%;
-    --accent: 343 62% 97%;
-    --accent-foreground: 336 28% 14%;
+    --popover-foreground: 270 25% 9%;
+    --primary: 270 84% 70%;
+    --primary-foreground: 270 60% 98%;
+    --secondary: 270 60% 97%;
+    --secondary-foreground: 270 25% 16%;
+    --muted: 270 50% 97%;
+    --muted-foreground: 270 12% 46%;
+    --accent: 270 60% 97%;
+    --accent-foreground: 270 25% 16%;
     --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 350 60% 98%;
-    --border: 342 34% 91%;
-    --input: 342 34% 91%;
-    --ring: 343 94% 72%;
-    --chart-1: 343 94% 72%;
+    --destructive-foreground: 270 60% 98%;
+    --border: 270 32% 91%;
+    --input: 270 32% 91%;
+    --ring: 270 84% 70%;
+    --chart-1: 270 84% 70%;
     --chart-2: 166 35% 39%;
     --chart-3: 296 28% 34%;
     --chart-4: 43 74% 66%;
     --chart-5: 27 87% 67%;
     --radius: 0.625rem;
-    --sidebar-bg: 343 44% 98%;
-    --sidebar-active: 343 94% 72%;
+    --sidebar-bg: 270 44% 98%;
+    --sidebar-active: 270 84% 70%;
     --font-ui-cjk: "Noto Sans SC UI Subset";
   }
   .dark {
-    --background: 336 22% 8%;
-    --foreground: 350 45% 97%;
-    --card: 336 18% 11%;
-    --card-foreground: 350 45% 97%;
-    --popover: 336 18% 12%;
-    --popover-foreground: 350 45% 97%;
-    --primary: 343 89% 76%;
-    --primary-foreground: 340 44% 13%;
-    --secondary: 336 18% 16%;
-    --secondary-foreground: 350 45% 97%;
-    --muted: 336 16% 15%;
-    --muted-foreground: 340 15% 72%;
-    --accent: 336 18% 17%;
-    --accent-foreground: 350 45% 97%;
+    --background: 270 18% 8%;
+    --foreground: 270 30% 97%;
+    --card: 270 16% 11%;
+    --card-foreground: 270 30% 97%;
+    --popover: 270 16% 12%;
+    --popover-foreground: 270 30% 97%;
+    --primary: 270 80% 78%;
+    --primary-foreground: 270 40% 13%;
+    --secondary: 270 16% 16%;
+    --secondary-foreground: 270 30% 97%;
+    --muted: 270 14% 15%;
+    --muted-foreground: 270 14% 72%;
+    --accent: 270 16% 18%;
+    --accent-foreground: 270 30% 97%;
     --destructive: 0 74% 56%;
-    --destructive-foreground: 350 60% 98%;
-    --border: 336 16% 22%;
-    --input: 336 15% 20%;
-    --ring: 343 89% 76%;
-    --chart-1: 343 89% 76%;
+    --destructive-foreground: 270 60% 98%;
+    --border: 270 14% 22%;
+    --input: 270 14% 20%;
+    --ring: 270 80% 78%;
+    --chart-1: 270 80% 78%;
     --chart-2: 166 46% 58%;
     --chart-3: 296 43% 70%;
     --chart-4: 41 100% 66%;
     --chart-5: 334 86% 69%;
-    --sidebar-bg: 336 20% 10%;
-    --sidebar-active: 343 89% 76%;
+    --sidebar-bg: 270 18% 10%;
+    --sidebar-active: 270 80% 78%;
   }
 }
 
@@ -92,9 +92,9 @@ html[data-noto-sc-full="1"] {
 
 .dark body {
   background-image: linear-gradient(180deg,
-    hsl(336 22% 8%) 0%,
-    hsl(336 20% 7%) 52%,
-    hsl(336 24% 6%) 100%
+    hsl(270 22% 8%) 0%,
+    hsl(270 20% 7%) 52%,
+    hsl(270 24% 6%) 100%
   );
   background-attachment: fixed;
 }
@@ -222,9 +222,9 @@ html.theme-switching *::after {
   overflow: hidden;
   background: linear-gradient(135deg,
     hsl(var(--background)) 0%,
-    hsl(343 92% 97%) 24%,
-    hsl(350 80% 95%) 48%,
-    hsl(326 58% 96%) 72%,
+    hsl(270 92% 97%) 24%,
+    hsl(270 60% 95%) 48%,
+    hsl(272 58% 96%) 72%,
     hsl(var(--background)) 100%
   );
   background-size: 400% 400%;
@@ -236,26 +236,26 @@ html.theme-switching *::after {
   position: absolute;
   inset: 0;
   background: 
-    radial-gradient(ellipse 80% 80% at 20% 20%, hsl(343 94% 72% / 0.13) 0%, transparent 50%),
-    radial-gradient(ellipse 60% 60% at 80% 80%, hsl(326 70% 70% / 0.08) 0%, transparent 50%);
+    radial-gradient(ellipse 80% 80% at 20% 20%, hsl(270 94% 72% / 0.13) 0%, transparent 50%),
+    radial-gradient(ellipse 60% 60% at 80% 80%, hsl(272 70% 70% / 0.08) 0%, transparent 50%);
   pointer-events: none;
 }
 
 .dark .auth-bg {
   background: linear-gradient(135deg,
-    hsl(336 22% 8%) 0%,
-    hsl(336 21% 9.5%) 22%,
-    hsl(336 19% 11%) 52%,
-    hsl(336 20% 9%) 78%,
-    hsl(336 24% 6.5%) 100%
+    hsl(270 22% 8%) 0%,
+    hsl(270 21% 9.5%) 22%,
+    hsl(270 19% 11%) 52%,
+    hsl(270 20% 9%) 78%,
+    hsl(270 24% 6.5%) 100%
   );
 }
 
 .dark .auth-bg::before {
   background:
-    radial-gradient(ellipse 80% 80% at 18% 18%, hsl(343 89% 76% / 0.18) 0%, transparent 52%),
-    radial-gradient(ellipse 64% 64% at 84% 84%, hsl(326 62% 70% / 0.12) 0%, transparent 55%),
-    linear-gradient(120deg, transparent 0%, hsl(343 89% 76% / 0.04) 48%, transparent 100%);
+    radial-gradient(ellipse 80% 80% at 18% 18%, hsl(270 89% 76% / 0.18) 0%, transparent 52%),
+    radial-gradient(ellipse 64% 64% at 84% 84%, hsl(272 62% 70% / 0.12) 0%, transparent 55%),
+    linear-gradient(120deg, transparent 0%, hsl(270 89% 76% / 0.04) 48%, transparent 100%);
 }
 
 @keyframes gradient-shift {
@@ -272,7 +272,7 @@ html.theme-switching *::after {
   -webkit-backdrop-filter: blur(24px);
   border: 1px solid hsl(var(--border) / 0.58);
   box-shadow: 
-    0 8px 32px hsl(343 94% 72% / 0.14),
+    0 8px 32px hsl(270 94% 72% / 0.14),
     0 2px 8px hsl(0 0% 0% / 0.04);
 }
 
@@ -284,7 +284,7 @@ html.theme-switching *::after {
   border-color: hsl(350 60% 98% / 0.1);
   box-shadow:
     0 24px 56px hsl(0 0% 0% / 0.45),
-    0 0 0 1px hsl(343 89% 76% / 0.12),
+    0 0 0 1px hsl(270 89% 76% / 0.12),
     inset 0 1px 0 hsl(350 60% 98% / 0.05);
 }
 
@@ -295,9 +295,9 @@ html.theme-switching *::after {
 
 .dark .dashboard-shell {
   background: linear-gradient(180deg,
-    hsl(336 22% 8%) 0%,
-    hsl(336 20% 7%) 46%,
-    hsl(336 24% 6%) 100%
+    hsl(270 22% 8%) 0%,
+    hsl(270 20% 7%) 46%,
+    hsl(270 24% 6%) 100%
   );
 }
 
@@ -316,7 +316,7 @@ html.theme-switching *::after {
 .dark .dashboard-header {
   background: linear-gradient(180deg,
     hsl(var(--background)) 0%,
-    hsl(336 20% 8%) 100%
+    hsl(270 20% 8%) 100%
   );
   border-color: hsl(var(--border) / 0.84);
   box-shadow: 0 18px 34px -30px hsl(0 0% 0% / 0.9);
@@ -340,13 +340,13 @@ html.theme-switching *::after {
 .dark .dashboard-nav-item[data-active="true"] {
   background: linear-gradient(180deg,
     hsl(var(--primary) / 0.18) 0%,
-    hsl(326 62% 70% / 0.12) 100%
+    hsl(272 62% 70% / 0.12) 100%
   );
   border-color: hsl(var(--primary) / 0.22);
   box-shadow:
     inset 0 1px 0 hsl(350 60% 98% / 0.08),
     0 10px 20px -18px hsl(var(--primary) / 0.46);
-  color: hsl(350 70% 94%);
+  color: hsl(270 50% 94%);
 }
 
 /* Active nav indicator */
@@ -368,7 +368,7 @@ html.theme-switching *::after {
 
 /* Pulse glow for active nav items */
 .nav-active-glow {
-  box-shadow: 0 0 16px hsl(343 94% 72% / 0.2);
+  box-shadow: 0 0 16px hsl(270 94% 72% / 0.2);
 }
 
 /* Smooth skeleton loading */
