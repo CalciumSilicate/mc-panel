@@ -178,20 +178,39 @@ async def get_forge_installer(mc_version: str, forge_version: str) -> dict:
 
 
 # ---- Velocity ----
-async def list_velocity_versions(force: bool = False) -> list[str]:
+# 版本号用 "版本#build" 表示具体构建(参考 asPanel)
+async def list_velocity_versions(force: bool = False, limit: int = 200) -> list[str]:
+    """列出 Velocity 的具体构建:每项形如 "3.5.0-SNAPSHOT#577",新到旧。"""
     data = await _cached_json("https://fill.papermc.io/v3/projects/velocity/versions", force=force)
-    return [v["version"]["id"] for v in data.get("versions", [])]
+    out: list[str] = []
+    for v in data.get("versions", []):  # 版本已是新到旧
+        vid = v["version"]["id"]
+        for build in reversed(v.get("builds", [])):  # build id 升序 -> 反转成新到旧
+            out.append(f"{vid}#{build}")
+            if len(out) >= limit:
+                return out
+    return out
 
 
-async def get_velocity_download(velocity_version: str) -> dict:
-    """选该 Velocity 版本最新构建(优先 STABLE)。"""
+async def get_velocity_download(spec: str) -> dict:
+    """解析 "版本#build"(无 # 则取该版本最新构建)的下载信息。"""
+    if "#" in spec:
+        version, build_str = spec.split("#", 1)
+        target_build = int(build_str)
+    else:
+        version, target_build = spec, None
     builds = await _cached_json(
-        f"https://fill.papermc.io/v3/projects/velocity/versions/{velocity_version}/builds"
+        f"https://fill.papermc.io/v3/projects/velocity/versions/{version}/builds"
     )
     if not builds:
-        raise ValueError(f"Velocity {velocity_version} 无可用构建")
-    stable = [b for b in builds if b.get("channel") == "STABLE"]
-    best = max(stable or builds, key=lambda b: b.get("id", 0))
+        raise ValueError(f"Velocity {version} 无可用构建")
+    if target_build is not None:
+        best = next((b for b in builds if b.get("id") == target_build), None)
+        if best is None:
+            raise ValueError(f"Velocity {spec} 不存在该构建")
+    else:
+        stable = [b for b in builds if b.get("channel") == "STABLE"]
+        best = max(stable or builds, key=lambda b: b.get("id", 0))
     dl = best.get("downloads", {}).get("server:default") or next(iter(best.get("downloads", {}).values()))
     return {
         "url": dl["url"],
