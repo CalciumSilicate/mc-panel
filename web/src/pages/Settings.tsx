@@ -125,16 +125,14 @@ export default function Settings() {
     >
       {activeTab === 'mcdr' ? (
         <PageSurface title="MCDR 运行参数" description="新建/启动实例时使用的命令与默认值。">
-          <div className="grid gap-5 sm:max-w-md">
+          <div className="grid gap-5 sm:max-w-2xl">
             <div className="space-y-2">
               <Label htmlFor="python-exec">Python 可执行文件</Label>
               <Input id="python-exec" value={pythonExec} onChange={(e) => setPythonExec(e.target.value)} placeholder="python" />
-              <p className="text-xs text-muted-foreground">用于以 <code>python -m mcdreforged</code> 启动实例,需已安装 MCDReforged。</p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="java-cmd">默认 Java 命令</Label>
               <Input id="java-cmd" value={javaCmd} onChange={(e) => setJavaCmd(e.target.value)} placeholder="java" />
-              <p className="text-xs text-muted-foreground">未配置 Java 池、或版本未知时的兜底命令。</p>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
@@ -152,13 +150,8 @@ export default function Settings() {
             </div>
           </div>
 
-          <div className="mt-6 space-y-3 border-t border-border/60 pt-5 sm:max-w-lg">
-            <div>
-              <Label>Java 安装池</Label>
-              <p className="mt-1 text-xs text-muted-foreground">
-                登记多个 Java 可执行文件,启动实例时按 MC 版本自动选「满足要求里最低」的那个。保存后显示探测到的版本。
-              </p>
-            </div>
+          <div className="mt-6 space-y-3 border-t border-border/60 pt-5 sm:max-w-2xl">
+            <Label>Java 安装池</Label>
             <div className="space-y-2">
               {javaPaths.length === 0 ? (
                 <p className="text-sm text-muted-foreground">尚未添加。</p>
@@ -212,7 +205,7 @@ export default function Settings() {
         </PageSurface>
       ) : (
         <PageSurface title="修改管理员密码" description="留空表示不修改。保存后旧登录态仍有效,直至过期。">
-          <div className="grid gap-5 sm:max-w-md">
+          <div className="grid gap-5 sm:max-w-2xl">
             <div className="space-y-2">
               <Label htmlFor="new-pwd">新密码</Label>
               <Input id="new-pwd" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} autoComplete="new-password" />
