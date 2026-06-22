@@ -188,7 +188,7 @@ def _qq_components(sender: str, message, modern: bool) -> list:
             url = str(d.get("url") or d.get("file") or "")
             c = {"text": "[图片]", "color": "aqua"}
             if url:
-                c["clickEvent"] = bridge._click("open_url", url, modern)
+                c.update(bridge.click_event("open_url", url, modern))
             parts.append(c)
         elif t == "face":
             parts.append({"text": "[表情]", "color": "yellow"})

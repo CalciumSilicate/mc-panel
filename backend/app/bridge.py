@@ -50,11 +50,22 @@ def _modern(mc_version: str) -> bool:
     return tuple(int(x) for x in nums[:3]) >= (1, 21, 5)
 
 
-def _click(action: str, value: str, modern: bool) -> dict:
+def click_event(action: str, value: str, modern: bool) -> dict:
+    """生成文本组件里挂载点击事件的那部分(含正确的外层键名)。
+
+    1.21.5+ : 外层键 ``click_event``,内层 suggest/run 用 ``command``、open_url 用 ``url``。
+    旧版    : 外层键 ``clickEvent``,内层统一 ``value``。
+    返回可直接用 ``**`` 合并进组件的 dict。
+    """
     if modern:
-        key = "url" if action == "open_url" else "command"
-        return {"action": action, key: value}
-    return {"action": action, "value": value}
+        inner = {"action": action, ("url" if action == "open_url" else "command"): value}
+        return {"click_event": inner}
+    return {"clickEvent": {"action": action, "value": value}}
+
+
+# 兼容旧调用名
+def _click(action: str, value: str, modern: bool) -> dict:
+    return click_event(action, value, modern)
 
 
 def _gray(text: str) -> dict:
@@ -65,14 +76,14 @@ def _prefix(src: str, modern: bool) -> list:
     """[来源服] (灰色,来源服可点击建议 /server)"""
     return [
         _gray("["),
-        {"text": src, "color": "gray", "clickEvent": _click("suggest_command", f"/server {src}", modern)},
+        {"text": src, "color": "gray", **click_event("suggest_command", f"/server {src}", modern)},
         _gray("] "),
     ]
 
 
 def _player(player: str, wrap: bool, modern: bool) -> dict:
     text = f"<{player}> " if wrap else player
-    return {"text": text, "color": "gray", "clickEvent": _click("suggest_command", f"@ {player}", modern)}
+    return {"text": text, "color": "gray", **click_event("suggest_command", f"@ {player}", modern)}
 
 
 def _chat_components(src: str, player: str, content: str, modern: bool) -> list:
