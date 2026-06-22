@@ -16,7 +16,15 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..database import SessionLocal, get_db
-from ..deps import ROLE_ORDER, get_settings_row, require_admin, require_auth, require_operate
+from ..deps import (
+    ROLE_ORDER,
+    ensure_not_protected,
+    get_settings_row,
+    require_admin,
+    require_auth,
+    require_operate,
+    role_at_least,
+)
 from ..java import choose_java, detect_installs, get_java_paths, required_java_major
 from ..mcdr import manager
 from ..models import Server, User
@@ -189,6 +197,16 @@ async def update_server(
     db: Session = Depends(get_db),
 ) -> ServerSummary:
     server = _get_server_or_404(db, server_id)
+
+    # 受保护实例:仅允许取消保护本身,其它编辑一律拒绝(强制先取消保护)
+    if server.protected:
+        if payload.protected is False:
+            server.protected = False
+            db.commit()
+            db.refresh(server)
+            return _to_summary(server)
+        raise HTTPException(status_code=409, detail="实例受保护,请先取消保护后再编辑")
+
     status = manager.get_status(server)
 
     if payload.name and payload.name != server.name:
@@ -218,6 +236,8 @@ async def update_server(
         server.auto_start = payload.auto_start
     if payload.java_path_override is not None:
         server.java_path_override = payload.java_path_override
+    if payload.protected is not None:
+        server.protected = payload.protected
 
     version_changed = bool(payload.mc_version) and payload.mc_version != server.mc_version
     if version_changed:
@@ -315,9 +335,12 @@ async def start_server(
 
 @router.post("/{server_id}/stop")
 async def stop_server(
-    server_id: int, _: object = Depends(require_operate), db: Session = Depends(get_db)
+    server_id: int, user: User = Depends(require_operate), db: Session = Depends(get_db)
 ) -> dict:
     server = _get_server_or_404(db, server_id)
+    # 受保护实例仅 admin 可停
+    if server.protected and not role_at_least(user, "admin"):
+        raise HTTPException(status_code=403, detail="实例受保护,仅管理员可停止")
     await manager.stop(server)
     return {"status": manager.get_status(server)}
 
@@ -327,6 +350,7 @@ async def delete_server(
     server_id: int, _: str = Depends(require_admin), db: Session = Depends(get_db)
 ) -> dict:
     server = _get_server_or_404(db, server_id)
+    ensure_not_protected(server)
     await manager.delete_instance(server)
     db.delete(server)
     db.commit()

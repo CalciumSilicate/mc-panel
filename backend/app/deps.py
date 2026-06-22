@@ -84,3 +84,9 @@ def require_operate(user: User = Depends(get_current_user)) -> User:
 
 def role_at_least(user: User, min_role: str) -> bool:
     return ROLE_ORDER.get(user.role, 0) >= ROLE_ORDER[min_role]
+
+
+def ensure_not_protected(server) -> None:
+    """受保护实例禁止变更类操作(编辑/删除/插件/模组/超平坦/恢复到本服)。"""
+    if getattr(server, "protected", False):
+        raise HTTPException(status_code=409, detail="实例受保护,请先取消保护后再操作")

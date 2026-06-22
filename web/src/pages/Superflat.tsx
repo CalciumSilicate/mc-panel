@@ -103,7 +103,9 @@ export default function Superflat() {
             <SelectTrigger className="w-44"><SelectValue placeholder="选择服务器" /></SelectTrigger>
             <SelectContent>
               {(servers ?? []).map((s) => (
-                <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
+                <SelectItem key={s.id} value={String(s.id)} disabled={s.protected}>
+                  {s.name}{s.protected ? '(受保护)' : ''}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -195,7 +197,12 @@ export default function Superflat() {
                 <span className="block text-xs text-muted-foreground">删除现有世界目录使其按新预设重新生成(需实例已停止)</span>
               </span>
             </label>
-            <Button type="button" className="gap-2" onClick={apply} disabled={applying || serverId === null}>
+            <Button
+              type="button"
+              className="gap-2"
+              onClick={apply}
+              disabled={applying || serverId === null || ((servers ?? []).find((s) => s.id === serverId)?.protected ?? false)}
+            >
               {applying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
               应用到服务器
             </Button>

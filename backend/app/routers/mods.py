@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from .. import jobs as jobstore
 from ..config import MOD_LIBRARY
 from ..database import get_db
-from ..deps import require_helper
+from ..deps import ensure_not_protected, require_helper
 from ..mcdr import manager as mcdr_manager
 from ..mod_manager import manager as mods
 from ..models import Server
@@ -50,7 +50,7 @@ def switch_mod(
     _: str = Depends(require_helper),
     db: Session = Depends(get_db),
 ) -> dict:
-    server = _get_server(db, server_id)
+    server = _get_server(db, server_id); ensure_not_protected(server)
     try:
         new_name = mods.switch_mod(mcdr_manager.instance_dir(server), file_name, enable)
     except FileNotFoundError as exc:
@@ -62,7 +62,7 @@ def switch_mod(
 def delete_mod(
     server_id: int, file_name: str, _: str = Depends(require_helper), db: Session = Depends(get_db)
 ) -> dict:
-    server = _get_server(db, server_id)
+    server = _get_server(db, server_id); ensure_not_protected(server)
     mods.delete_mod(mcdr_manager.instance_dir(server), file_name)
     return {"ok": True}
 
@@ -74,7 +74,7 @@ async def upload_mod(
     _: str = Depends(require_helper),
     db: Session = Depends(get_db),
 ) -> dict:
-    server = _get_server(db, server_id)
+    server = _get_server(db, server_id); ensure_not_protected(server)
     content = await file.read()
     try:
         name = mods.save_upload(mcdr_manager.instance_dir(server), file.filename or "mod.jar", content)
@@ -111,7 +111,7 @@ def install_from_library(
     _: str = Depends(require_helper),
     db: Session = Depends(get_db),
 ) -> dict:
-    server = _get_server(db, server_id)
+    server = _get_server(db, server_id); ensure_not_protected(server)
     try:
         name = mods.install_from_library(MOD_LIBRARY, mcdr_manager.instance_dir(server), body.file_name)
     except FileNotFoundError as exc:
@@ -145,6 +145,8 @@ async def replace_library(
     old_id = old["id"]
     old_stripped = _strip_disabled(file_name)
     for server in db.scalars(select(Server)).all():
+        if server.protected:
+            continue  # 受保护实例不被替换波及
         inst = mcdr_manager.instance_dir(server)
         replaced = False
         for item in mods.list_mods(inst):
@@ -191,7 +193,7 @@ async def install_mod(
     _: str = Depends(require_helper),
     db: Session = Depends(get_db),
 ) -> dict:
-    server = _get_server(db, server_id)
+    server = _get_server(db, server_id); ensure_not_protected(server)
     inst = mcdr_manager.instance_dir(server)
     job_id = jobstore.create()
 

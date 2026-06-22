@@ -30,6 +30,7 @@ export interface ServerSummary {
   extra_jvm_args: string
   auto_start: boolean
   java_path_override: string
+  protected: boolean
   created_at: string
   status: ServerStatus
   install?: InstallProgress | null
@@ -80,6 +81,7 @@ export interface ServerUpdateInput {
   extra_jvm_args?: string
   auto_start?: boolean
   java_path_override?: string
+  protected?: boolean
 }
 
 export function updateServer(id: number, patch: ServerUpdateInput): Promise<ServerSummary> {

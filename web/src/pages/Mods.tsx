@@ -121,7 +121,7 @@ export default function Mods() {
           <SelectContent>
             {(servers ?? []).map((s) => (
               <SelectItem key={s.id} value={String(s.id)}>
-                {s.name}
+                {s.name}{s.protected ? '(受保护)' : ''}
               </SelectItem>
             ))}
           </SelectContent>
@@ -133,7 +133,13 @@ export default function Mods() {
           <p className="py-10 text-center text-sm text-muted-foreground">请先选择一个服务器。</p>
         </PageSurface>
       ) : (
-        <Tabs defaultValue="installed">
+        <div className="space-y-4">
+          {(servers ?? []).find((s) => s.id === serverId)?.protected ? (
+            <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">
+              该实例受保护:模组变更已禁用(仅查看)。如需修改请先在「服务器实例 → 编辑 → 高级」取消保护。
+            </div>
+          ) : null}
+          <Tabs defaultValue="installed">
           <TabsList>
             <TabsTrigger value="installed">已安装</TabsTrigger>
             <TabsTrigger value="modrinth">Modrinth</TabsTrigger>
@@ -220,7 +226,8 @@ export default function Mods() {
           <TabsContent value="library" className="pt-4">
             <LibraryTab serverId={serverId} installedFiles={installedFiles} installedIds={installedIds} onInstalled={() => installed.refresh()} onUninstall={uninstall} />
           </TabsContent>
-        </Tabs>
+          </Tabs>
+        </div>
       )}
     </PageShell>
   )

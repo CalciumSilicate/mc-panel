@@ -214,6 +214,7 @@ export default function Archives() {
         description="选择要恢复到的实例(需已停止);会先备份其现有世界。"
         confirmLabel="恢复"
         servers={servers ?? []}
+        blockProtected
         onClose={() => setRestoreFor(null)}
         run={(serverId, onProgress) =>
           restoreArchive(restoreFor!.id, serverId).then(({ job_id }) => pollJob(job_id, onProgress))
@@ -304,6 +305,7 @@ function ServerPickDialog({
   onClose,
   run,
   onDone,
+  blockProtected = false,
 }: {
   open: boolean
   title: string
@@ -313,6 +315,7 @@ function ServerPickDialog({
   onClose: () => void
   run: (serverId: number, onProgress: (pct: number | null) => void) => Promise<{ status: string; message: string }>
   onDone: () => void
+  blockProtected?: boolean
 }) {
   const { showToast } = useGlobalToast()
   const [serverId, setServerId] = useState<number | null>(null)
@@ -320,13 +323,17 @@ function ServerPickDialog({
   const [pct, setPct] = useState<number | null>(null)
 
   const selectable = (s: ServerSummary) =>
-    s.status !== 'running' && s.status !== 'starting' && s.status !== 'installing'
+    s.status !== 'running' &&
+    s.status !== 'starting' &&
+    s.status !== 'installing' &&
+    (!blockProtected || !s.protected)
 
   useEffect(() => {
     if (open) {
       setServerId(servers.find(selectable)?.id ?? null)
       setPct(null)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, servers])
 
   const confirm = async () => {
@@ -367,7 +374,9 @@ function ServerPickDialog({
                       ? '(启动中,不可选)'
                       : s.status === 'installing'
                         ? '(安装中,不可选)'
-                        : ''}
+                        : blockProtected && s.protected
+                          ? '(受保护,不可选)'
+                          : ''}
                 </SelectItem>
               ))}
             </SelectContent>

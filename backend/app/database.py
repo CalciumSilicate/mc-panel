@@ -42,6 +42,7 @@ _COLUMN_MIGRATIONS = {
         "extra_jvm_args": "VARCHAR(1024) DEFAULT ''",
         "auto_start": "BOOLEAN DEFAULT 0",
         "java_path_override": "VARCHAR(512) DEFAULT ''",
+        "protected": "BOOLEAN DEFAULT 0",
     },
     "system_settings": {
         "download_proxy": "VARCHAR(255) DEFAULT ''",

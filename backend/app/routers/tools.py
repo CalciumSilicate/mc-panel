@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from .. import archive_manager as am
 from .. import superflat
 from ..database import get_db
-from ..deps import require_helper
+from ..deps import ensure_not_protected, require_helper
 from ..mcdr import manager as mcdr_manager
 from ..models import Server
 
@@ -38,6 +38,7 @@ def superflat_apply(
     server = db.get(Server, body.server_id)
     if server is None:
         raise HTTPException(status_code=404, detail="服务器不存在")
+    ensure_not_protected(server)
     if not body.layers:
         raise HTTPException(status_code=400, detail="至少需要一层")
 

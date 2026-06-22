@@ -90,6 +90,7 @@ class ServerUpdate(BaseModel):
     extra_jvm_args: str | None = None
     auto_start: bool | None = None
     java_path_override: str | None = None
+    protected: bool | None = None
 
 
 class PropertiesResponse(BaseModel):
@@ -119,6 +120,7 @@ class ServerSummary(BaseModel):
     extra_jvm_args: str = ""
     auto_start: bool = False
     java_path_override: str = ""
+    protected: bool = False
     created_at: datetime
     # 运行时派生字段
     status: str = "stopped"

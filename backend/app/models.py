@@ -54,6 +54,8 @@ class Server(Base):
     auto_start: Mapped[bool] = mapped_column(default=False)
     # 指定该实例使用的 java 可执行文件;空 = 按版本自动选择
     java_path_override: Mapped[str] = mapped_column(String(512), default="")
+    # 保护实例:开启后仅 admin 可停;编辑/删除/插件/模组/超平坦/恢复到本服 全禁
+    protected: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 

@@ -13,7 +13,7 @@ from .. import archive_manager as am
 from .. import jobs as jobstore
 from .. import superflat
 from ..database import SessionLocal, get_db
-from ..deps import require_auth, require_helper, require_operate, role_at_least
+from ..deps import ensure_not_protected, require_auth, require_helper, require_operate, role_at_least
 from ..mcdr import manager as mcdr_manager
 from ..models import Archive, Server, User
 from ..schemas import ArchiveOut
@@ -197,6 +197,7 @@ async def restore_archive(
 ) -> dict:
     _get_archive(db, archive_id)
     server = _get_server(db, server_id)
+    ensure_not_protected(server)
     if mcdr_manager.get_status(server) in ("running", "starting", "installing"):
         raise HTTPException(status_code=400, detail="请先停止目标实例再恢复存档")
     job_id = jobstore.create()

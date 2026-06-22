@@ -78,11 +78,6 @@ export default function Servers() {
     }
   }
 
-  const handleDelete = (server: ServerSummary) => {
-    if (!window.confirm(`确定删除服务器「${server.name}」?该实例的所有文件将被移除,且不可恢复。`)) return
-    void runAction(server.id, () => deleteServer(server.id), '已删除')
-  }
-
   return (
     <PageShell
       title="服务器实例"
@@ -192,7 +187,7 @@ export default function Servers() {
                                 <Terminal className="h-4 w-4" />
                               </Button>
                             ) : null}
-                            {canOperate && active ? (
+                            {active && (server.protected ? canAdmin : canOperate) ? (
                               <Button
                                 type="button"
                                 variant="outline"
@@ -244,19 +239,6 @@ export default function Servers() {
                                 <Download className="h-4 w-4" />
                               </Button>
                             ) : null}
-                            {canAdmin ? (
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                                disabled={busy}
-                                title="删除"
-                                onClick={() => handleDelete(server)}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            ) : null}
                           </div>
                         </TableCell>
                       </TableRow>
@@ -282,6 +264,10 @@ export default function Servers() {
         server={editServer}
         onClose={() => setEditServer(null)}
         onSaved={() => {
+          setEditServer(null)
+          refresh()
+        }}
+        onDeleted={() => {
           setEditServer(null)
           refresh()
         }}
@@ -499,10 +485,12 @@ function EditServerDialog({
   server,
   onClose,
   onSaved,
+  onDeleted,
 }: {
   server: ServerSummary | null
   onClose: () => void
   onSaved: () => void
+  onDeleted: () => void
 }) {
   const { showToast } = useGlobalToast()
   const [tab, setTab] = useState('basic')
@@ -513,6 +501,7 @@ function EditServerDialog({
   const [port, setPort] = useState('25565')
   const [extraJvm, setExtraJvm] = useState('')
   const [autoStart, setAutoStart] = useState(false)
+  const [protectedFlag, setProtectedFlag] = useState(false)
   const [javaOverride, setJavaOverride] = useState('')
   const [props, setProps] = useState<Record<string, string>>({})
   const [versions, setVersions] = useState<string[]>([])
@@ -520,9 +509,12 @@ function EditServerDialog({
   const [javaInfo, setJavaInfo] = useState<JavaInfo | null>(null)
   const [javaInstalls, setJavaInstalls] = useState<JavaInstall[]>([])
   const [submitting, setSubmitting] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   const open = server !== null
   const running = server?.status === 'running' || server?.status === 'starting'
+  // 实例当前是否受保护(以服务器现状为准):锁定其它编辑与删除
+  const locked = server?.protected ?? false
 
   useEffect(() => {
     if (!server) return
@@ -534,6 +526,7 @@ function EditServerDialog({
     setPort(String(server.port))
     setExtraJvm(server.extra_jvm_args)
     setAutoStart(server.auto_start)
+    setProtectedFlag(server.protected)
     setJavaOverride(server.java_path_override)
     // 仅在打开/切换实例时初始化,避免列表刷新覆盖正在编辑的内容
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -581,8 +574,37 @@ function EditServerDialog({
 
   const setProp = (key: string, value: string) => setProps((p) => ({ ...p, [key]: value }))
 
+  const doDelete = async () => {
+    if (!server) return
+    if (!window.confirm(`确定删除服务器「${server.name}」?该实例的所有文件将被移除,且不可恢复。`)) return
+    setDeleting(true)
+    try {
+      await deleteServer(server.id)
+      showToast('success', '已删除')
+      onDeleted()
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : '删除失败')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   const submit = async () => {
     if (!server) return
+    // 受保护:本次只取消保护,不应用其它字段(与后端一致)
+    if (locked) {
+      setSubmitting(true)
+      try {
+        await updateServer(server.id, { protected: false })
+        showToast('success', '已取消保护')
+        onSaved()
+      } catch (err) {
+        showToast('error', err instanceof ApiError ? err.message : '操作失败')
+      } finally {
+        setSubmitting(false)
+      }
+      return
+    }
     if (!name.trim()) {
       showToast('error', '名称不能为空')
       return
@@ -598,6 +620,7 @@ function EditServerDialog({
         extra_jvm_args: extraJvm,
         auto_start: autoStart,
         java_path_override: javaOverride,
+        protected: protectedFlag,
       })
       const toWrite = Object.fromEntries(Object.entries(props).filter(([, v]) => v !== ''))
       await updateProperties(server.id, toWrite)
@@ -783,16 +806,39 @@ function EditServerDialog({
               </span>
               <Switch checked={autoStart} onCheckedChange={setAutoStart} />
             </label>
+            <label className="flex items-center justify-between gap-4 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2.5">
+              <span>
+                <span className="block text-sm font-medium">保护实例</span>
+                <span className="block text-xs text-muted-foreground">开启后仅管理员可停止;编辑/删除/插件/模组/超平坦/恢复到本服 全部禁止</span>
+              </span>
+              <Switch checked={protectedFlag} onCheckedChange={setProtectedFlag} />
+            </label>
+            <div className="flex items-center justify-between gap-4 rounded-md border border-destructive/30 px-3 py-2.5">
+              <span>
+                <span className="block text-sm font-medium text-destructive">删除实例</span>
+                <span className="block text-xs text-muted-foreground">移除该实例的所有文件,不可恢复</span>
+              </span>
+              <Button type="button" variant="outline" size="sm" className="gap-1.5 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={locked || deleting} onClick={doDelete}>
+                {deleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                删除
+              </Button>
+            </div>
           </TabsContent>
         </Tabs>
+
+        {locked ? (
+          <p className="mt-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+            实例受保护:请在「高级」里关闭「保护实例」并保存后,才能编辑其它项或删除。
+          </p>
+        ) : null}
 
         <DialogFooter>
           <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>
             取消
           </Button>
-          <Button type="button" className="gap-2" onClick={submit} disabled={submitting}>
+          <Button type="button" className="gap-2" onClick={submit} disabled={submitting || (locked && protectedFlag)}>
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pencil className="h-4 w-4" />}
-            保存
+            {locked ? '取消保护' : '保存'}
           </Button>
         </DialogFooter>
       </DialogContent>

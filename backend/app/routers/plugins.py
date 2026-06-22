@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from .. import jobs as jobstore
 from ..config import PLUGIN_LIBRARY
 from ..database import get_db
-from ..deps import get_settings_row, require_helper
+from ..deps import ensure_not_protected, get_settings_row, require_helper
 from ..mcdr import manager as mcdr_manager
 from ..models import Server
 from ..plugin_manager import manager as plugins
@@ -27,6 +27,15 @@ def _instance_dir(db: Session, server_id: int):
     server = db.get(Server, server_id)
     if server is None:
         raise HTTPException(status_code=404, detail="服务器不存在")
+    return mcdr_manager.instance_dir(server)
+
+
+def _writable_instance_dir(db: Session, server_id: int):
+    """变更类操作用:受保护实例直接拒绝。"""
+    server = db.get(Server, server_id)
+    if server is None:
+        raise HTTPException(status_code=404, detail="服务器不存在")
+    ensure_not_protected(server)
     return mcdr_manager.instance_dir(server)
 
 
@@ -60,7 +69,7 @@ def switch_plugin(
     _: str = Depends(require_helper),
     db: Session = Depends(get_db),
 ) -> dict:
-    inst = _instance_dir(db, server_id)
+    inst = _writable_instance_dir(db, server_id)
     try:
         new_name = plugins.switch_plugin(inst, file_name, enable)
     except FileNotFoundError as exc:
@@ -72,7 +81,7 @@ def switch_plugin(
 def delete_plugin(
     server_id: int, file_name: str, _: str = Depends(require_helper), db: Session = Depends(get_db)
 ) -> dict:
-    plugins.delete_plugin(_instance_dir(db, server_id), file_name)
+    plugins.delete_plugin(_writable_instance_dir(db, server_id), file_name)
     return {"ok": True}
 
 
@@ -83,7 +92,7 @@ async def upload_plugin(
     _: str = Depends(require_helper),
     db: Session = Depends(get_db),
 ) -> dict:
-    inst = _instance_dir(db, server_id)
+    inst = _writable_instance_dir(db, server_id)
     content = await file.read()
     try:
         name = plugins.save_upload(inst, file.filename or "plugin", content)
@@ -122,7 +131,7 @@ def install_from_library(
     _: str = Depends(require_helper),
     db: Session = Depends(get_db),
 ) -> dict:
-    inst = _instance_dir(db, server_id)
+    inst = _writable_instance_dir(db, server_id)
     try:
         name = plugins.install_from_library(PLUGIN_LIBRARY, inst, body.file_name)
     except FileNotFoundError as exc:
@@ -156,6 +165,8 @@ async def replace_library(
     old_id = old["id"]
     old_stripped = _strip_disabled(file_name)
     for server in db.scalars(select(Server)).all():
+        if server.protected:
+            continue  # 受保护实例不被替换波及
         inst = mcdr_manager.instance_dir(server)
         replaced = False
         for item in plugins.list_plugins(inst):
@@ -174,7 +185,7 @@ async def install_plugin(
     _: str = Depends(require_helper),
     db: Session = Depends(get_db),
 ) -> dict:
-    inst = _instance_dir(db, server_id)
+    inst = _writable_instance_dir(db, server_id)
     settings = get_settings_row(db)
     job_id = jobstore.create()
 
