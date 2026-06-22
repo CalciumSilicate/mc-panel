@@ -217,6 +217,7 @@ export default function Servers() {
           consoleServer ? data?.find((s) => s.id === consoleServer.id) ?? consoleServer : null
         }
         onClose={() => setConsoleServer(null)}
+        onChanged={refresh}
       />
     </PageShell>
   )
