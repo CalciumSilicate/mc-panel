@@ -58,16 +58,23 @@ async def get_server_jar_url(mc_version: str) -> str:
     return server["url"]
 
 
-async def download_file(url: str, dest, *, chunk_size: int = 1 << 16) -> None:
+async def download_file(url: str, dest, *, chunk_size: int = 1 << 16, progress=None) -> None:
     """流式下载到 dest(pathlib.Path)。
 
     设读超时:连接停滞 120s 无数据则报错,避免下载永久挂起(只要持续有数据,
-    每读到一块就会重置该计时)。
+    每读到一块就会重置该计时)。progress 回调签名 (downloaded:int, total:int)。
     """
     timeout = httpx.Timeout(30.0, read=120.0)
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
         async with client.stream("GET", url) as resp:
             resp.raise_for_status()
+            total = int(resp.headers.get("content-length") or 0)
+            downloaded = 0
+            if progress:
+                progress(downloaded, total)
             with open(dest, "wb") as fp:
                 async for chunk in resp.aiter_bytes(chunk_size):
                     fp.write(chunk)
+                    downloaded += len(chunk)
+                    if progress:
+                        progress(downloaded, total)

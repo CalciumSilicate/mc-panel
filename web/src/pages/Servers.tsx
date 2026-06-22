@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Download, Loader2, Pencil, Play, Plus, RefreshCw, Server, Square, Terminal, Trash2 } from 'lucide-react'
+import { Ban, Download, Loader2, Pencil, Play, Plus, RefreshCw, Server, Square, Terminal, Trash2 } from 'lucide-react'
 
 import {
   type JavaInfo,
   type ServerSummary,
+  cancelInstall,
   createServer,
   deleteServer,
   getJavaInfo,
@@ -28,6 +29,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Progress } from '@/components/ui/progress'
 import { ServerConsoleDialog } from '@/components/ServerConsoleDialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -50,7 +52,7 @@ export default function Servers() {
   const [editServer, setEditServer] = useState<ServerSummary | null>(null)
 
   useEffect(() => {
-    const timer = window.setInterval(refresh, 4000)
+    const timer = window.setInterval(refresh, 2000)
     return () => window.clearInterval(timer)
   }, [refresh])
 
@@ -141,10 +143,22 @@ export default function Servers() {
                         </TableCell>
                         <TableCell className="font-mono text-muted-foreground">{server.port}</TableCell>
                         <TableCell>
-                          <Badge variant="outline" className={cn('gap-1 text-[11px]', meta.tone)}>
-                            {installing ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                            {meta.label}
-                          </Badge>
+                          {installing ? (
+                            <div className="flex w-28 flex-col gap-1">
+                              <Badge variant="outline" className={cn('w-fit gap-1 text-[11px]', meta.tone)}>
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                                {meta.label}
+                                {server.install ? ` ${server.install.percent}%` : ''}
+                              </Badge>
+                              {server.install && server.install.total > 0 ? (
+                                <Progress value={server.install.percent} className="h-1" />
+                              ) : null}
+                            </div>
+                          ) : (
+                            <Badge variant="outline" className={cn('gap-1 text-[11px]', meta.tone)}>
+                              {meta.label}
+                            </Badge>
+                          )}
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center justify-end gap-1.5">
@@ -195,6 +209,19 @@ export default function Servers() {
                                 启动
                               </Button>
                             )}
+                            {installing ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                                disabled={busy}
+                                title="终止安装"
+                                onClick={() => runAction(server.id, () => cancelInstall(server.id), '已终止安装')}
+                              >
+                                <Ban className="h-4 w-4" />
+                              </Button>
+                            ) : null}
                             {server.status === 'error' || server.status === 'new_setup' ? (
                               <Button
                                 type="button"
@@ -202,7 +229,7 @@ export default function Servers() {
                                 size="icon"
                                 className="h-8 w-8 text-muted-foreground hover:text-foreground"
                                 disabled={busy}
-                                title="重新安装"
+                                title="重试安装"
                                 onClick={() => runAction(server.id, () => reinstallServer(server.id), '已开始重新安装')}
                               >
                                 <Download className="h-4 w-4" />

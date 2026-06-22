@@ -6,7 +6,6 @@ import uuid
 
 from fastapi import (
     APIRouter,
-    BackgroundTasks,
     Depends,
     HTTPException,
     Query,
@@ -24,6 +23,7 @@ from ..models import Server
 from ..security import decode_token
 from ..schemas import (
     CreateServerResponse,
+    InstallProgress,
     JavaInfo,
     ServerCreate,
     ServerSummary,
@@ -38,6 +38,14 @@ router = APIRouter(prefix="/servers", tags=["servers"])
 def _to_summary(server: Server) -> ServerSummary:
     summary = ServerSummary.model_validate(server)
     summary.status = manager.get_status(server)
+    if summary.status == "installing":
+        prog = manager.install_progress(server.id)
+        if prog is not None:
+            downloaded, total = prog
+            percent = round(downloaded / total * 100, 1) if total else 0.0
+            summary.install = InstallProgress(
+                downloaded=downloaded, total=total, percent=percent
+            )
     return summary
 
 
@@ -96,10 +104,11 @@ async def _install_in_background(server_id: int, java_command: str) -> None:
             pass
     finally:
         db.close()
+        manager.clear_install_task(server_id)
 
 
 async def _redownload_in_background(server_id: int) -> None:
-    """后台:更换版本后重新下载 server.jar。"""
+    """后台:更换版本/重试时重新下载 server.jar。"""
     db = SessionLocal()
     try:
         server = db.get(Server, server_id)
@@ -111,12 +120,17 @@ async def _redownload_in_background(server_id: int) -> None:
             pass
     finally:
         db.close()
+        manager.clear_install_task(server_id)
+
+
+def _launch_install(server_id: int, coro) -> None:
+    """创建可中止的安装任务并登记到 manager。"""
+    manager.set_install_task(server_id, asyncio.create_task(coro))
 
 
 @router.post("", response_model=CreateServerResponse)
-def create_server(
+async def create_server(
     payload: ServerCreate,
-    background: BackgroundTasks,
     _: str = Depends(require_auth),
     db: Session = Depends(get_db),
 ) -> CreateServerResponse:
@@ -140,8 +154,8 @@ def create_server(
     db.commit()
     db.refresh(server)
 
-    # 后台下载/初始化,接口立即返回(状态为 installing)。
-    background.add_task(_install_in_background, server.id, settings.java_command)
+    # 后台下载/初始化,接口立即返回(状态为 installing),任务可中止。
+    _launch_install(server.id, _install_in_background(server.id, settings.java_command))
     return CreateServerResponse(id=server.id)
 
 
@@ -153,10 +167,9 @@ def _get_server_or_404(db: Session, server_id: int) -> Server:
 
 
 @router.patch("/{server_id}", response_model=ServerSummary)
-def update_server(
+async def update_server(
     server_id: int,
     payload: ServerUpdate,
-    background: BackgroundTasks,
     _: str = Depends(require_auth),
     db: Session = Depends(get_db),
 ) -> ServerSummary:
@@ -198,15 +211,14 @@ def update_server(
     if port_changed:
         manager.apply_port(server)
     if version_changed:
-        background.add_task(_redownload_in_background, server.id)
+        _launch_install(server.id, _redownload_in_background(server.id))
 
     return _to_summary(server)
 
 
 @router.post("/{server_id}/reinstall")
-def reinstall_server(
+async def reinstall_server(
     server_id: int,
-    background: BackgroundTasks,
     _: str = Depends(require_auth),
     db: Session = Depends(get_db),
 ) -> dict:
@@ -214,7 +226,21 @@ def reinstall_server(
     server = _get_server_or_404(db, server_id)
     if manager.get_status(server) in ("running", "installing"):
         raise HTTPException(status_code=400, detail="运行中或安装中,无法重新安装")
-    background.add_task(_redownload_in_background, server.id)
+    _launch_install(server.id, _redownload_in_background(server.id))
+    return {"ok": True}
+
+
+@router.post("/{server_id}/cancel-install")
+async def cancel_install(
+    server_id: int,
+    _: str = Depends(require_auth),
+    db: Session = Depends(get_db),
+) -> dict:
+    """中止进行中的安装/下载。"""
+    server = _get_server_or_404(db, server_id)
+    if manager.get_status(server) != "installing":
+        raise HTTPException(status_code=400, detail="该实例不在安装中")
+    await manager.cancel_install(server)
     return {"ok": True}
 
 

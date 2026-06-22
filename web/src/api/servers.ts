@@ -12,6 +12,12 @@ export type ServerStatus =
   | 'stopped'
   | 'error'
 
+export interface InstallProgress {
+  downloaded: number
+  total: number
+  percent: number
+}
+
 export interface ServerSummary {
   id: number
   name: string
@@ -22,6 +28,7 @@ export interface ServerSummary {
   port: number
   created_at: string
   status: ServerStatus
+  install?: InstallProgress | null
 }
 
 export interface CreateServerInput {
@@ -95,4 +102,8 @@ export function deleteServer(id: number): Promise<{ ok: boolean }> {
 
 export function reinstallServer(id: number): Promise<{ ok: boolean }> {
   return apiRequest<{ ok: boolean }>(`/servers/${id}/reinstall`, { method: 'POST', body: '{}' })
+}
+
+export function cancelInstall(id: number): Promise<{ ok: boolean }> {
+  return apiRequest<{ ok: boolean }>(`/servers/${id}/cancel-install`, { method: 'POST', body: '{}' })
 }

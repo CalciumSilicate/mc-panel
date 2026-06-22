@@ -10,7 +10,7 @@ from ..database import get_db
 from ..deps import require_auth
 from ..mcdr import STATUS_RUNNING, manager
 from ..models import Server
-from ..schemas import DashboardOverview, ResourceUsage, ServerSummary
+from ..schemas import DashboardOverview, InstallProgress, ResourceUsage, ServerSummary
 
 router = APIRouter(prefix="/system", tags=["system"])
 
@@ -32,6 +32,15 @@ def overview(
         summary.status = manager.get_status(s)
         if summary.status == STATUS_RUNNING:
             running += 1
+        if summary.status == "installing":
+            prog = manager.install_progress(s.id)
+            if prog is not None:
+                downloaded, total = prog
+                summary.install = InstallProgress(
+                    downloaded=downloaded,
+                    total=total,
+                    percent=round(downloaded / total * 100, 1) if total else 0.0,
+                )
         summaries.append(summary)
 
     return DashboardOverview(

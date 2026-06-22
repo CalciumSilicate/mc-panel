@@ -36,6 +36,12 @@ class ServerUpdate(BaseModel):
     mc_version: str | None = None
 
 
+class InstallProgress(BaseModel):
+    downloaded: int
+    total: int
+    percent: float
+
+
 class ServerSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -49,6 +55,7 @@ class ServerSummary(BaseModel):
     created_at: datetime
     # 运行时派生字段
     status: str = "stopped"
+    install: InstallProgress | None = None
 
 
 class CreateServerResponse(BaseModel):

@@ -109,6 +109,10 @@ class MCDRManager:
         self._subscribers: dict[int, set[asyncio.Queue[str]]] = {}
         # server_id -> 读取 stdout 的后台任务
         self._reader_tasks: dict[int, asyncio.Task] = {}
+        # server_id -> (已下载字节, 总字节);安装/下载进度
+        self._install_progress: dict[int, tuple[int, int]] = {}
+        # server_id -> 安装(下载)任务,用于中止
+        self._install_tasks: dict[int, asyncio.Task] = {}
 
     # ---------- 路径 ----------
     def instance_dir(self, server: Server) -> Path:
@@ -141,6 +145,28 @@ class MCDRManager:
             return STATUS_RUNNING
         return STATUS_STOPPED
 
+    # ---------- 安装进度 / 任务 ----------
+    def install_progress(self, server_id: int) -> tuple[int, int] | None:
+        return self._install_progress.get(server_id)
+
+    def set_install_task(self, server_id: int, task: asyncio.Task) -> None:
+        self._install_tasks[server_id] = task
+
+    def clear_install_task(self, server_id: int) -> None:
+        self._install_tasks.pop(server_id, None)
+        self._install_progress.pop(server_id, None)
+
+    async def cancel_install(self, server: Server) -> None:
+        """中止进行中的安装:取消下载任务并把实例标记为失败(可重试)。"""
+        task = self._install_tasks.get(server.id)
+        if task is not None and not task.done():
+            task.cancel()
+        inst = self.instance_dir(server)
+        (inst / _INSTALLING_MARKER).unlink(missing_ok=True)
+        (inst / _FAILED_MARKER).write_text("已取消安装,可点「重试」重新下载", encoding="utf-8")
+        self._install_progress.pop(server.id, None)
+        self._install_tasks.pop(server.id, None)
+
     # ---------- 创建 ----------
     async def create_instance(self, server: Server, java_command: str) -> None:
         """生成实例目录并下载服务端 jar。耗时较长,应在后台任务中调用。"""
@@ -155,6 +181,7 @@ class MCDRManager:
             if failed.exists():
                 failed.unlink()
             marker.write_text("installing", encoding="utf-8")
+            self._install_progress[server.id] = (0, 0)
 
             (inst / "config.yml").write_text(
                 yaml.safe_dump(
@@ -171,12 +198,18 @@ class MCDRManager:
             )
 
             jar_url = await get_server_jar_url(server.mc_version)
-            await download_file(jar_url, server_dir / "server.jar")
+            await download_file(
+                jar_url,
+                server_dir / "server.jar",
+                progress=lambda d, t: self._install_progress.__setitem__(server.id, (d, t)),
+            )
 
             marker.unlink(missing_ok=True)
+            self._install_progress.pop(server.id, None)
         except Exception as exc:  # noqa: BLE001 - 记录失败原因供前端显示
             marker.unlink(missing_ok=True)
             failed.write_text(str(exc), encoding="utf-8")
+            self._install_progress.pop(server.id, None)
             raise
 
     # ---------- 控制台:缓冲与订阅 ----------
@@ -309,12 +342,19 @@ class MCDRManager:
         try:
             failed.unlink(missing_ok=True)
             marker.write_text("installing", encoding="utf-8")
+            self._install_progress[server.id] = (0, 0)
             jar_url = await get_server_jar_url(server.mc_version)
-            await download_file(jar_url, server_dir / "server.jar")
+            await download_file(
+                jar_url,
+                server_dir / "server.jar",
+                progress=lambda d, t: self._install_progress.__setitem__(server.id, (d, t)),
+            )
             marker.unlink(missing_ok=True)
+            self._install_progress.pop(server.id, None)
         except Exception as exc:  # noqa: BLE001
             marker.unlink(missing_ok=True)
             failed.write_text(str(exc), encoding="utf-8")
+            self._install_progress.pop(server.id, None)
             raise
 
     # ---------- 启停 ----------
