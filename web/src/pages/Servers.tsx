@@ -668,7 +668,6 @@ function EditServerDialog({
 
           {/* 服务器属性 */}
           <TabsContent value="properties" className="space-y-4 py-2">
-            <p className="text-xs text-muted-foreground">对应 server.properties,重启后生效。</p>
             <div className="space-y-2">
               <Label htmlFor="prop-motd">服务器描述 (MOTD)</Label>
               <Input id="prop-motd" value={props['motd'] ?? ''} onChange={(e) => setProp('motd', e.target.value)} />
@@ -714,7 +713,7 @@ function EditServerDialog({
               </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="prop-seed">世界种子 (level-seed)</Label>
+              <Label htmlFor="prop-seed">世界种子</Label>
               <Input id="prop-seed" value={props['level-seed'] ?? ''} onChange={(e) => setProp('level-seed', e.target.value)} placeholder="留空随机;仅对新世界生效" />
             </div>
             <div className="grid grid-cols-3 gap-3">
@@ -736,7 +735,6 @@ function EditServerDialog({
                 placeholder="如 -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
                 className="font-mono"
               />
-              <p className="text-xs text-muted-foreground">拼到 -Xmx 与 -jar 之间,重启生效。</p>
             </div>
             <div className="space-y-2">
               <Label>指定 Java</Label>
@@ -760,7 +758,6 @@ function EditServerDialog({
                   ))}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground">覆盖自动选择;Java 池在「设置」里维护。</p>
             </div>
             <label className="flex items-center justify-between gap-4 rounded-md border border-border/70 px-3 py-2.5">
               <span>
