@@ -62,7 +62,7 @@ def _server_properties_text(port: int) -> str:
             "online-mode=true",
             "max-players=20",
             "view-distance=10",
-            "motd=A Minecraft Server managed by mc-panel",
+            "motd=A Minecraft Server",
             "enable-rcon=false",
             "",
         ]
