@@ -11,6 +11,7 @@ export interface SuperflatApplyInput {
   layers: SuperflatLayer[]
   biome: string
   structures: string[]
+  generate_structures: boolean
   overwrite: boolean
 }
 

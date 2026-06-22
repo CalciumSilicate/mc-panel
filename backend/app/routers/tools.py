@@ -27,6 +27,7 @@ class SuperflatApply(BaseModel):
     layers: list[Layer]
     biome: str = "minecraft:plains"
     structures: list[str] = []
+    generate_structures: bool = False
     overwrite: bool = False
 
 
@@ -54,6 +55,7 @@ def superflat_apply(
             [ly.model_dump() for ly in body.layers],
             body.biome,
             body.structures,
+            generate_structures=body.generate_structures,
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"生成 level.dat 失败: {exc}")

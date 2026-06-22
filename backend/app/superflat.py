@@ -69,12 +69,13 @@ def _flat_settings(layers: list[dict], biome: str, structures: list[str]) -> Com
     return settings
 
 
-def _world_gen_settings(layers, biome, structures, seed: int) -> Compound:
+def _world_gen_settings(layers, biome, structures, seed: int, generate_structures: bool) -> Compound:
+    # 只在「生成结构」开启时给 overrides;关闭时下面 generate_features=0 全局禁用
     overworld = Compound({
         "type": String("minecraft:overworld"),
         "generator": Compound({
             "type": String("minecraft:flat"),
-            "settings": _flat_settings(layers, biome, structures),
+            "settings": _flat_settings(layers, biome, structures if generate_structures else []),
         }),
     })
     nether = Compound({
@@ -98,7 +99,8 @@ def _world_gen_settings(layers, biome, structures, seed: int) -> Compound:
     })
     return Compound({
         "seed": Long(seed),
-        "generate_features": Byte(1),
+        # 世界的「生成结构」总开关:0 = 完全禁用所有结构
+        "generate_features": Byte(1 if generate_structures else 0),
         "bonus_chest": Byte(0),
         "dimensions": Compound({
             "minecraft:overworld": overworld,
@@ -108,13 +110,13 @@ def _world_gen_settings(layers, biome, structures, seed: int) -> Compound:
     })
 
 
-def _old_generator_options(layers, biome, structures) -> str:
+def _old_generator_options(layers, biome, structures, generate_structures: bool) -> str:
     payload: dict = {
         "layers": [{"block": ly["block"], "height": int(ly["height"])} for ly in layers],
         "biome": biome,
     }
-    if structures:
-        # 旧格式 structures 为 {name: {}}(去掉命名空间)
+    # structures 字段存在即生成结构;完全禁用则整段省略
+    if generate_structures and structures:
         payload["structures"] = {s.split(":")[-1]: {} for s in structures}
     return json.dumps(payload, separators=(",", ":"))
 
@@ -150,6 +152,7 @@ def build_level_dat(
     layers: list[dict],
     biome: str,
     structures: list[str],
+    generate_structures: bool = False,
     seed: int | None = None,
 ) -> bytes:
     if not layers:
@@ -160,11 +163,16 @@ def build_level_dat(
     data = _base_data(mc_version, data_version, seed)
 
     if data_version >= _NEW_FORMAT_MIN:
-        data["WorldGenSettings"] = _world_gen_settings(layers, biome, structures, seed)
+        data["WorldGenSettings"] = _world_gen_settings(
+            layers, biome, structures, seed, generate_structures
+        )
     else:
         data["generatorName"] = String("flat")
         data["generatorVersion"] = Int(0)
-        data["generatorOptions"] = String(_old_generator_options(layers, biome, structures))
+        data["generatorOptions"] = String(
+            _old_generator_options(layers, biome, structures, generate_structures)
+        )
+        data["MapFeatures"] = Byte(1 if generate_structures else 0)
         data["RandomSeed"] = Long(seed)
 
     nbt_file = nbtlib.File({"Data": data})
