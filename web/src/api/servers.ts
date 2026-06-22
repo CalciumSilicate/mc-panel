@@ -55,6 +55,24 @@ export function listServers(): Promise<ServerSummary[]> {
 
 export type VersionChannel = 'release' | 'snapshot' | 'experimental'
 
+export interface VelocityConfig {
+  motd: string
+  show_max_players: number
+  online_mode: boolean
+  forwarding_mode: string
+}
+
+export function getVelocityConfig(id: number): Promise<VelocityConfig> {
+  return apiRequest<VelocityConfig>(`/servers/${id}/velocity-config`)
+}
+
+export function updateVelocityConfig(id: number, cfg: VelocityConfig): Promise<VelocityConfig> {
+  return apiRequest<VelocityConfig>(`/servers/${id}/velocity-config`, {
+    method: 'PATCH',
+    body: JSON.stringify(cfg),
+  })
+}
+
 export function getServerVersions(
   type: ServerType,
   channel: VersionChannel = 'release',

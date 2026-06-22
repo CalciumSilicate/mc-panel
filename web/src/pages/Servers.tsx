@@ -9,16 +9,19 @@ import {
   cancelInstall,
   createServer,
   deleteServer,
+  type VelocityConfig,
   getJavaInfo,
   getLoaderVersions,
   getProperties,
   getServerVersions,
+  getVelocityConfig,
   listServers,
   reinstallServer,
   startServer,
   stopServer,
   updateProperties,
   updateServer,
+  updateVelocityConfig,
 } from '@/api/servers'
 import { type JavaInstall, getSettings } from '@/api/settings'
 import { useAuth } from '@/components/auth-context'
@@ -623,6 +626,7 @@ function EditServerDialog({
   const [protectedFlag, setProtectedFlag] = useState(false)
   const [javaOverride, setJavaOverride] = useState('')
   const [props, setProps] = useState<Record<string, string>>({})
+  const [velCfg, setVelCfg] = useState<VelocityConfig>({ motd: '', show_max_players: 500, online_mode: true, forwarding_mode: 'NONE' })
   const [versions, setVersions] = useState<string[]>([])
   const [versionsLoading, setVersionsLoading] = useState(false)
   const [javaInfo, setJavaInfo] = useState<JavaInfo | null>(null)
@@ -636,6 +640,7 @@ function EditServerDialog({
   const locked = server?.protected ?? false
   // 仅原版支持在编辑里换版本;其它类型版本/核心只读(改核心请重建实例)
   const isVanilla = server?.server_type === 'vanilla'
+  const isVelocity = server?.server_type === 'velocity'
 
   useEffect(() => {
     if (!server) return
@@ -662,7 +667,11 @@ function EditServerDialog({
         .catch(() => undefined)
         .finally(() => setVersionsLoading(false))
     }
-    getProperties(server.id).then(setProps).catch(() => setProps({}))
+    if (isVelocity) {
+      getVelocityConfig(server.id).then(setVelCfg).catch(() => undefined)
+    } else {
+      getProperties(server.id).then(setProps).catch(() => setProps({}))
+    }
     getSettings()
       .then((s) => setJavaInstalls(s.java_installs))
       .catch(() => setJavaInstalls([]))
@@ -745,8 +754,12 @@ function EditServerDialog({
         java_path_override: javaOverride,
         protected: protectedFlag,
       })
-      const toWrite = Object.fromEntries(Object.entries(props).filter(([, v]) => v !== ''))
-      await updateProperties(server.id, toWrite)
+      if (isVelocity) {
+        await updateVelocityConfig(server.id, velCfg)
+      } else {
+        const toWrite = Object.fromEntries(Object.entries(props).filter(([, v]) => v !== ''))
+        await updateProperties(server.id, toWrite)
+      }
       showToast('success', version !== server.mc_version ? '已保存,正在重新下载核心' : '已保存')
       onSaved()
     } catch (err) {
@@ -766,7 +779,7 @@ function EditServerDialog({
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="basic">基本</TabsTrigger>
-            <TabsTrigger value="properties">服务器属性</TabsTrigger>
+            <TabsTrigger value="properties">{isVelocity ? 'Velocity 配置' : '服务器属性'}</TabsTrigger>
             <TabsTrigger value="advanced">高级</TabsTrigger>
           </TabsList>
 
@@ -842,8 +855,40 @@ function EditServerDialog({
             </div>
           </TabsContent>
 
-          {/* 服务器属性 */}
+          {/* 服务器属性 / Velocity 配置 */}
           <TabsContent value="properties" className="space-y-4 py-2">
+            {isVelocity ? (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="vel-motd">MOTD</Label>
+                  <Input id="vel-motd" value={velCfg.motd} onChange={(e) => setVelCfg((c) => ({ ...c, motd: e.target.value }))} />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="vel-max">最大显示玩家数</Label>
+                    <Input id="vel-max" value={String(velCfg.show_max_players)} inputMode="numeric" onChange={(e) => setVelCfg((c) => ({ ...c, show_max_players: Number(e.target.value) || 0 }))} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>玩家信息转发模式</Label>
+                    <Select value={velCfg.forwarding_mode} onValueChange={(v) => setVelCfg((c) => ({ ...c, forwarding_mode: v }))}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="NONE">NONE</SelectItem>
+                        <SelectItem value="LEGACY">LEGACY(BungeeCord)</SelectItem>
+                        <SelectItem value="BUNGEEGUARD">BUNGEEGUARD</SelectItem>
+                        <SelectItem value="MODERN">MODERN(Velocity)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <label className="flex items-center justify-between gap-4 rounded-md border border-border/70 px-3 py-2.5">
+                  <span className="text-sm font-medium">在线模式(正版验证)</span>
+                  <Switch checked={velCfg.online_mode} onCheckedChange={(v) => setVelCfg((c) => ({ ...c, online_mode: v }))} />
+                </label>
+                <p className="text-xs text-muted-foreground">改动保存后,重启 Velocity 生效。后端服务器请在「高级」或直接编辑 velocity.toml 配置。</p>
+              </>
+            ) : (
+            <>
             <div className="space-y-2">
               <Label htmlFor="prop-motd">服务器描述 (MOTD)</Label>
               <Input id="prop-motd" value={props['motd'] ?? ''} onChange={(e) => setProp('motd', e.target.value)} />
@@ -897,6 +942,8 @@ function EditServerDialog({
               <PropSwitch label="白名单" value={props['white-list'] ?? ''} onChange={(v) => setProp('white-list', v)} />
               <PropSwitch label="PVP" value={props['pvp'] ?? ''} onChange={(v) => setProp('pvp', v)} />
             </div>
+            </>
+            )}
           </TabsContent>
 
           {/* 高级 */}

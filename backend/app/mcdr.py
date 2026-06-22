@@ -252,6 +252,15 @@ class MCDRManager:
                     "安装被中断(服务重启),请点「重新安装」重试", encoding="utf-8"
                 )
 
+    def _core_installed(self, server: Server) -> bool:
+        """核心是否已就绪。Forge 现代版无 server.jar,改判 args 文件 / forge jar。"""
+        sd = self.instance_dir(server) / "server"
+        if server.server_type == "forge":
+            if any(sd.glob("libraries/net/minecraftforge/forge/*/win_args.txt")):
+                return True
+            return any(p for p in sd.glob("forge-*.jar") if "installer" not in p.name)
+        return (sd / "server.jar").exists()
+
     # ---------- 状态 ----------
     def get_status(self, server: Server) -> str:
         inst = self.instance_dir(server)
@@ -259,7 +268,7 @@ class MCDRManager:
             return STATUS_INSTALLING
         if (inst / _FAILED_MARKER).exists():
             return STATUS_ERROR
-        if not (inst / "server" / "server.jar").exists():
+        if not self._core_installed(server):
             return STATUS_NEW_SETUP
         proc = self._procs.get(server.id)
         if proc is not None and proc.returncode is None:
@@ -531,6 +540,64 @@ class MCDRManager:
             new_text = f'bind = "0.0.0.0:{server.port}"\n' + text
         path.write_text(new_text, encoding="utf-8")
 
+    def _ensure_velocity_config(self, server: Server) -> None:
+        """velocity.toml 缺失或不合法(无 [servers]/try)时重写完整默认模板,保留端口。"""
+        path = self.instance_dir(server) / "server" / "velocity.toml"
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(_velocity_toml(server.port), encoding="utf-8")
+            return
+        text = path.read_text(encoding="utf-8")
+        if "[servers]" in text and "try" in text:
+            return
+        m = re.search(r'bind\s*=\s*"[^"]*:(\d+)"', text)
+        port = int(m.group(1)) if m else server.port
+        path.write_text(_velocity_toml(port), encoding="utf-8")
+
+    def read_velocity_config(self, server: Server) -> dict:
+        """读取 velocity.toml 的常用项供前端编辑。"""
+        import tomllib
+
+        path = self.instance_dir(server) / "server" / "velocity.toml"
+        data: dict = {}
+        if path.exists():
+            try:
+                data = tomllib.loads(path.read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001
+                data = {}
+        return {
+            "motd": str(data.get("motd", "")),
+            "show_max_players": int(data.get("show-max-players", 500) or 500),
+            "online_mode": bool(data.get("online-mode", True)),
+            "forwarding_mode": str(data.get("player-info-forwarding-mode", "NONE")),
+        }
+
+    def write_velocity_config(self, server: Server, updates: dict) -> None:
+        path = self.instance_dir(server) / "server" / "velocity.toml"
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(_velocity_toml(server.port), encoding="utf-8")
+        text = path.read_text(encoding="utf-8")
+
+        def set_str(t: str, key: str, val: str) -> str:
+            val = val.replace("\\", "\\\\").replace('"', '\\"')
+            nt, n = re.subn(rf'(?m)^{re.escape(key)}\s*=\s*".*"$', f'{key} = "{val}"', t)
+            return nt if n else t.rstrip("\n") + f'\n{key} = "{val}"\n'
+
+        def set_raw(t: str, key: str, val: str) -> str:
+            nt, n = re.subn(rf'(?m)^{re.escape(key)}\s*=\s*.*$', f"{key} = {val}", t)
+            return nt if n else t.rstrip("\n") + f"\n{key} = {val}\n"
+
+        if "motd" in updates:
+            text = set_str(text, "motd", str(updates["motd"]))
+        if "show_max_players" in updates:
+            text = set_raw(text, "show-max-players", str(int(updates["show_max_players"])))
+        if "online_mode" in updates:
+            text = set_raw(text, "online-mode", "true" if updates["online_mode"] else "false")
+        if "forwarding_mode" in updates:
+            text = set_str(text, "player-info-forwarding-mode", str(updates["forwarding_mode"]))
+        path.write_text(text, encoding="utf-8")
+
     async def redownload_jar(self, server: Server, java_command: str = "java") -> None:
         """重装核心(换版本/重试):重跑类型对应安装,保留世界/配置。"""
         inst = self.instance_dir(server)
@@ -557,8 +624,10 @@ class MCDRManager:
         self, server: Server, python_executable: str, java_path: str | None = None
     ) -> None:
         inst = self.instance_dir(server)
-        if not (inst / "server" / "server.jar").exists():
-            raise RuntimeError("服务端 jar 不存在,实例尚未安装完成")
+        if not self._core_installed(server):
+            raise RuntimeError("核心尚未安装完成")
+        if server.server_type == "velocity":
+            self._ensure_velocity_config(server)  # 自愈无效的 velocity.toml
         self._reconcile_config(inst)
         # 用所选 java + 当前内存/额外参数重建启动命令
         self.apply_start_command(server, java=java_path)

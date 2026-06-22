@@ -12,6 +12,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -324,6 +325,38 @@ def update_properties(
         manager.write_properties(server, updates)
     current = manager.read_properties(server)
     return PropertiesResponse(properties={k: current.get(k, "") for k in COMMON_PROPERTY_KEYS})
+
+
+class VelocityConfig(BaseModel):
+    motd: str = ""
+    show_max_players: int = 500
+    online_mode: bool = True
+    forwarding_mode: str = "NONE"
+
+
+@router.get("/{server_id}/velocity-config", response_model=VelocityConfig)
+def get_velocity_config(
+    server_id: int, _: str = Depends(require_admin), db: Session = Depends(get_db)
+) -> VelocityConfig:
+    server = _get_server_or_404(db, server_id)
+    if server.server_type != "velocity":
+        raise HTTPException(status_code=400, detail="非 Velocity 实例")
+    return VelocityConfig(**manager.read_velocity_config(server))
+
+
+@router.patch("/{server_id}/velocity-config", response_model=VelocityConfig)
+def update_velocity_config(
+    server_id: int,
+    payload: VelocityConfig,
+    _: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> VelocityConfig:
+    server = _get_server_or_404(db, server_id)
+    if server.server_type != "velocity":
+        raise HTTPException(status_code=400, detail="非 Velocity 实例")
+    ensure_not_protected(server)
+    manager.write_velocity_config(server, payload.model_dump())
+    return VelocityConfig(**manager.read_velocity_config(server))
 
 
 @router.post("/{server_id}/reinstall")
