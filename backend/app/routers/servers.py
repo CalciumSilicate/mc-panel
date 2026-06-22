@@ -17,11 +17,13 @@ from sqlalchemy.orm import Session
 
 from ..database import SessionLocal, get_db
 from ..deps import get_settings_row, require_auth
+from ..java import choose_java, detect_installs, get_java_paths, required_java_major
 from ..mcdr import manager, sanitize_dir_name
 from ..models import Server
 from ..security import decode_token
 from ..schemas import (
     CreateServerResponse,
+    JavaInfo,
     ServerCreate,
     ServerSummary,
     VersionList,
@@ -51,6 +53,30 @@ async def get_versions(_: str = Depends(require_auth)) -> VersionList:
         return VersionList(versions=await list_release_versions())
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"获取版本列表失败: {exc}")
+
+
+@router.get("/java-info", response_model=JavaInfo)
+def java_info(
+    mc_version: str = Query(...),
+    _: str = Depends(require_auth),
+    db: Session = Depends(get_db),
+) -> JavaInfo:
+    """某 MC 版本的 Java 需求与当前是否可满足(供新建对话框提示)。"""
+    row = get_settings_row(db)
+    installs = detect_installs(get_java_paths(row))
+    java_path, error = choose_java(mc_version, installs, row.java_command)
+    required = required_java_major(mc_version)
+    chosen = next(
+        (i["major"] for i in installs if i["path"] == java_path and i["major"] is not None),
+        None,
+    )
+    return JavaInfo(
+        mc_version=mc_version,
+        required_major=required,
+        satisfied=error is None,
+        chosen_major=chosen,
+        message=error,
+    )
 
 
 async def _install_in_background(server_id: int, java_command: str) -> None:
@@ -114,8 +140,12 @@ async def start_server(
 ) -> dict:
     server = _get_server_or_404(db, server_id)
     settings = get_settings_row(db)
+    installs = detect_installs(get_java_paths(settings))
+    java_path, java_error = choose_java(server.mc_version, installs, settings.java_command)
+    if java_error:
+        raise HTTPException(status_code=400, detail=java_error)
     try:
-        await manager.start(server, settings.python_executable)
+        await manager.start(server, settings.python_executable, java_path)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(exc))
     return {"status": manager.get_status(server)}

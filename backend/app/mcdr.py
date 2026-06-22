@@ -218,12 +218,33 @@ class MCDRManager:
             yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8"
         )
 
+    def _apply_java(self, inst: Path, java_path: str) -> None:
+        """把所选 java 写入实例 config.yml 的 start_command[0](保留其余参数)。"""
+        config_path = inst / "config.yml"
+        if not config_path.exists():
+            return
+        try:
+            data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        except Exception:  # noqa: BLE001
+            return
+        cmd = data.get("start_command")
+        if isinstance(cmd, list) and cmd and cmd[0] != java_path:
+            cmd[0] = java_path
+            data["start_command"] = cmd
+            config_path.write_text(
+                yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8"
+            )
+
     # ---------- 启停 ----------
-    async def start(self, server: Server, python_executable: str) -> None:
+    async def start(
+        self, server: Server, python_executable: str, java_path: str | None = None
+    ) -> None:
         inst = self.instance_dir(server)
         if not (inst / "server" / "server.jar").exists():
             raise RuntimeError("服务端 jar 不存在,实例尚未安装完成")
         self._reconcile_config(inst)
+        if java_path:
+            self._apply_java(inst, java_path)
         existing = self._procs.get(server.id)
         if existing is not None and existing.returncode is None:
             return  # 已在运行

@@ -1,4 +1,4 @@
-"""系统设置:MCDR 运行参数 + 修改管理员密码。"""
+"""系统设置:MCDR 运行参数 + Java 安装池 + 修改管理员密码。"""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
@@ -6,24 +6,30 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..deps import get_settings_row, require_auth
-from ..schemas import SettingsResponse, SettingsUpdate
+from ..java import detect_installs, get_java_paths, set_java_paths
+from ..schemas import JavaInstall, SettingsResponse, SettingsUpdate
 from ..security import hash_password
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
 
-@router.get("", response_model=SettingsResponse)
-def get_settings(
-    _: str = Depends(require_auth), db: Session = Depends(get_db)
-) -> SettingsResponse:
-    row = get_settings_row(db)
+def _to_response(row) -> SettingsResponse:
+    installs = [JavaInstall(**i) for i in detect_installs(get_java_paths(row))]
     return SettingsResponse(
         python_executable=row.python_executable,
         java_command=row.java_command,
         default_min_memory=row.default_min_memory,
         default_max_memory=row.default_max_memory,
         token_expire_minutes=row.token_expire_minutes,
+        java_installs=installs,
     )
+
+
+@router.get("", response_model=SettingsResponse)
+def get_settings(
+    _: str = Depends(require_auth), db: Session = Depends(get_db)
+) -> SettingsResponse:
+    return _to_response(get_settings_row(db))
 
 
 @router.patch("", response_model=SettingsResponse)
@@ -43,14 +49,10 @@ def update_settings(
         row.default_max_memory = payload.default_max_memory
     if payload.token_expire_minutes is not None:
         row.token_expire_minutes = payload.token_expire_minutes
+    if payload.java_paths is not None:
+        set_java_paths(row, payload.java_paths)
     if payload.new_password:
         row.admin_password_hash = hash_password(payload.new_password)
     db.commit()
     db.refresh(row)
-    return SettingsResponse(
-        python_executable=row.python_executable,
-        java_command=row.java_command,
-        default_min_memory=row.default_min_memory,
-        default_max_memory=row.default_max_memory,
-        token_expire_minutes=row.token_expire_minutes,
-    )
+    return _to_response(row)

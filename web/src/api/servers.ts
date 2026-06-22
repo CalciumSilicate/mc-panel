@@ -40,6 +40,18 @@ export function getVanillaVersions(): Promise<string[]> {
   return apiRequest<{ versions: string[] }>('/servers/versions').then((r) => r.versions)
 }
 
+export interface JavaInfo {
+  mc_version: string
+  required_major: number | null
+  satisfied: boolean
+  chosen_major: number | null
+  message: string | null
+}
+
+export function getJavaInfo(mcVersion: string): Promise<JavaInfo> {
+  return apiRequest<JavaInfo>(`/servers/java-info?mc_version=${encodeURIComponent(mcVersion)}`)
+}
+
 export function createServer(input: CreateServerInput): Promise<{ id: number }> {
   return apiRequest<{ id: number }>('/servers', {
     method: 'POST',

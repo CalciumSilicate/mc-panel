@@ -2,12 +2,18 @@ import { apiRequest } from '@/api/client'
 
 /** 系统设置:MCDR 运行参数 + 管理员密码。 */
 
+export interface JavaInstall {
+  path: string
+  major: number | null
+}
+
 export interface PanelSettings {
   python_executable: string
   java_command: string
   default_min_memory: string
   default_max_memory: string
   token_expire_minutes: number
+  java_installs: JavaInstall[]
 }
 
 export interface SettingsPatch {
@@ -16,6 +22,7 @@ export interface SettingsPatch {
   default_min_memory?: string
   default_max_memory?: string
   token_expire_minutes?: number
+  java_paths?: string[]
   new_password?: string
 }
 

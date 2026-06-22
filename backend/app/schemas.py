@@ -51,6 +51,21 @@ class VersionList(BaseModel):
     versions: list[str]
 
 
+class JavaInstall(BaseModel):
+    path: str
+    major: int | None = None
+
+
+class JavaInfo(BaseModel):
+    """某 MC 版本的 Java 需求与当前是否可满足(供新建对话框提示)。"""
+
+    mc_version: str
+    required_major: int | None
+    satisfied: bool
+    chosen_major: int | None = None
+    message: str | None = None
+
+
 # ---------- 仪表盘 ----------
 class ResourceUsage(BaseModel):
     used_gb: float
@@ -74,6 +89,8 @@ class SettingsResponse(BaseModel):
     default_min_memory: str
     default_max_memory: str
     token_expire_minutes: int
+    # Java 安装池(带探测到的大版本)
+    java_installs: list[JavaInstall] = []
 
 
 class SettingsUpdate(BaseModel):
@@ -82,5 +99,7 @@ class SettingsUpdate(BaseModel):
     default_min_memory: str | None = None
     default_max_memory: str | None = None
     token_expire_minutes: int | None = Field(default=None, ge=5)
+    # Java 安装池路径列表(整体替换);为 None 时不改动
+    java_paths: list[str] | None = None
     # 仅在需要修改时传入
     new_password: str | None = Field(default=None, min_length=1)

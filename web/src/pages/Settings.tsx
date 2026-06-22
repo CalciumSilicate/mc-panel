@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
-import { Save } from 'lucide-react'
+import { Plus, Save, Trash2 } from 'lucide-react'
 
 import { ApiError } from '@/api/client'
 import { type SettingsPatch, getSettings, updateSettings } from '@/api/settings'
 import { InlineLoader } from '@/components/PageLoader'
 import { PageSurface } from '@/components/layout/PageScaffold'
 import { TabbedSettingsPage } from '@/components/layout/TabbedSettingsPage'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -36,6 +37,8 @@ export default function Settings() {
   const [tokenExpire, setTokenExpire] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [javaPaths, setJavaPaths] = useState<string[]>([])
+  const [newJavaPath, setNewJavaPath] = useState('')
 
   useEffect(() => {
     if (!data) return
@@ -44,7 +47,16 @@ export default function Settings() {
     setMinMem(data.default_min_memory)
     setMaxMem(data.default_max_memory)
     setTokenExpire(String(data.token_expire_minutes))
+    setJavaPaths(data.java_installs.map((i) => i.path))
   }, [data])
+
+  const majorOf = (path: string) => data?.java_installs.find((i) => i.path === path)?.major ?? null
+  const addJavaPath = () => {
+    const p = newJavaPath.trim()
+    if (!p || javaPaths.includes(p)) return
+    setJavaPaths((prev) => [...prev, p])
+    setNewJavaPath('')
+  }
 
   const save = async () => {
     if (newPassword && newPassword !== confirmPassword) {
@@ -57,6 +69,7 @@ export default function Settings() {
       default_min_memory: minMem.trim(),
       default_max_memory: maxMem.trim(),
       token_expire_minutes: Number(tokenExpire) || undefined,
+      java_paths: javaPaths,
     }
     if (newPassword) patch.new_password = newPassword
     setSaving(true)
@@ -119,8 +132,9 @@ export default function Settings() {
               <p className="text-xs text-muted-foreground">用于以 <code>python -m mcdreforged</code> 启动实例,需已安装 MCDReforged。</p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="java-cmd">Java 命令</Label>
+              <Label htmlFor="java-cmd">默认 Java 命令</Label>
               <Input id="java-cmd" value={javaCmd} onChange={(e) => setJavaCmd(e.target.value)} placeholder="java" />
+              <p className="text-xs text-muted-foreground">未配置 Java 池、或版本未知时的兜底命令。</p>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
@@ -135,6 +149,64 @@ export default function Settings() {
             <div className="space-y-2">
               <Label htmlFor="token-expire">登录有效期(分钟)</Label>
               <Input id="token-expire" value={tokenExpire} onChange={(e) => setTokenExpire(e.target.value)} inputMode="numeric" />
+            </div>
+          </div>
+
+          <div className="mt-6 space-y-3 border-t border-border/60 pt-5 sm:max-w-lg">
+            <div>
+              <Label>Java 安装池</Label>
+              <p className="mt-1 text-xs text-muted-foreground">
+                登记多个 Java 可执行文件,启动实例时按 MC 版本自动选「满足要求里最低」的那个。保存后显示探测到的版本。
+              </p>
+            </div>
+            <div className="space-y-2">
+              {javaPaths.length === 0 ? (
+                <p className="text-sm text-muted-foreground">尚未添加。</p>
+              ) : (
+                javaPaths.map((path) => {
+                  const major = majorOf(path)
+                  return (
+                    <div key={path} className="flex items-center gap-2 rounded-md border border-border/70 px-3 py-2">
+                      <Badge
+                        variant="outline"
+                        className={major == null
+                          ? 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+                          : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'}
+                      >
+                        {major == null ? '未识别' : `Java ${major}`}
+                      </Badge>
+                      <span className="min-w-0 flex-1 truncate font-mono text-xs" title={path}>{path}</span>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                        onClick={() => setJavaPaths((prev) => prev.filter((p) => p !== path))}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <Input
+                value={newJavaPath}
+                onChange={(e) => setNewJavaPath(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    addJavaPath()
+                  }
+                }}
+                placeholder="Java 可执行文件路径,如 C:\\Java\\jdk-21\\bin\\java.exe"
+                className="font-mono"
+              />
+              <Button type="button" variant="outline" className="gap-1.5 shrink-0" onClick={addJavaPath}>
+                <Plus className="h-4 w-4" />
+                添加
+              </Button>
             </div>
           </div>
         </PageSurface>

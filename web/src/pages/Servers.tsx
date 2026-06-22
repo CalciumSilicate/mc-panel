@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react'
 import { Loader2, Play, Plus, RefreshCw, Server, Square, Terminal, Trash2 } from 'lucide-react'
 
 import {
+  type JavaInfo,
   type ServerSummary,
   createServer,
   deleteServer,
+  getJavaInfo,
   getVanillaVersions,
   listServers,
   startServer,
@@ -238,6 +240,7 @@ function CreateServerDialog({
   const [versions, setVersions] = useState<string[]>([])
   const [versionsLoading, setVersionsLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [javaInfo, setJavaInfo] = useState<JavaInfo | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -250,6 +253,20 @@ function CreateServerDialog({
       .catch((err) => showToast('error', err instanceof ApiError ? err.message : '获取版本列表失败'))
       .finally(() => setVersionsLoading(false))
   }, [open, showToast])
+
+  useEffect(() => {
+    if (!open || !version) {
+      setJavaInfo(null)
+      return
+    }
+    let cancelled = false
+    getJavaInfo(version)
+      .then((info) => !cancelled && setJavaInfo(info))
+      .catch(() => !cancelled && setJavaInfo(null))
+    return () => {
+      cancelled = true
+    }
+  }, [open, version])
 
   const submit = async () => {
     if (!name.trim() || !version) {
@@ -302,6 +319,18 @@ function CreateServerDialog({
                 ))}
               </SelectContent>
             </Select>
+            {javaInfo ? (
+              <p className={cn('text-xs', javaInfo.satisfied ? 'text-muted-foreground' : 'text-destructive')}>
+                {javaInfo.required_major
+                  ? `需要 Java ${javaInfo.required_major}+`
+                  : '所需 Java 版本未知(可能为快照)'}
+                {javaInfo.satisfied
+                  ? javaInfo.chosen_major
+                    ? ` · 将使用 Java ${javaInfo.chosen_major}`
+                    : ' · 将使用默认 Java'
+                  : ` · ${javaInfo.message ?? '没有满足要求的 Java,请先到设置添加'}`}
+              </p>
+            ) : null}
           </div>
           <div className="grid grid-cols-3 gap-3">
             <div className="space-y-2">
