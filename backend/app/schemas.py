@@ -89,6 +89,7 @@ class ServerUpdate(BaseModel):
     max_memory: str | None = None
     port: int | None = None
     mc_version: str | None = None
+    loader_version: str | None = None
     extra_jvm_args: str | None = None
     auto_start: bool | None = None
     java_path_override: str | None = None

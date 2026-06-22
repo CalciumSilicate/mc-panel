@@ -281,11 +281,16 @@ async def update_server(
     if payload.protected is not None:
         server.protected = payload.protected
 
-    version_changed = bool(payload.mc_version) and payload.mc_version != server.mc_version
+    mc_changed = bool(payload.mc_version) and payload.mc_version != server.mc_version
+    loader_changed = payload.loader_version is not None and payload.loader_version != server.loader_version
+    version_changed = mc_changed or loader_changed
     if version_changed:
         if status in ("running", "starting", "installing"):
-            raise HTTPException(status_code=400, detail="更换版本需先停止实例")
-        server.mc_version = payload.mc_version
+            raise HTTPException(status_code=400, detail="更换版本/核心需先停止实例")
+        if mc_changed:
+            server.mc_version = payload.mc_version
+        if loader_changed:
+            server.loader_version = payload.loader_version
 
     db.commit()
     db.refresh(server)

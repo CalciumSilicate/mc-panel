@@ -629,6 +629,9 @@ function EditServerDialog({
   const [velCfg, setVelCfg] = useState<VelocityConfig>({ motd: '', show_max_players: 500, online_mode: true, forwarding_mode: 'NONE' })
   const [versions, setVersions] = useState<string[]>([])
   const [versionsLoading, setVersionsLoading] = useState(false)
+  const [loaders, setLoaders] = useState<string[]>([])
+  const [loaderVersion, setLoaderVersion] = useState('')
+  const [loaderLoading, setLoaderLoading] = useState(false)
   const [javaInfo, setJavaInfo] = useState<JavaInfo | null>(null)
   const [javaInstalls, setJavaInstalls] = useState<JavaInstall[]>([])
   const [submitting, setSubmitting] = useState(false)
@@ -638,15 +641,17 @@ function EditServerDialog({
   const running = server?.status === 'running' || server?.status === 'starting'
   // 实例当前是否受保护(以服务器现状为准):锁定其它编辑与删除
   const locked = server?.protected ?? false
-  // 仅原版支持在编辑里换版本;其它类型版本/核心只读(改核心请重建实例)
-  const isVanilla = server?.server_type === 'vanilla'
-  const isVelocity = server?.server_type === 'velocity'
+  const editType = (server?.server_type ?? 'vanilla') as ServerType
+  const isVelocity = editType === 'velocity'
+  const needsMc = editType !== 'velocity'
+  const needsLoader = editType !== 'vanilla'
 
   useEffect(() => {
     if (!server) return
     setTab('basic')
     setName(server.name)
     setVersion(server.mc_version)
+    setLoaderVersion(server.loader_version)
     setMinMemory(server.min_memory)
     setMaxMemory(server.max_memory)
     setPort(String(server.port))
@@ -660,9 +665,9 @@ function EditServerDialog({
 
   useEffect(() => {
     if (!open || !server) return
-    if (isVanilla) {
+    if (needsMc) {
       setVersionsLoading(true)
-      getServerVersions('vanilla')
+      getServerVersions(editType)
         .then(setVersions)
         .catch(() => undefined)
         .finally(() => setVersionsLoading(false))
@@ -677,6 +682,21 @@ function EditServerDialog({
       .catch(() => setJavaInstalls([]))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, server?.id])
+
+  // 非原版:加载「加载器/核心」版本列表(velocity 无需 mc;fabric/forge 依赖 version)
+  useEffect(() => {
+    if (!open || !needsLoader) return
+    if (editType !== 'velocity' && !version) return
+    setLoaderLoading(true)
+    getLoaderVersions(editType, editType === 'velocity' ? '' : version)
+      .then((list) => {
+        setLoaders(list)
+        setLoaderVersion((cur) => (cur && list.includes(cur) ? cur : list[0] ?? ''))
+      })
+      .catch(() => undefined)
+      .finally(() => setLoaderLoading(false))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, version, editType])
 
   useEffect(() => {
     if (!open || !version) {
@@ -695,12 +715,26 @@ function EditServerDialog({
   const refreshVersions = async () => {
     setVersionsLoading(true)
     try {
-      setVersions(await getServerVersions('vanilla', 'release', true))
+      setVersions(await getServerVersions(editType, 'release', true))
       showToast('success', '版本列表已刷新')
     } catch (err) {
       showToast('error', err instanceof ApiError ? err.message : '刷新失败')
     } finally {
       setVersionsLoading(false)
+    }
+  }
+
+  const refreshLoaders = async () => {
+    setLoaderLoading(true)
+    try {
+      const list = await getLoaderVersions(editType, editType === 'velocity' ? '' : version, true)
+      setLoaders(list)
+      setLoaderVersion((cur) => (cur && list.includes(cur) ? cur : list[0] ?? ''))
+      showToast('success', '版本列表已刷新')
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : '刷新失败')
+    } finally {
+      setLoaderLoading(false)
     }
   }
 
@@ -743,12 +777,14 @@ function EditServerDialog({
     }
     setSubmitting(true)
     try {
+      const coreChanged = version !== server.mc_version || loaderVersion !== server.loader_version
       await updateServer(server.id, {
         name: name.trim(),
         min_memory: minMemory.trim() || '1G',
         max_memory: maxMemory.trim() || '2G',
         port: Number(port) || 25565,
-        mc_version: version,
+        mc_version: needsMc ? version : '',
+        loader_version: needsLoader ? loaderVersion : undefined,
         extra_jvm_args: extraJvm,
         auto_start: autoStart,
         java_path_override: javaOverride,
@@ -760,7 +796,7 @@ function EditServerDialog({
         const toWrite = Object.fromEntries(Object.entries(props).filter(([, v]) => v !== ''))
         await updateProperties(server.id, toWrite)
       }
-      showToast('success', version !== server.mc_version ? '已保存,正在重新下载核心' : '已保存')
+      showToast('success', coreChanged ? '已保存,正在重新安装核心' : '已保存')
       onSaved()
     } catch (err) {
       showToast('error', err instanceof ApiError ? err.message : '保存失败')
@@ -789,12 +825,18 @@ function EditServerDialog({
               <Label htmlFor="edit-name">名称</Label>
               <Input id="edit-name" value={name} onChange={(e) => setName(e.target.value)} />
             </div>
-            {isVanilla ? (
+            <div className="space-y-2">
+              <Label>类型</Label>
+              <div className="rounded-md border border-border/70 px-3 py-2 text-sm text-muted-foreground">
+                {TYPE_LABEL[editType] ?? editType}
+              </div>
+            </div>
+            {needsMc ? (
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-3">
                   <Label htmlFor="edit-version" className="shrink-0">Minecraft 版本</Label>
                   {running ? (
-                    <span className="min-w-0 truncate text-right text-xs text-muted-foreground">运行中不可更换版本,请先停止</span>
+                    <span className="min-w-0 truncate text-right text-xs text-muted-foreground">运行中不可更换,请先停止</span>
                   ) : javaInfo ? (
                     <JavaHintText info={javaInfo} />
                   ) : null}
@@ -808,37 +850,43 @@ function EditServerDialog({
                       {version && !versions.includes(version) ? (
                         <SelectItem value={version}>{version}(当前)</SelectItem>
                       ) : null}
-                      {versions.map((v) => (
-                        <SelectItem key={v} value={v}>
-                          {v}
-                        </SelectItem>
-                      ))}
+                      {versions.map((v) => (<SelectItem key={v} value={v}>{v}</SelectItem>))}
                     </SelectContent>
                   </Select>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    className="shrink-0"
-                    disabled={versionsLoading}
-                    title="刷新版本列表"
-                    onClick={refreshVersions}
-                  >
+                  <Button type="button" variant="outline" size="icon" className="shrink-0" disabled={versionsLoading || running} title="刷新版本列表" onClick={refreshVersions}>
                     <RefreshCw className={cn('h-4 w-4', versionsLoading && 'animate-spin')} />
                   </Button>
                 </div>
               </div>
-            ) : (
+            ) : null}
+            {needsLoader ? (
               <div className="space-y-2">
-                <Label>类型 / 版本</Label>
-                <div className="rounded-md border border-border/70 px-3 py-2 text-sm text-muted-foreground">
-                  {TYPE_LABEL[server?.server_type ?? ''] ?? server?.server_type}
-                  {server?.mc_version ? ` · MC ${server.mc_version}` : ''}
-                  {server?.loader_version ? ` · ${server.loader_version}` : ''}
-                  <span className="block text-xs">更换核心版本请重建实例</span>
+                <div className="flex items-center justify-between gap-3">
+                  <Label className="shrink-0">
+                    {editType === 'forge' ? 'Forge 版本' : editType === 'fabric' ? 'Fabric Loader 版本' : 'Velocity 版本'}
+                  </Label>
+                  {running ? (
+                    <span className="min-w-0 truncate text-right text-xs text-muted-foreground">运行中不可更换,请先停止</span>
+                  ) : null}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Select value={loaderVersion} onValueChange={setLoaderVersion} disabled={loaderLoading || running}>
+                    <SelectTrigger className="flex-1">
+                      <SelectValue placeholder={loaderLoading ? '加载中…' : '选择版本'} />
+                    </SelectTrigger>
+                    <SelectContent className="max-h-72">
+                      {loaderVersion && !loaders.includes(loaderVersion) ? (
+                        <SelectItem value={loaderVersion}>{loaderVersion}(当前)</SelectItem>
+                      ) : null}
+                      {loaders.map((v) => (<SelectItem key={v} value={v}>{v}</SelectItem>))}
+                    </SelectContent>
+                  </Select>
+                  <Button type="button" variant="outline" size="icon" className="shrink-0" disabled={loaderLoading || running} title="刷新版本列表" onClick={refreshLoaders}>
+                    <RefreshCw className={cn('h-4 w-4', loaderLoading && 'animate-spin')} />
+                  </Button>
                 </div>
               </div>
-            )}
+            ) : null}
             <div className="grid grid-cols-3 gap-3">
               <div className="space-y-2">
                 <Label htmlFor="edit-min">最小内存</Label>

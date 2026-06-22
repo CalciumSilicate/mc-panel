@@ -115,6 +115,7 @@ export interface ServerUpdateInput {
   max_memory?: string
   port?: number
   mc_version?: string
+  loader_version?: string
   extra_jvm_args?: string
   auto_start?: boolean
   java_path_override?: string
