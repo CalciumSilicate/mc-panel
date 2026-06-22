@@ -5,6 +5,7 @@ import {
   type JavaInfo,
   type ServerSummary,
   type ServerType,
+  type VersionChannel,
   cancelInstall,
   createServer,
   deleteServer,
@@ -52,6 +53,12 @@ const TYPE_LABEL: Record<string, string> = {
   fabric: 'Fabric',
   forge: 'Forge',
   velocity: 'Velocity',
+}
+
+const CHANNEL_LABEL: Record<VersionChannel, string> = {
+  release: '正式版',
+  snapshot: '快照版',
+  experimental: '实验版',
 }
 
 /**
@@ -329,6 +336,7 @@ function CreateServerDialog({
   const { showToast } = useGlobalToast()
   const [name, setName] = useState('')
   const [type, setType] = useState<ServerType>('vanilla')
+  const [channel, setChannel] = useState<VersionChannel>('release')
   const [mcVersion, setMcVersion] = useState('')
   const [loaderVersion, setLoaderVersion] = useState('')
   const [mcVersions, setMcVersions] = useState<string[]>([])
@@ -343,15 +351,28 @@ function CreateServerDialog({
 
   const needsMc = type !== 'velocity'
   const needsLoader = type !== 'vanilla'
+  const showChannel = type === 'vanilla' || type === 'fabric'
 
   useEffect(() => {
     if (open) {
       setName('')
       setType('vanilla')
+      setChannel('release')
     }
   }, [open])
 
-  // MC/游戏版本(velocity 无需);类型变化时重拉
+  const loadMc = (force = false) => {
+    setMcLoading(true)
+    getServerVersions(type, channel, force)
+      .then((list) => {
+        setMcVersions(list)
+        setMcVersion(list[0] ?? '')
+      })
+      .catch((err) => showToast('error', err instanceof ApiError ? err.message : '获取版本失败'))
+      .finally(() => setMcLoading(false))
+  }
+
+  // MC/游戏版本(velocity 无需);类型/频道变化时重拉
   useEffect(() => {
     if (!open) return
     if (!needsMc) {
@@ -359,16 +380,20 @@ function CreateServerDialog({
       setMcVersion('')
       return
     }
-    setMcLoading(true)
-    getServerVersions(type)
-      .then((list) => {
-        setMcVersions(list)
-        setMcVersion(list[0] ?? '')
-      })
-      .catch((err) => showToast('error', err instanceof ApiError ? err.message : '获取版本失败'))
-      .finally(() => setMcLoading(false))
+    loadMc()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, type])
+  }, [open, type, channel])
+
+  const loadLoaders = (force = false) => {
+    setLoaderLoading(true)
+    getLoaderVersions(type, type === 'velocity' ? '' : mcVersion, force)
+      .then((list) => {
+        setLoaders(list)
+        setLoaderVersion(list[0] ?? '')
+      })
+      .catch((err) => showToast('error', err instanceof ApiError ? err.message : '获取加载器版本失败'))
+      .finally(() => setLoaderLoading(false))
+  }
 
   // 加载器/核心版本:velocity 直接列;fabric/forge 依赖 mcVersion
   useEffect(() => {
@@ -382,14 +407,7 @@ function CreateServerDialog({
       setLoaderVersion('')
       return
     }
-    setLoaderLoading(true)
-    getLoaderVersions(type, type === 'velocity' ? '' : mcVersion)
-      .then((list) => {
-        setLoaders(list)
-        setLoaderVersion(list[0] ?? '')
-      })
-      .catch((err) => showToast('error', err instanceof ApiError ? err.message : '获取加载器版本失败'))
-      .finally(() => setLoaderLoading(false))
+    loadLoaders()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, type, mcVersion])
 
@@ -478,32 +496,56 @@ function CreateServerDialog({
                 <Label htmlFor="srv-version" className="shrink-0">Minecraft 版本</Label>
                 {javaInfo ? <JavaHintText info={javaInfo} /> : null}
               </div>
-              <Select value={mcVersion} onValueChange={setMcVersion} disabled={mcLoading}>
-                <SelectTrigger id="srv-version">
-                  <SelectValue placeholder={mcLoading ? '加载中…' : '选择版本'} />
-                </SelectTrigger>
-                <SelectContent className="max-h-72">
-                  {mcVersions.map((v) => (<SelectItem key={v} value={v}>{v}</SelectItem>))}
-                </SelectContent>
-              </Select>
+              <div className="flex items-center gap-2">
+                {showChannel ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="w-20 shrink-0"
+                    title="切换版本频道"
+                    onClick={() =>
+                      setChannel((c) => (c === 'release' ? 'snapshot' : c === 'snapshot' ? 'experimental' : 'release'))
+                    }
+                  >
+                    {CHANNEL_LABEL[channel]}
+                  </Button>
+                ) : null}
+                <Select value={mcVersion} onValueChange={setMcVersion} disabled={mcLoading}>
+                  <SelectTrigger id="srv-version" className="flex-1">
+                    <SelectValue placeholder={mcLoading ? '加载中…' : '选择版本'} />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-72">
+                    {mcVersions.map((v) => (<SelectItem key={v} value={v}>{v}</SelectItem>))}
+                  </SelectContent>
+                </Select>
+                <Button type="button" variant="outline" size="icon" className="shrink-0" disabled={mcLoading} title="刷新版本列表" onClick={() => loadMc(true)}>
+                  <RefreshCw className={cn('h-4 w-4', mcLoading && 'animate-spin')} />
+                </Button>
+              </div>
             </div>
           ) : null}
 
           {needsLoader ? (
             <div className="space-y-2">
               <Label>{loaderLabel}</Label>
-              <Select
-                value={loaderVersion}
-                onValueChange={setLoaderVersion}
-                disabled={loaderLoading || (type !== 'velocity' && !mcVersion)}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder={loaderLoading ? '加载中…' : '选择版本'} />
-                </SelectTrigger>
-                <SelectContent className="max-h-72">
-                  {loaders.map((v) => (<SelectItem key={v} value={v}>{v}</SelectItem>))}
-                </SelectContent>
-              </Select>
+              <div className="flex items-center gap-2">
+                <Select
+                  value={loaderVersion}
+                  onValueChange={setLoaderVersion}
+                  disabled={loaderLoading || (type !== 'velocity' && !mcVersion)}
+                >
+                  <SelectTrigger className="flex-1">
+                    <SelectValue placeholder={loaderLoading ? '加载中…' : '选择版本'} />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-72">
+                    {loaders.map((v) => (<SelectItem key={v} value={v}>{v}</SelectItem>))}
+                  </SelectContent>
+                </Select>
+                <Button type="button" variant="outline" size="icon" className="shrink-0" disabled={loaderLoading} title="刷新版本列表" onClick={() => loadLoaders(true)}>
+                  <RefreshCw className={cn('h-4 w-4', loaderLoading && 'animate-spin')} />
+                </Button>
+              </div>
             </div>
           ) : null}
 
@@ -644,7 +686,7 @@ function EditServerDialog({
   const refreshVersions = async () => {
     setVersionsLoading(true)
     try {
-      setVersions(await getServerVersions('vanilla', true))
+      setVersions(await getServerVersions('vanilla', 'release', true))
       showToast('success', '版本列表已刷新')
     } catch (err) {
       showToast('error', err instanceof ApiError ? err.message : '刷新失败')

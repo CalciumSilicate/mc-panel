@@ -157,24 +157,57 @@ def _mcdr_config(
 
 
 def _velocity_toml(port: int) -> str:
-    """最小可用的 Velocity 配置;首次启动会补全其余项并生成 forwarding.secret。"""
-    return "\n".join(
-        [
-            'config-version = "2.7"',
-            f'bind = "0.0.0.0:{port}"',
-            'motd = "A Velocity Server"',
-            "show-max-players = 500",
-            "online-mode = true",
-            'player-info-forwarding-mode = "NONE"',
-            'forwarding-secret-file = "forwarding.secret"',
-            "[servers]",
-            "[forced-hosts]",
-            "[advanced]",
-            "[query]",
-            "enabled = false",
-            "",
-        ]
-    )
+    """完整的 Velocity 默认配置(带 bind 端口)。
+
+    Velocity 要求配置合法(至少有 [servers] 与可用的 try 回退)才会启动,
+    因此写入官方默认模板而非精简版。首次启动会生成 forwarding.secret。
+    """
+    return f"""# Config version. Do not change this
+config-version = "2.7"
+bind = "0.0.0.0:{port}"
+motd = "<#09add3>A Velocity Server"
+show-max-players = 500
+online-mode = true
+force-key-authentication = true
+prevent-client-proxy-connections = false
+player-info-forwarding-mode = "NONE"
+forwarding-secret-file = "forwarding.secret"
+announce-forge = false
+kick-existing-players = false
+ping-passthrough = "DISABLED"
+sample-players-in-ping = false
+enable-player-address-logging = true
+
+[servers]
+lobby = "127.0.0.1:30066"
+try = [
+    "lobby"
+]
+
+[forced-hosts]
+
+[advanced]
+compression-threshold = 256
+compression-level = -1
+login-ratelimit = 3000
+connection-timeout = 5000
+read-timeout = 30000
+haproxy-protocol = false
+tcp-fast-open = false
+bungee-plugin-message-channel = true
+show-ping-requests = false
+failover-on-unexpected-server-disconnect = true
+announce-proxy-commands = true
+log-command-executions = false
+log-player-connections = true
+accepts-transfers = false
+
+[query]
+enabled = false
+port = {port}
+map = "Velocity"
+show-plugins = false
+"""
 
 
 def _permission_text() -> str:
@@ -478,7 +511,25 @@ class MCDRManager:
         path.write_text("\n".join(out) + "\n", encoding="utf-8")
 
     def apply_port(self, server: Server) -> None:
-        self.write_properties(server, {"server-port": str(server.port)})
+        if server.server_type == "velocity":
+            self._apply_velocity_bind(server)
+        else:
+            self.write_properties(server, {"server-port": str(server.port)})
+
+    def _apply_velocity_bind(self, server: Server) -> None:
+        """改写 velocity.toml 的 bind 端口;文件不存在则写完整默认模板。"""
+        path = self.instance_dir(server) / "server" / "velocity.toml"
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(_velocity_toml(server.port), encoding="utf-8")
+            return
+        text = path.read_text(encoding="utf-8")
+        new_text, n = re.subn(
+            r'(?m)^bind\s*=\s*".*"', f'bind = "0.0.0.0:{server.port}"', text
+        )
+        if n == 0:
+            new_text = f'bind = "0.0.0.0:{server.port}"\n' + text
+        path.write_text(new_text, encoding="utf-8")
 
     async def redownload_jar(self, server: Server, java_command: str = "java") -> None:
         """重装核心(换版本/重试):重跑类型对应安装,保留世界/配置。"""

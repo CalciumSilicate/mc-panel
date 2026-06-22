@@ -54,7 +54,6 @@ COMMON_PROPERTY_KEYS = [
     "level-seed",
 ]
 from .. import versions as versions_mod
-from ..versions import list_release_versions
 
 router = APIRouter(prefix="/servers", tags=["servers"])
 
@@ -84,18 +83,19 @@ def list_servers(
 @router.get("/versions", response_model=VersionList)
 async def get_versions(
     type: str = Query(default="vanilla"),
+    channel: str = Query(default="release"),  # release / snapshot / experimental
     refresh: bool = Query(default=False),
     _: str = Depends(require_admin),
 ) -> VersionList:
     """各类型可选的 MC/游戏版本(velocity 无 MC 版本,返回空)。"""
     try:
         if type == "fabric":
-            return VersionList(versions=await versions_mod.list_fabric_games(force=refresh))
+            return VersionList(versions=await versions_mod.list_fabric_games(channel, force=refresh))
         if type == "forge":
             return VersionList(versions=await versions_mod.list_forge_games(force=refresh))
         if type == "velocity":
             return VersionList(versions=[])
-        return VersionList(versions=await list_release_versions(force=refresh))
+        return VersionList(versions=await versions_mod.list_mc_versions(channel, force=refresh))
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"获取版本列表失败: {exc}")
 

@@ -53,8 +53,14 @@ export function listServers(): Promise<ServerSummary[]> {
   return apiRequest<ServerSummary[]>('/servers')
 }
 
-export function getServerVersions(type: ServerType, force = false): Promise<string[]> {
-  const params = new URLSearchParams({ type })
+export type VersionChannel = 'release' | 'snapshot' | 'experimental'
+
+export function getServerVersions(
+  type: ServerType,
+  channel: VersionChannel = 'release',
+  force = false,
+): Promise<string[]> {
+  const params = new URLSearchParams({ type, channel })
   if (force) params.set('refresh', 'true')
   return apiRequest<{ versions: string[] }>(`/servers/versions?${params}`).then((r) => r.versions)
 }

@@ -11,18 +11,15 @@ VERSION_MANIFEST_URL = (
     "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
 )
 
-# 正式版列表的内存 TTL 缓存(进程级,所有客户端共享)。
+# 版本清单的内存 TTL 缓存(进程级,所有客户端共享)。
 VERSIONS_CACHE_TTL = 1800  # 30 分钟
-_versions_cache: dict = {"data": None, "ts": 0.0}
+# 缓存完整 manifest 的 (id, type) 列表,按 channel 过滤
+_manifest_cache: dict = {"data": None, "ts": 0.0}
 
 
-async def list_release_versions(limit: int = 60, force: bool = False) -> list[str]:
-    """返回最近的若干正式版(release)版本号,新到旧。
-
-    结果带 TTL 缓存;force=True 时无视缓存强制刷新并更新缓存。
-    """
+async def _manifest_versions(force: bool = False) -> list[dict]:
     now = time.time()
-    cache = _versions_cache
+    cache = _manifest_cache
     fresh = cache["data"] is not None and now - cache["ts"] < VERSIONS_CACHE_TTL
     if force or not fresh:
         async with net.client(timeout=20) as client:
@@ -30,10 +27,30 @@ async def list_release_versions(limit: int = 60, force: bool = False) -> list[st
             resp.raise_for_status()
             data = resp.json()
         cache["data"] = [
-            v["id"] for v in data.get("versions", []) if v.get("type") == "release"
+            {"id": v["id"], "type": v.get("type", "")} for v in data.get("versions", [])
         ]
         cache["ts"] = now
-    return cache["data"][:limit]
+    return cache["data"]
+
+
+def _channel_match(channel: str, vid: str, vtype: str) -> bool:
+    if channel == "release":
+        return vtype == "release"
+    if channel == "snapshot":
+        return vtype == "snapshot" and "experimental" not in vid
+    if channel == "experimental":
+        return "experimental" in vid or vtype in ("old_beta", "old_alpha")
+    return True
+
+
+async def list_mc_versions(channel: str = "release", limit: int = 80, force: bool = False) -> list[str]:
+    """按频道返回 MC 版本号(新到旧):release / snapshot / experimental。"""
+    vers = await _manifest_versions(force)
+    return [v["id"] for v in vers if _channel_match(channel, v["id"], v["type"])][:limit]
+
+
+async def list_release_versions(limit: int = 60, force: bool = False) -> list[str]:
+    return await list_mc_versions("release", limit, force)
 
 
 async def get_server_download(mc_version: str) -> dict:
@@ -87,9 +104,18 @@ async def _cached_json(url: str, ttl: int = VERSIONS_CACHE_TTL, force: bool = Fa
 
 
 # ---- Fabric ----
-async def list_fabric_games(force: bool = False) -> list[str]:
+async def list_fabric_games(channel: str = "release", force: bool = False) -> list[str]:
     data = await _cached_json("https://meta.fabricmc.net/v2/versions/game", force=force)
-    return [x["version"] for x in data if x.get("stable")]
+    out = []
+    for x in data:
+        vid, stable = x["version"], x.get("stable", False)
+        if channel == "release" and stable:
+            out.append(vid)
+        elif channel == "snapshot" and not stable and "experimental" not in vid:
+            out.append(vid)
+        elif channel == "experimental" and "experimental" in vid:
+            out.append(vid)
+    return out
 
 
 async def list_fabric_loaders(mc_version: str, force: bool = False) -> list[str]:
