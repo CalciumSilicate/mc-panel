@@ -1,25 +1,34 @@
-import { lazy, Suspense, useEffect, useMemo, useState, type ElementType } from 'react'
+import { FormEvent, lazy, Suspense, useEffect, useMemo, useState, type ElementType } from 'react'
 import {
   Archive,
   Boxes,
   ChevronLeft,
   ChevronRight,
+  KeyRound,
   LayoutDashboard,
   Layers,
+  Loader2,
   LogOut,
   Package,
   PanelLeft,
   Puzzle,
   Server,
   Settings,
+  Users as UsersIcon,
 } from 'lucide-react'
 
-import { logout } from '@/api/auth'
+import { ApiError } from '@/api/client'
+import { changePassword, logout } from '@/api/auth'
 import { ChunkLoadBoundary } from '@/components/ChunkLoadBoundary'
 import { PageLoader } from '@/components/PageLoader'
+import { ROLE_LABELS, useAuth } from '@/components/auth-context'
 import { ThemeToggleButton } from '@/components/theme'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { useGlobalToast } from '@/components/ui/use-global-toast'
 import { BRAND_NAME, nsKey } from '@/config'
 import { AnimatePresence, motion } from '@/lib/motion'
 import { cn } from '@/lib/utils'
@@ -30,6 +39,7 @@ const Plugins = lazy(() => import('@/pages/Plugins'))
 const Mods = lazy(() => import('@/pages/Mods'))
 const Archives = lazy(() => import('@/pages/Archives'))
 const Superflat = lazy(() => import('@/pages/Superflat'))
+const UsersPage = lazy(() => import('@/pages/Users'))
 const SettingsPage = lazy(() => import('@/pages/Settings'))
 
 /**
@@ -40,22 +50,24 @@ const SettingsPage = lazy(() => import('@/pages/Settings'))
  * 真要做深链接/多级路由时,把 `currentPage` 状态换成 router 即可,其余结构不动。
  */
 
-type Page = 'overview' | 'servers' | 'plugins' | 'mods' | 'archives' | 'superflat' | 'settings'
+type Page = 'overview' | 'servers' | 'plugins' | 'mods' | 'archives' | 'superflat' | 'users' | 'settings'
 
 interface NavItem {
   key: Page
   label: string
   icon: ElementType
+  minRole: string
 }
 
 const navItems: NavItem[] = [
-  { key: 'overview', label: '仪表盘', icon: LayoutDashboard },
-  { key: 'servers', label: '服务器实例', icon: Server },
-  { key: 'plugins', label: '插件', icon: Puzzle },
-  { key: 'mods', label: '模组', icon: Package },
-  { key: 'archives', label: '存档', icon: Archive },
-  { key: 'superflat', label: '超平坦', icon: Layers },
-  { key: 'settings', label: '设置', icon: Settings },
+  { key: 'overview', label: '仪表盘', icon: LayoutDashboard, minRole: 'user' },
+  { key: 'servers', label: '服务器实例', icon: Server, minRole: 'user' },
+  { key: 'plugins', label: '插件', icon: Puzzle, minRole: 'helper' },
+  { key: 'mods', label: '模组', icon: Package, minRole: 'helper' },
+  { key: 'archives', label: '存档', icon: Archive, minRole: 'user' },
+  { key: 'superflat', label: '超平坦', icon: Layers, minRole: 'helper' },
+  { key: 'users', label: '用户管理', icon: UsersIcon, minRole: 'admin' },
+  { key: 'settings', label: '设置', icon: Settings, minRole: 'admin' },
 ]
 
 const PAGE_STORAGE_KEY = nsKey('last-page')
@@ -75,16 +87,27 @@ interface DashboardProps {
 }
 
 export default function Dashboard({ onLogout }: DashboardProps) {
+  const { user, roleAtLeast } = useAuth()
   const [currentPage, setCurrentPage] = useState<Page>(() => readStoredPage())
   const [collapsed, setCollapsed] = useState(false)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [isMobileViewport, setIsMobileViewport] = useState(false)
+  const [changePwOpen, setChangePwOpen] = useState(false)
+
+  const visibleNav = useMemo(() => navItems.filter((i) => roleAtLeast(i.minRole)), [roleAtLeast])
 
   const currentItem = useMemo(
-    () => navItems.find((item) => item.key === currentPage) || navItems[0],
-    [currentPage],
+    () => visibleNav.find((item) => item.key === currentPage) || visibleNav[0],
+    [currentPage, visibleNav],
   )
   const CurrentIcon = currentItem.icon
+
+  // 当前页若不在可见范围(角色不足),退回第一个可见页
+  useEffect(() => {
+    if (!visibleNav.some((i) => i.key === currentPage)) {
+      setCurrentPage(visibleNav[0].key)
+    }
+  }, [visibleNav, currentPage])
 
   useEffect(() => {
     document.title = `${currentItem.label} - ${BRAND_NAME}`
@@ -147,7 +170,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
 
   const sidebar = (compact = collapsed, onSelect?: () => void) => (
     <nav className="flex flex-col gap-1">
-      {navItems.map((item) => renderNavItem(item, { collapsed: compact, onSelect }))}
+      {visibleNav.map((item) => renderNavItem(item, { collapsed: compact, onSelect }))}
     </nav>
   )
 
@@ -244,6 +267,17 @@ export default function Dashboard({ onLogout }: DashboardProps) {
               </AnimatePresence>
 
               <div className="ml-auto flex min-w-0 items-center gap-2">
+                {!isMobileViewport ? (
+                  <span className="hidden items-center gap-1.5 text-sm text-muted-foreground sm:flex">
+                    <span className="font-medium text-foreground">{user.username}</span>
+                    <span className="rounded-full border border-border/70 bg-muted px-1.5 py-0.5 text-[11px]">
+                      {ROLE_LABELS[user.role] ?? user.role}
+                    </span>
+                  </span>
+                ) : null}
+                <Button variant="outline" size="icon" title="修改密码" onClick={() => setChangePwOpen(true)}>
+                  <KeyRound className="h-4 w-4" />
+                </Button>
                 <ThemeToggleButton compact={isMobileViewport} showLabel={!isMobileViewport} />
                 <Button variant="outline" size={isMobileViewport ? 'icon' : undefined} className="gap-2" onClick={handleLogout}>
                   <LogOut className="h-4 w-4" />
@@ -269,6 +303,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                       {currentPage === 'mods' ? <Mods /> : null}
                       {currentPage === 'archives' ? <Archives /> : null}
                       {currentPage === 'superflat' ? <Superflat /> : null}
+                      {currentPage === 'users' ? <UsersPage /> : null}
                       {currentPage === 'settings' ? <SettingsPage /> : null}
                     </motion.div>
                   </AnimatePresence>
@@ -278,6 +313,69 @@ export default function Dashboard({ onLogout }: DashboardProps) {
           </div>
         </div>
       </div>
+      <ChangePasswordDialog open={changePwOpen} onClose={() => setChangePwOpen(false)} />
     </TooltipProvider>
+  )
+}
+
+function ChangePasswordDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { showToast } = useGlobalToast()
+  const [oldPw, setOldPw] = useState('')
+  const [newPw, setNewPw] = useState('')
+  const [confirm, setConfirm] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    if (open) {
+      setOldPw('')
+      setNewPw('')
+      setConfirm('')
+    }
+  }, [open])
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    if (newPw !== confirm) {
+      showToast('error', '两次输入的新密码不一致')
+      return
+    }
+    setBusy(true)
+    try {
+      await changePassword(oldPw, newPw)
+      showToast('success', '密码已修改')
+      onClose()
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : '修改失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => (!o ? onClose() : undefined)}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>修改密码</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={submit} className="grid gap-4 py-2">
+          <div className="space-y-2">
+            <Label htmlFor="cp-old">原密码</Label>
+            <Input id="cp-old" type="password" value={oldPw} onChange={(e) => setOldPw(e.target.value)} autoComplete="current-password" />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="cp-new">新密码</Label>
+            <Input id="cp-new" type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} autoComplete="new-password" />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="cp-confirm">确认新密码</Label>
+            <Input id="cp-confirm" type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" />
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose} disabled={busy}>取消</Button>
+            <Button type="submit" disabled={busy || !oldPw || !newPw}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : '保存'}</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   )
 }

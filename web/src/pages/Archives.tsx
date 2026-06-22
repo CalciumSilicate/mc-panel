@@ -14,6 +14,7 @@ import {
 } from '@/api/archives'
 import { pollJob } from '@/api/jobs'
 import { type ServerSummary, listServers } from '@/api/servers'
+import { useAuth } from '@/components/auth-context'
 import { InlineLoader } from '@/components/PageLoader'
 import { PageShell, PageSurface } from '@/components/layout/PageScaffold'
 import { Badge } from '@/components/ui/badge'
@@ -41,6 +42,9 @@ function fmtSize(n: number): string {
 }
 
 export default function Archives() {
+  const { user, roleAtLeast } = useAuth()
+  const canHelper = roleAtLeast('helper')
+  const mine = (a: Archive) => canHelper || a.owner_user_id === user.id
   const { showToast } = useGlobalToast()
   const { data, loading, error, refresh } = useResource(() => listArchives(), [])
   const { data: servers } = useResource(() => listServers(), [])
@@ -110,10 +114,12 @@ export default function Archives() {
             {busy === -1 ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
             上传
           </Button>
-          <Button type="button" className="gap-2" onClick={() => setCreateOpen(true)}>
-            <Save className="h-4 w-4" />
-            从服务器创建
-          </Button>
+          {canHelper ? (
+            <Button type="button" className="gap-2" onClick={() => setCreateOpen(true)}>
+              <Save className="h-4 w-4" />
+              从服务器创建
+            </Button>
+          ) : null}
         </>
       }
     >
@@ -154,18 +160,24 @@ export default function Archives() {
                     <TableCell className="text-muted-foreground">{new Date(a.created_at).toLocaleString()}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
-                        <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" disabled={busy === a.id} title="下载" onClick={() => onDownload(a)}>
-                          {busy === a.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-                        </Button>
+                        {mine(a) ? (
+                          <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" disabled={busy === a.id} title="下载" onClick={() => onDownload(a)}>
+                            {busy === a.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                          </Button>
+                        ) : null}
                         <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" disabled={busy === a.id} title="恢复" onClick={() => setRestoreFor(a)}>
                           <RotateCcw className="h-4 w-4" />
                         </Button>
-                        <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" disabled={busy === a.id} title="编辑" onClick={() => setEditFor(a)}>
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" disabled={busy === a.id} onClick={() => onDelete(a)}>
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        {mine(a) ? (
+                          <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" disabled={busy === a.id} title="编辑" onClick={() => setEditFor(a)}>
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                        ) : null}
+                        {mine(a) ? (
+                          <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" disabled={busy === a.id} title="删除" onClick={() => onDelete(a)}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        ) : null}
                       </div>
                     </TableCell>
                   </TableRow>

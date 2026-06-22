@@ -1,7 +1,8 @@
 import { FormEvent, useState } from 'react'
-import { Boxes, Loader2, LogIn } from 'lucide-react'
+import { Boxes, Loader2, LogIn, UserPlus } from 'lucide-react'
 
-import { login } from '@/api/auth'
+import { ApiError } from '@/api/client'
+import { login, register, setupOwner } from '@/api/auth'
 import { ThemeToggleButton } from '@/components/theme'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -10,23 +11,39 @@ import { BRAND_NAME } from '@/config'
 import { motion } from '@/lib/motion'
 
 interface LoginProps {
+  mode: 'setup' | 'login'
+  allowRegister: boolean
   onAuthenticated: () => void
 }
 
-export default function Login({ onAuthenticated }: LoginProps) {
+export default function Login({ mode, allowRegister, onAuthenticated }: LoginProps) {
+  const [registering, setRegistering] = useState(false)
+  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+
+  const isSetup = mode === 'setup'
+  const effective = isSetup ? 'setup' : registering ? 'register' : 'login'
+
+  const title = isSetup ? '初始化所有者' : registering ? '注册账号' : BRAND_NAME
+  const subtitle = isSetup
+    ? '创建第一个账号(所有者)'
+    : registering
+      ? '注册后角色为「用户」'
+      : '输入用户名和密码登录'
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault()
     setError('')
     setSubmitting(true)
     try {
-      await login(password)
+      if (effective === 'setup') await setupOwner(username.trim(), password)
+      else if (effective === 'register') await register(username.trim(), password)
+      else await login(username.trim(), password)
       onAuthenticated()
     } catch (err) {
-      setError(err instanceof Error ? err.message : '登录失败')
+      setError(err instanceof ApiError ? err.message : '操作失败')
     } finally {
       setSubmitting(false)
     }
@@ -49,29 +66,53 @@ export default function Login({ onAuthenticated }: LoginProps) {
             <Boxes className="h-5 w-5" />
           </div>
           <div>
-            <h1 className="text-xl font-semibold tracking-tight">{BRAND_NAME}</h1>
-            <p className="text-sm text-muted-foreground">输入密码登录</p>
+            <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
+            <p className="text-sm text-muted-foreground">{subtitle}</p>
           </div>
         </div>
 
-        <div className="space-y-2">
-          <Label htmlFor="password">密码</Label>
-          <Input
-            id="password"
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            autoFocus
-            autoComplete="current-password"
-          />
+        <div className="space-y-3">
+          <div className="space-y-2">
+            <Label htmlFor="username">用户名</Label>
+            <Input id="username" value={username} onChange={(e) => setUsername(e.target.value)} autoFocus autoComplete="username" />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="password">密码</Label>
+            <Input
+              id="password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete={effective === 'login' ? 'current-password' : 'new-password'}
+            />
+          </div>
         </div>
 
         {error ? <div className="mt-3 text-sm text-destructive">{error}</div> : null}
 
-        <Button type="submit" className="mt-5 w-full gap-2" disabled={submitting || !password}>
-          {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />}
-          登录
+        <Button type="submit" className="mt-5 w-full gap-2" disabled={submitting || !username.trim() || !password}>
+          {submitting ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : effective === 'login' ? (
+            <LogIn className="h-4 w-4" />
+          ) : (
+            <UserPlus className="h-4 w-4" />
+          )}
+          {effective === 'setup' ? '创建并进入' : effective === 'register' ? '注册' : '登录'}
         </Button>
+
+        {!isSetup && allowRegister ? (
+          <button
+            type="button"
+            className="mt-4 w-full text-center text-sm text-muted-foreground hover:text-foreground"
+            onClick={() => {
+              setRegistering((v) => !v)
+              setError('')
+            }}
+          >
+            {registering ? '已有账号?去登录' : '没有账号?注册一个'}
+          </button>
+        ) : null}
       </motion.form>
     </div>
   )

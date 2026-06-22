@@ -9,6 +9,7 @@ export interface Archive {
   source: string
   source_server_id: number | null
   mc_version: string
+  owner_user_id: number | null
   created_at: string
 }
 

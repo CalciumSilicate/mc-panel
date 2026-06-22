@@ -14,6 +14,7 @@ export interface PanelSettings {
   default_max_memory: string
   token_expire_minutes: number
   download_proxy: string
+  allow_register: boolean
   java_installs: JavaInstall[]
 }
 
@@ -24,8 +25,8 @@ export interface SettingsPatch {
   default_max_memory?: string
   token_expire_minutes?: number
   download_proxy?: string
+  allow_register?: boolean
   java_paths?: string[]
-  new_password?: string
 }
 
 export function getSettings(): Promise<PanelSettings> {

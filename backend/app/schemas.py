@@ -154,6 +154,7 @@ class ArchiveOut(BaseModel):
     source: str
     source_server_id: int | None
     mc_version: str
+    owner_user_id: int | None = None
     created_at: datetime
 
 

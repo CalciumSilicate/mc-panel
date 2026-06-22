@@ -10,18 +10,18 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import { useResource } from '@/lib/use-resource'
 
 /**
- * 系统设置 —— MCDR 运行参数 + 修改管理员密码。
- * 数据走 useResource;保存通过 message 回传,组件内部统一弹全局 toast。
+ * 系统设置 —— MCDR 运行参数 + 访问(注册开关)。仅 admin+ 可见。
  */
 
-type Tab = 'mcdr' | 'security'
+type Tab = 'mcdr' | 'access'
 
 const TABS: Array<{ key: Tab; label: string }> = [
   { key: 'mcdr', label: 'MCDR 运行' },
-  { key: 'security', label: '安全' },
+  { key: 'access', label: '访问' },
 ]
 
 export default function Settings() {
@@ -36,8 +36,7 @@ export default function Settings() {
   const [maxMem, setMaxMem] = useState('')
   const [tokenExpire, setTokenExpire] = useState('')
   const [downloadProxy, setDownloadProxy] = useState('')
-  const [newPassword, setNewPassword] = useState('')
-  const [confirmPassword, setConfirmPassword] = useState('')
+  const [allowRegister, setAllowRegister] = useState(false)
   const [javaPaths, setJavaPaths] = useState<string[]>([])
   const [newJavaPath, setNewJavaPath] = useState('')
 
@@ -49,6 +48,7 @@ export default function Settings() {
     setMaxMem(data.default_max_memory)
     setTokenExpire(String(data.token_expire_minutes))
     setDownloadProxy(data.download_proxy)
+    setAllowRegister(data.allow_register)
     setJavaPaths(data.java_installs.map((i) => i.path))
   }, [data])
 
@@ -61,10 +61,6 @@ export default function Settings() {
   }
 
   const save = async () => {
-    if (newPassword && newPassword !== confirmPassword) {
-      setMessage({ type: 'error', text: '两次输入的新密码不一致' })
-      return
-    }
     const patch: SettingsPatch = {
       python_executable: pythonExec.trim(),
       java_command: javaCmd.trim(),
@@ -72,15 +68,13 @@ export default function Settings() {
       default_max_memory: maxMem.trim(),
       token_expire_minutes: Number(tokenExpire) || undefined,
       download_proxy: downloadProxy.trim(),
+      allow_register: allowRegister,
       java_paths: javaPaths,
     }
-    if (newPassword) patch.new_password = newPassword
     setSaving(true)
     try {
       await updateSettings(patch)
       setMessage({ type: 'success', text: '设置已保存' })
-      setNewPassword('')
-      setConfirmPassword('')
       refresh()
     } catch (err) {
       setMessage({ type: 'error', text: err instanceof ApiError ? err.message : '保存失败' })
@@ -211,17 +205,14 @@ export default function Settings() {
           </div>
         </PageSurface>
       ) : (
-        <PageSurface title="修改管理员密码" description="留空表示不修改。保存后旧登录态仍有效,直至过期。">
-          <div className="grid gap-5 sm:max-w-2xl">
-            <div className="space-y-2">
-              <Label htmlFor="new-pwd">新密码</Label>
-              <Input id="new-pwd" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} autoComplete="new-password" />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="confirm-pwd">确认新密码</Label>
-              <Input id="confirm-pwd" type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} autoComplete="new-password" />
-            </div>
-          </div>
+        <PageSurface title="访问控制">
+          <label className="flex items-center justify-between gap-4 sm:max-w-md">
+            <span>
+              <span className="block text-sm font-medium">允许自助注册</span>
+              <span className="block text-xs text-muted-foreground">开启后,任何人可在登录页注册账号(角色为「用户」)</span>
+            </span>
+            <Switch checked={allowRegister} onCheckedChange={setAllowRegister} />
+          </label>
         </PageSurface>
       )}
     </TabbedSettingsPage>

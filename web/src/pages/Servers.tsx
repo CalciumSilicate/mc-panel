@@ -18,6 +18,7 @@ import {
   updateServer,
 } from '@/api/servers'
 import { type JavaInstall, getSettings } from '@/api/settings'
+import { useAuth } from '@/components/auth-context'
 import { InlineLoader } from '@/components/PageLoader'
 import { PageShell, PageSurface } from '@/components/layout/PageScaffold'
 import { Badge } from '@/components/ui/badge'
@@ -49,6 +50,9 @@ import { useResource } from '@/lib/use-resource'
  * 列表每 4s 自动刷新一次,以便反映「安装中 → 已停止」的状态变化。
  */
 export default function Servers() {
+  const { roleAtLeast } = useAuth()
+  const canAdmin = roleAtLeast('admin')
+  const canHelper = roleAtLeast('helper')
   const { data, loading, error, refresh } = useResource(() => listServers(), [])
   const { showToast } = useGlobalToast()
   const [createOpen, setCreateOpen] = useState(false)
@@ -90,10 +94,12 @@ export default function Servers() {
             <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
             刷新
           </Button>
-          <Button type="button" className="gap-2" onClick={() => setCreateOpen(true)}>
-            <Plus className="h-4 w-4" />
-            新建服务器
-          </Button>
+          {canAdmin ? (
+            <Button type="button" className="gap-2" onClick={() => setCreateOpen(true)}>
+              <Plus className="h-4 w-4" />
+              新建服务器
+            </Button>
+          ) : null}
         </>
       }
     >
@@ -116,10 +122,12 @@ export default function Servers() {
             <div className="flex flex-col items-center gap-3 py-14 text-center text-sm text-muted-foreground">
               <Server className="h-9 w-9 opacity-40" />
               <p>还没有服务器实例。</p>
-              <Button type="button" className="gap-2" onClick={() => setCreateOpen(true)}>
-                <Plus className="h-4 w-4" />
-                新建第一个服务器
-              </Button>
+              {canAdmin ? (
+                <Button type="button" className="gap-2" onClick={() => setCreateOpen(true)}>
+                  <Plus className="h-4 w-4" />
+                  新建第一个服务器
+                </Button>
+              ) : null}
             </div>
           ) : (
             <div className="ops-table-shell border-0">
@@ -156,28 +164,32 @@ export default function Servers() {
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center justify-end gap-1.5">
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                              disabled={server.status === 'installing'}
-                              title="编辑"
-                              onClick={() => setEditServer(server)}
-                            >
-                              <Pencil className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                              disabled={server.status === 'installing' || server.status === 'new_setup'}
-                              title="控制台"
-                              onClick={() => setConsoleServer(server)}
-                            >
-                              <Terminal className="h-4 w-4" />
-                            </Button>
+                            {canAdmin ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                                disabled={server.status === 'installing'}
+                                title="编辑"
+                                onClick={() => setEditServer(server)}
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                            ) : null}
+                            {canHelper ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                                disabled={server.status === 'installing' || server.status === 'new_setup'}
+                                title="控制台"
+                                onClick={() => setConsoleServer(server)}
+                              >
+                                <Terminal className="h-4 w-4" />
+                              </Button>
+                            ) : null}
                             {server.status === 'running' ? (
                               <Button
                                 type="button"
@@ -203,7 +215,7 @@ export default function Servers() {
                                 启动
                               </Button>
                             )}
-                            {installing ? (
+                            {canAdmin && installing ? (
                               <Button
                                 type="button"
                                 variant="ghost"
@@ -216,7 +228,7 @@ export default function Servers() {
                                 <Ban className="h-4 w-4" />
                               </Button>
                             ) : null}
-                            {server.status === 'error' || server.status === 'new_setup' ? (
+                            {canAdmin && (server.status === 'error' || server.status === 'new_setup') ? (
                               <Button
                                 type="button"
                                 variant="ghost"
@@ -229,16 +241,19 @@ export default function Servers() {
                                 <Download className="h-4 w-4" />
                               </Button>
                             ) : null}
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                              disabled={busy}
-                              onClick={() => handleDelete(server)}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
+                            {canAdmin ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                                disabled={busy}
+                                title="删除"
+                                onClick={() => handleDelete(server)}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            ) : null}
                           </div>
                         </TableCell>
                       </TableRow>
