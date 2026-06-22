@@ -43,6 +43,8 @@ class ServerGroup(Base):
     name: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
     # 组内 MC 实例的玩家聊天是否互相转发
     bridge_enabled: Mapped[bool] = mapped_column(default=True)
+    # 绑定的 QQ 群号(JSON 数组);该组 MC 服与这些 QQ 群双向互通
+    qq_group_ids: Mapped[str] = mapped_column(Text, default="[]")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
@@ -108,4 +110,8 @@ class SystemSettings(Base):
     download_proxy: Mapped[str] = mapped_column(String(255), default="")
     # 是否允许自助注册(默认关闭)
     allow_register: Mapped[bool] = mapped_column(default=False)
+    # QQ 互通(OneBot 11 正向 ws:面板作客户端连 LLBot)
+    onebot_enabled: Mapped[bool] = mapped_column(default=False)
+    onebot_ws_url: Mapped[str] = mapped_column(String(255), default="ws://127.0.0.1:3001")
+    onebot_token: Mapped[str] = mapped_column(String(255), default="")
     extra: Mapped[str] = mapped_column(Text, default="{}")

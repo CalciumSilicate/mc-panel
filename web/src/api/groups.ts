@@ -5,6 +5,7 @@ export interface ServerGroup {
   id: number
   name: string
   bridge_enabled: boolean
+  qq_group_ids: number[]
   created_at: string
   server_count: number
 }
@@ -22,7 +23,7 @@ export function createGroup(name: string, bridgeEnabled = true): Promise<ServerG
 
 export function updateGroup(
   id: number,
-  patch: { name?: string; bridge_enabled?: boolean },
+  patch: { name?: string; bridge_enabled?: boolean; qq_group_ids?: number[] },
 ): Promise<ServerGroup> {
   return apiRequest<ServerGroup>(`/groups/${id}`, { method: 'PATCH', body: JSON.stringify(patch) })
 }

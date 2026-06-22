@@ -1,5 +1,7 @@
-"""互联组:纯组织/路由概念(决定哪些 MC 实例之间聊天互转),不参与权限。"""
+"""互联组:纯组织/路由概念(决定哪些 MC 实例之间聊天互转 + 绑定 QQ 群),不参与权限。"""
 from __future__ import annotations
+
+import json
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
@@ -20,10 +22,22 @@ def _counts(db: Session) -> dict[int, int]:
     return {gid: n for gid, n in rows}
 
 
+def _parse_qq(raw: str) -> list[int]:
+    try:
+        return [int(x) for x in json.loads(raw or "[]")]
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def _out(group: ServerGroup, count: int) -> ServerGroupOut:
-    o = ServerGroupOut.model_validate(group)
-    o.server_count = count
-    return o
+    return ServerGroupOut(
+        id=group.id,
+        name=group.name,
+        bridge_enabled=group.bridge_enabled,
+        qq_group_ids=_parse_qq(group.qq_group_ids),
+        created_at=group.created_at,
+        server_count=count,
+    )
 
 
 @router.get("", response_model=list[ServerGroupOut])
@@ -39,7 +53,11 @@ def create_group(
 ) -> ServerGroupOut:
     if db.scalar(select(ServerGroup).where(ServerGroup.name == payload.name.strip())):
         raise HTTPException(status_code=409, detail="同名互联组已存在")
-    g = ServerGroup(name=payload.name.strip(), bridge_enabled=payload.bridge_enabled)
+    g = ServerGroup(
+        name=payload.name.strip(),
+        bridge_enabled=payload.bridge_enabled,
+        qq_group_ids=json.dumps(payload.qq_group_ids or []),
+    )
     db.add(g)
     db.commit()
     db.refresh(g)
@@ -62,6 +80,8 @@ def update_group(
         g.name = payload.name.strip()
     if payload.bridge_enabled is not None:
         g.bridge_enabled = payload.bridge_enabled
+    if payload.qq_group_ids is not None:
+        g.qq_group_ids = json.dumps(payload.qq_group_ids)
     db.commit()
     db.refresh(g)
     return _out(g, _counts(db).get(g.id, 0))

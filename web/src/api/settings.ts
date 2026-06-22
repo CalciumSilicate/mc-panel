@@ -15,6 +15,10 @@ export interface PanelSettings {
   token_expire_minutes: number
   download_proxy: string
   allow_register: boolean
+  onebot_enabled: boolean
+  onebot_ws_url: string
+  onebot_token: string
+  onebot_connected: boolean
   java_installs: JavaInstall[]
 }
 
@@ -26,6 +30,9 @@ export interface SettingsPatch {
   token_expire_minutes?: number
   download_proxy?: string
   allow_register?: boolean
+  onebot_enabled?: boolean
+  onebot_ws_url?: string
+  onebot_token?: string
   java_paths?: string[]
 }
 

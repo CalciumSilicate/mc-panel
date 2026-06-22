@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Ban, Download, Loader2, Network, Pencil, Play, Plus, RefreshCw, Server, Square, Terminal, Trash2 } from 'lucide-react'
+import { Ban, Download, Loader2, MessageSquare, Network, Pencil, Play, Plus, RefreshCw, Server, Square, Terminal, Trash2 } from 'lucide-react'
 
 import {
   type JavaInfo,
@@ -1179,11 +1179,19 @@ function ManageGroupsDialog({ open, onClose, onChanged }: { open: boolean; onClo
             groups.map((g) => (
               <div key={g.id} className="flex items-center gap-2 rounded-md border border-border/70 px-3 py-2">
                 <span className="min-w-0 flex-1 truncate text-sm font-medium">{g.name}</span>
-                <span className="shrink-0 text-xs text-muted-foreground">{g.server_count} 个实例</span>
+                <span className="shrink-0 text-xs text-muted-foreground">{g.server_count} 实例 · QQ {g.qq_group_ids.length}</span>
                 <span className="flex shrink-0 items-center gap-1.5" title="组内聊天互转">
                   <span className="text-xs text-muted-foreground">互联</span>
                   <Switch checked={g.bridge_enabled} disabled={busy} onCheckedChange={(v) => run(() => updateGroup(g.id, { bridge_enabled: v }))} />
                 </span>
+                <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" disabled={busy} title="绑定 QQ 群" onClick={() => {
+                  const n = window.prompt('绑定的 QQ 群号(多个用逗号分隔,留空清除)', g.qq_group_ids.join(', '))
+                  if (n === null) return
+                  const ids = Array.from(new Set(n.split(/[,，\s]+/).map((x) => parseInt(x, 10)).filter((x) => !Number.isNaN(x))))
+                  run(() => updateGroup(g.id, { qq_group_ids: ids }), '已更新 QQ 群绑定')
+                }}>
+                  <MessageSquare className="h-4 w-4" />
+                </Button>
                 <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" disabled={busy} title="重命名" onClick={() => {
                   const n = window.prompt('新名称', g.name)
                   if (n && n.trim() && n.trim() !== g.name) run(() => updateGroup(g.id, { name: n.trim() }), '已重命名')

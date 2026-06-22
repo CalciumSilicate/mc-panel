@@ -49,6 +49,12 @@ _COLUMN_MIGRATIONS = {
     "system_settings": {
         "download_proxy": "VARCHAR(255) DEFAULT ''",
         "allow_register": "BOOLEAN DEFAULT 0",
+        "onebot_enabled": "BOOLEAN DEFAULT 0",
+        "onebot_ws_url": "VARCHAR(255) DEFAULT 'ws://127.0.0.1:3001'",
+        "onebot_token": "VARCHAR(255) DEFAULT ''",
+    },
+    "server_groups": {
+        "qq_group_ids": "TEXT DEFAULT '[]'",
     },
     "archives": {
         "owner_user_id": "INTEGER",

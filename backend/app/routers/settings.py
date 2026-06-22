@@ -1,9 +1,10 @@
-"""系统设置:MCDR 运行参数 + Java 安装池 + 下载代理 + 注册开关(admin+)。"""
+"""系统设置:MCDR 运行参数 + Java 安装池 + 下载代理 + 注册开关 + QQ 互通(admin+)。"""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
+from .. import onebot
 from ..database import get_db
 from ..deps import get_settings_row, require_admin
 from ..java import detect_installs, get_java_paths, set_java_paths
@@ -22,6 +23,10 @@ def _to_response(row) -> SettingsResponse:
         token_expire_minutes=row.token_expire_minutes,
         download_proxy=row.download_proxy,
         allow_register=row.allow_register,
+        onebot_enabled=row.onebot_enabled,
+        onebot_ws_url=row.onebot_ws_url,
+        onebot_token=row.onebot_token,
+        onebot_connected=onebot.client.connected,
         java_installs=installs,
     )
 
@@ -52,8 +57,16 @@ def update_settings(
         row.download_proxy = payload.download_proxy.strip()
     if payload.allow_register is not None:
         row.allow_register = payload.allow_register
+    if payload.onebot_enabled is not None:
+        row.onebot_enabled = payload.onebot_enabled
+    if payload.onebot_ws_url is not None:
+        row.onebot_ws_url = payload.onebot_ws_url.strip()
+    if payload.onebot_token is not None:
+        row.onebot_token = payload.onebot_token.strip()
     if payload.java_paths is not None:
         set_java_paths(row, payload.java_paths)
     db.commit()
     db.refresh(row)
+    # 应用 QQ 互通配置变更(重连)
+    onebot.client.reconfigure(row.onebot_enabled, row.onebot_ws_url, row.onebot_token)
     return _to_response(row)

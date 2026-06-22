@@ -32,6 +32,12 @@ _LEFT_RE = re.compile(r"\]:\s*(\w{1,16})\s+left the game\b")
 _MC_TYPES = ("vanilla", "fabric", "forge")
 # server_id -> 当前在线的假人名集合(用于退出时分类)
 _BOTS: dict[int, set[str]] = {}
+# server_id -> 当前在线的真人名集合(用于 QQ @ 提示音)
+_ONLINE: dict[int, set[str]] = {}
+
+
+def online_players(server_id: int) -> set[str]:
+    return _ONLINE.get(server_id, set())
 
 
 # ---------- 版本兼容的组件构造 ----------
@@ -96,31 +102,49 @@ def handle_line(server_id: int, line: str) -> None:
     if "<" in line:
         m = _CHAT_RE.search(line)
         if m:
-            content = m.group(2).strip()
+            player, content = m.group(1).strip(), m.group(2).strip()
             if content and not content.startswith("!!"):
-                _broadcast(server_id, lambda src, modern: _chat_components(src, m.group(1).strip(), content, modern))
+                _broadcast(
+                    server_id,
+                    lambda src, modern: _chat_components(src, player, content, modern),
+                    f"<{player}> {content}",
+                )
             return
     mj = _JOIN_RE.search(line)
     if mj:
         name, conn = mj.group(1), mj.group(2)
         is_bot = conn.strip().lower() == "local"
         _BOTS.setdefault(server_id, set())
+        _ONLINE.setdefault(server_id, set())
         if is_bot:
             _BOTS[server_id].add(name)
         else:
             _BOTS[server_id].discard(name)
-        _broadcast(server_id, lambda src, modern: _join_components(src, name, is_bot, modern))
+            _ONLINE[server_id].add(name)
+        tag = " (假人)" if is_bot else ""
+        _broadcast(
+            server_id,
+            lambda src, modern: _join_components(src, name, is_bot, modern),
+            f"{name}{tag} 加入了服务器",
+        )
         return
     ml = _LEFT_RE.search(line)
     if ml:
         name = ml.group(1)
         is_bot = name in _BOTS.get(server_id, set())
         _BOTS.get(server_id, set()).discard(name)
-        _broadcast(server_id, lambda src, modern: _leave_components(src, name, is_bot, modern))
+        _ONLINE.get(server_id, set()).discard(name)
+        tag = " (假人)" if is_bot else ""
+        _broadcast(
+            server_id,
+            lambda src, modern: _leave_components(src, name, is_bot, modern),
+            f"{name}{tag} 离开了服务器",
+        )
 
 
-def _broadcast(server_id: int, builder) -> None:
-    """builder(src_name, modern) -> tellraw 组件列表;向同组其它运行中的 MC 实例注入。"""
+def _broadcast(server_id: int, builder, qq_text: str = "") -> None:
+    """builder(src_name, modern) -> tellraw 组件;转给同组其它运行中的 MC 实例,
+    并把 qq_text 发到该组绑定的 QQ 群。"""
     db = SessionLocal()
     try:
         src = db.get(Server, server_id)
@@ -130,6 +154,10 @@ def _broadcast(server_id: int, builder) -> None:
         if grp is None or not grp.bridge_enabled:
             return
         src_name = src.name
+        try:
+            qq_ids = [int(x) for x in json.loads(grp.qq_group_ids or "[]")]
+        except Exception:  # noqa: BLE001
+            qq_ids = []
         targets = [
             (s.id, s.mc_version)
             for s in db.scalars(
@@ -139,8 +167,7 @@ def _broadcast(server_id: int, builder) -> None:
         ]
     finally:
         db.close()
-    if not targets:
-        return
+
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
@@ -153,6 +180,14 @@ def _broadcast(server_id: int, builder) -> None:
         components = builder(src_name, _modern(mc_version))
         cmd = "tellraw @a " + json.dumps(components, ensure_ascii=False)
         loop.create_task(_safe_send(tid, cmd))
+
+    # MC → QQ
+    if qq_ids and qq_text:
+        from .onebot import client as ob
+
+        if ob.connected:
+            for gid in qq_ids:
+                ob.send_group(gid, f"[{src_name}] {qq_text}")
 
 
 async def _safe_send(server_id: int, command: str) -> None:

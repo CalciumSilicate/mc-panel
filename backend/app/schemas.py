@@ -76,19 +76,20 @@ class UserUpdate(BaseModel):
 class ServerGroupCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     bridge_enabled: bool = True
+    qq_group_ids: list[int] = []
 
 
 class ServerGroupUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     bridge_enabled: bool | None = None
+    qq_group_ids: list[int] | None = None
 
 
 class ServerGroupOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
     id: int
     name: str
     bridge_enabled: bool
+    qq_group_ids: list[int] = []
     created_at: datetime
     server_count: int = 0
 
@@ -218,6 +219,10 @@ class SettingsResponse(BaseModel):
     token_expire_minutes: int
     download_proxy: str = ""
     allow_register: bool = False
+    onebot_enabled: bool = False
+    onebot_ws_url: str = ""
+    onebot_token: str = ""
+    onebot_connected: bool = False
     # Java 安装池(带探测到的大版本)
     java_installs: list[JavaInstall] = []
 
@@ -230,5 +235,8 @@ class SettingsUpdate(BaseModel):
     token_expire_minutes: int | None = Field(default=None, ge=5)
     download_proxy: str | None = None
     allow_register: bool | None = None
+    onebot_enabled: bool | None = None
+    onebot_ws_url: str | None = None
+    onebot_token: str | None = None
     # Java 安装池路径列表(整体替换);为 None 时不改动
     java_paths: list[str] | None = None

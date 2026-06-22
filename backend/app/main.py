@@ -18,7 +18,7 @@ from .config import API_PORT, WEB_DIST, ensure_dirs
 from .database import SessionLocal, init_db
 from .deps import get_settings_row
 from .java import choose_java, detect_installs, get_java_paths
-from . import bridge, verification
+from . import bridge, onebot, verification
 from .mcdr import manager
 from .models import Server
 from .routers import archives, auth, groups, jobs, mods, plugins, servers, settings, system, tools, users
@@ -69,6 +69,13 @@ async def _autostart() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     await _autostart()
+    # 启动 QQ 互通客户端(OneBot 正向 ws)
+    db = SessionLocal()
+    try:
+        row = get_settings_row(db)
+        onebot.client.start(row.onebot_enabled, row.onebot_ws_url, row.onebot_token)
+    finally:
+        db.close()
     yield
 
 

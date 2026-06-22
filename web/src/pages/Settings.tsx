@@ -11,17 +11,19 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
+import { cn } from '@/lib/utils'
 import { useResource } from '@/lib/use-resource'
 
 /**
  * 系统设置 —— MCDR 运行参数 + 访问(注册开关)。仅 admin+ 可见。
  */
 
-type Tab = 'mcdr' | 'access'
+type Tab = 'mcdr' | 'access' | 'qq'
 
 const TABS: Array<{ key: Tab; label: string }> = [
   { key: 'mcdr', label: 'MCDR 运行' },
   { key: 'access', label: '访问' },
+  { key: 'qq', label: 'QQ 互通' },
 ]
 
 export default function Settings() {
@@ -37,6 +39,9 @@ export default function Settings() {
   const [tokenExpire, setTokenExpire] = useState('')
   const [downloadProxy, setDownloadProxy] = useState('')
   const [allowRegister, setAllowRegister] = useState(false)
+  const [onebotEnabled, setOnebotEnabled] = useState(false)
+  const [onebotWsUrl, setOnebotWsUrl] = useState('')
+  const [onebotToken, setOnebotToken] = useState('')
   const [javaPaths, setJavaPaths] = useState<string[]>([])
   const [newJavaPath, setNewJavaPath] = useState('')
 
@@ -49,6 +54,9 @@ export default function Settings() {
     setTokenExpire(String(data.token_expire_minutes))
     setDownloadProxy(data.download_proxy)
     setAllowRegister(data.allow_register)
+    setOnebotEnabled(data.onebot_enabled)
+    setOnebotWsUrl(data.onebot_ws_url)
+    setOnebotToken(data.onebot_token)
     setJavaPaths(data.java_installs.map((i) => i.path))
   }, [data])
 
@@ -69,6 +77,9 @@ export default function Settings() {
       token_expire_minutes: Number(tokenExpire) || undefined,
       download_proxy: downloadProxy.trim(),
       allow_register: allowRegister,
+      onebot_enabled: onebotEnabled,
+      onebot_ws_url: onebotWsUrl.trim(),
+      onebot_token: onebotToken.trim(),
       java_paths: javaPaths,
     }
     setSaving(true)
@@ -204,7 +215,7 @@ export default function Settings() {
             </div>
           </div>
         </PageSurface>
-      ) : (
+      ) : activeTab === 'access' ? (
         <PageSurface title="访问控制">
           <label className="flex items-center justify-between gap-4 sm:max-w-md">
             <span>
@@ -213,6 +224,34 @@ export default function Settings() {
             </span>
             <Switch checked={allowRegister} onCheckedChange={setAllowRegister} />
           </label>
+        </PageSurface>
+      ) : (
+        <PageSurface title="QQ 互通(OneBot 11)">
+          <div className="grid gap-5 sm:max-w-2xl">
+            <label className="flex items-center justify-between gap-4">
+              <span>
+                <span className="block text-sm font-medium">启用 QQ 互通</span>
+                <span className="block text-xs text-muted-foreground">
+                  面板作为 OneBot 客户端连接 LLBot 等(正向 ws);组内 MC 与绑定的 QQ 群双向互通
+                </span>
+              </span>
+              <Switch checked={onebotEnabled} onCheckedChange={setOnebotEnabled} />
+            </label>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Label htmlFor="ob-url">OneBot 正向 ws 地址</Label>
+                <span className={cn('rounded-full px-2 py-0.5 text-[11px]', data?.onebot_connected ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' : 'bg-muted text-muted-foreground')}>
+                  {data?.onebot_connected ? '已连接' : '未连接'}
+                </span>
+              </div>
+              <Input id="ob-url" value={onebotWsUrl} onChange={(e) => setOnebotWsUrl(e.target.value)} placeholder="ws://127.0.0.1:3001" className="font-mono" />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="ob-token">Access Token</Label>
+              <Input id="ob-token" type="password" value={onebotToken} onChange={(e) => setOnebotToken(e.target.value)} placeholder="留空表示无 token" />
+            </div>
+            <p className="text-xs text-muted-foreground">QQ 群与互联组的绑定在「服务器实例 → 互联组」里设置。保存后会按新配置重连;连接状态刷新本页可见。</p>
+          </div>
         </PageSurface>
       )}
     </TabbedSettingsPage>
