@@ -50,7 +50,7 @@ import { useResource } from '@/lib/use-resource'
  * 列表每 4s 自动刷新一次,以便反映「安装中 → 已停止」的状态变化。
  */
 export default function Servers() {
-  const { roleAtLeast } = useAuth()
+  const { roleAtLeast, canOperate } = useAuth()
   const canAdmin = roleAtLeast('admin')
   const canHelper = roleAtLeast('helper')
   const { data, loading, error, refresh } = useResource(() => listServers(), [])
@@ -190,7 +190,7 @@ export default function Servers() {
                                 <Terminal className="h-4 w-4" />
                               </Button>
                             ) : null}
-                            {server.status === 'running' ? (
+                            {canOperate && server.status === 'running' ? (
                               <Button
                                 type="button"
                                 variant="outline"
@@ -202,7 +202,8 @@ export default function Servers() {
                                 {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Square className="h-3.5 w-3.5" />}
                                 停止
                               </Button>
-                            ) : (
+                            ) : null}
+                            {canOperate && server.status !== 'running' ? (
                               <Button
                                 type="button"
                                 variant="outline"
@@ -214,7 +215,7 @@ export default function Servers() {
                                 {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
                                 启动
                               </Button>
-                            )}
+                            ) : null}
                             {canAdmin && installing ? (
                               <Button
                                 type="button"

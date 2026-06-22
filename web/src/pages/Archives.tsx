@@ -42,7 +42,7 @@ function fmtSize(n: number): string {
 }
 
 export default function Archives() {
-  const { user, roleAtLeast } = useAuth()
+  const { user, roleAtLeast, canOperate } = useAuth()
   const canHelper = roleAtLeast('helper')
   const mine = (a: Archive) => canHelper || a.owner_user_id === user.id
   const { showToast } = useGlobalToast()
@@ -110,10 +110,12 @@ export default function Archives() {
             <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
             刷新
           </Button>
-          <Button type="button" variant="outline" className="gap-2" onClick={() => fileRef.current?.click()} disabled={busy === -1}>
-            {busy === -1 ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-            上传
-          </Button>
+          {canOperate ? (
+            <Button type="button" variant="outline" className="gap-2" onClick={() => fileRef.current?.click()} disabled={busy === -1}>
+              {busy === -1 ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+              上传
+            </Button>
+          ) : null}
           {canHelper ? (
             <Button type="button" className="gap-2" onClick={() => setCreateOpen(true)}>
               <Save className="h-4 w-4" />
@@ -165,9 +167,11 @@ export default function Archives() {
                             {busy === a.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
                           </Button>
                         ) : null}
-                        <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" disabled={busy === a.id} title="恢复" onClick={() => setRestoreFor(a)}>
-                          <RotateCcw className="h-4 w-4" />
-                        </Button>
+                        {canOperate ? (
+                          <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" disabled={busy === a.id} title="恢复" onClick={() => setRestoreFor(a)}>
+                            <RotateCcw className="h-4 w-4" />
+                          </Button>
+                        ) : null}
                         {mine(a) ? (
                           <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" disabled={busy === a.id} title="编辑" onClick={() => setEditFor(a)}>
                             <Pencil className="h-4 w-4" />

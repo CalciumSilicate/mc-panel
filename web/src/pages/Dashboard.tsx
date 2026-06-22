@@ -21,6 +21,7 @@ import { ApiError } from '@/api/client'
 import { changePassword, logout } from '@/api/auth'
 import { ChunkLoadBoundary } from '@/components/ChunkLoadBoundary'
 import { PageLoader } from '@/components/PageLoader'
+import { VerifyPanel } from '@/components/VerifyPanel'
 import { ROLE_LABELS, useAuth } from '@/components/auth-context'
 import { ThemeToggleButton } from '@/components/theme'
 import { Button } from '@/components/ui/button'
@@ -287,6 +288,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
             </header>
 
             <main className="p-4 md:p-6">
+              {user.role === 'user' && !user.verified ? <VerifyPanel /> : null}
               <ChunkLoadBoundary scopeLabel={currentItem.label}>
                 <Suspense fallback={<PageLoader />}>
                   <AnimatePresence mode="wait">

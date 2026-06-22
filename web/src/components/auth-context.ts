@@ -14,6 +14,10 @@ export const ROLE_LABELS: Record<string, string> = {
 export interface AuthValue {
   user: CurrentUser
   roleAtLeast: (role: string) => boolean
+  // 可执行操作:未验证的 user 只读
+  canOperate: boolean
+  // 重新拉取当前用户(验证完成后刷新)
+  refresh: () => Promise<void>
 }
 
 export const AuthContext = createContext<AuthValue | null>(null)

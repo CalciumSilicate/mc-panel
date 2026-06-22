@@ -15,7 +15,10 @@ export function createUser(username: string, password: string, role: string): Pr
   })
 }
 
-export function updateUser(id: number, patch: { role?: string; new_password?: string }): Promise<PanelUser> {
+export function updateUser(
+  id: number,
+  patch: { role?: string; new_password?: string; verified?: boolean; player_id?: string },
+): Promise<PanelUser> {
   return apiRequest<PanelUser>(`/users/${id}`, { method: 'PATCH', body: JSON.stringify(patch) })
 }
 

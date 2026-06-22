@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Crown, Loader2, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { Check, Crown, Loader2, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
 
 import { ApiError } from '@/api/client'
 import { type PanelUser, createUser, deleteUser, listUsers, transferOwner, updateUser } from '@/api/users'
@@ -18,6 +18,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useGlobalToast } from '@/components/ui/use-global-toast'
 import { useResource } from '@/lib/use-resource'
@@ -85,6 +86,7 @@ export default function Users() {
                 <TableRow>
                   <TableHead>用户名</TableHead>
                   <TableHead>角色</TableHead>
+                  <TableHead>验证 / 绑定玩家</TableHead>
                   <TableHead>创建时间</TableHead>
                   <TableHead className="text-right">操作</TableHead>
                 </TableRow>
@@ -100,6 +102,16 @@ export default function Users() {
                       <Badge variant="outline" className={cn('text-[11px]', ROLE_TONE[u.role])}>
                         {ROLE_LABELS[u.role] ?? u.role}
                       </Badge>
+                    </TableCell>
+                    <TableCell>
+                      {u.verified ? (
+                        <span className="inline-flex items-center gap-1.5 text-sm text-emerald-600 dark:text-emerald-400">
+                          <Check className="h-4 w-4" />
+                          {u.player_id || '已验证'}
+                        </span>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">未验证</span>
+                      )}
                     </TableCell>
                     <TableCell className="text-muted-foreground">{new Date(u.created_at).toLocaleString()}</TableCell>
                     <TableCell className="text-right">
@@ -220,12 +232,16 @@ function EditUserDialog({ user, assignable, onClose, onSaved }: { user: PanelUse
   const { showToast } = useGlobalToast()
   const [role, setRole] = useState('user')
   const [newPassword, setNewPassword] = useState('')
+  const [verified, setVerified] = useState(false)
+  const [playerId, setPlayerId] = useState('')
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     if (user) {
       setRole(user.role)
       setNewPassword('')
+      setVerified(user.verified)
+      setPlayerId(user.player_id)
     }
   }, [user])
 
@@ -236,6 +252,8 @@ function EditUserDialog({ user, assignable, onClose, onSaved }: { user: PanelUse
       await updateUser(user.id, {
         role: role !== user.role ? role : undefined,
         new_password: newPassword || undefined,
+        verified: verified !== user.verified ? verified : undefined,
+        player_id: playerId !== user.player_id ? playerId : undefined,
       })
       showToast('success', '已保存')
       onSaved()
@@ -272,6 +290,14 @@ function EditUserDialog({ user, assignable, onClose, onSaved }: { user: PanelUse
           <div className="space-y-2">
             <Label htmlFor="eu-pwd">重置密码(留空不改)</Label>
             <Input id="eu-pwd" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} autoComplete="new-password" />
+          </div>
+          <label className="flex items-center justify-between gap-4 rounded-md border border-border/70 px-3 py-2.5">
+            <span className="text-sm font-medium">已验证</span>
+            <Switch checked={verified} onCheckedChange={setVerified} />
+          </label>
+          <div className="space-y-2">
+            <Label htmlFor="eu-player">绑定玩家</Label>
+            <Input id="eu-player" value={playerId} onChange={(e) => setPlayerId(e.target.value)} placeholder="正版玩家名" />
           </div>
         </div>
         <DialogFooter>

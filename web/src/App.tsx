@@ -59,7 +59,7 @@ export default function App() {
     <ChunkLoadBoundary scopeLabel={BRAND_NAME}>
       <Suspense fallback={<PageLoader />}>
         {phase === 'ready' && user ? (
-          <AuthProvider user={user}>
+          <AuthProvider initialUser={user}>
             <Dashboard
               onLogout={() => {
                 setUser(null)
