@@ -76,9 +76,8 @@ export function installFromLibrary(serverId: number, fileName: string) {
   })
 }
 
-export function replaceFromLibrary(serverId: number, fileName: string) {
-  return apiRequest<{ file_name: string }>(`/plugins/server/${serverId}/replace-from-library`, {
-    method: 'POST',
-    body: JSON.stringify({ file_name: fileName }),
-  })
+export function replaceLibraryFile(fileName: string, file: File) {
+  const fd = new FormData()
+  fd.append('file', file)
+  return apiUpload<{ file_name: string }>(`/plugins/library/${encodeURIComponent(fileName)}/replace`, fd)
 }

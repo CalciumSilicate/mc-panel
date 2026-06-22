@@ -5,6 +5,7 @@ import asyncio
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .. import jobs as jobstore
@@ -122,28 +123,37 @@ def _strip_disabled(n: str) -> str:
     return n[: -len(".disabled")] if n.endswith(".disabled") else n
 
 
-@router.post("/server/{server_id}/replace-from-library")
-def replace_from_library(
-    server_id: int,
-    body: InstallFromLibraryBody,
+@router.post("/library/{file_name}/replace")
+async def replace_library(
+    file_name: str,
+    file: UploadFile = File(...),
     _: str = Depends(require_auth),
     db: Session = Depends(get_db),
 ) -> dict:
-    server = _get_server(db, server_id)
-    inst = mcdr_manager.instance_dir(server)
-    target = next((i for i in mods.scan_dir(MOD_LIBRARY) if i["file_name"] == body.file_name), None)
-    if target is None:
+    """用上传的新文件替换库中该模组,并替换所有已安装它的服务器里的版本。"""
+    old = next((i for i in mods.scan_dir(MOD_LIBRARY) if i["file_name"] == file_name), None)
+    if old is None:
         raise HTTPException(status_code=404, detail="库中不存在该文件")
-    lib_id = target["id"]
-    lib_stripped = _strip_disabled(body.file_name)
-    for item in mods.list_mods(inst):
-        if (lib_id and item["id"] == lib_id) or _strip_disabled(item["file_name"]) == lib_stripped:
-            mods.delete_mod(inst, item["file_name"])
+    content = await file.read()
     try:
-        name = mods.install_from_library(MOD_LIBRARY, inst, body.file_name)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    return {"file_name": name}
+        new_name = mods.save_file(MOD_LIBRARY, file.filename or "mod.jar", content)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if new_name != file_name:
+        mods.delete_file(MOD_LIBRARY, file_name)
+
+    old_id = old["id"]
+    old_stripped = _strip_disabled(file_name)
+    for server in db.scalars(select(Server)).all():
+        inst = mcdr_manager.instance_dir(server)
+        replaced = False
+        for item in mods.list_mods(inst):
+            if (old_id and item["id"] == old_id) or _strip_disabled(item["file_name"]) == old_stripped:
+                mods.delete_mod(inst, item["file_name"])
+                replaced = True
+        if replaced:
+            mods.install_from_library(MOD_LIBRARY, inst, new_name)
+    return {"file_name": new_name}
 
 
 @router.get("/search")

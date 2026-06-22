@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, Download, Loader2, RefreshCw, Search, Trash2, Upload } from 'lucide-react'
+import { Check, Download, Loader2, RefreshCw, Replace, Search, Trash2, Upload, X } from 'lucide-react'
 
 import { ApiError } from '@/api/client'
 import {
@@ -12,7 +12,7 @@ import {
   installPlugin,
   listLibrary,
   listPlugins,
-  replaceFromLibrary,
+  replaceLibraryFile,
   switchPlugin,
   uploadPlugin,
   uploadToLibrary,
@@ -275,9 +275,35 @@ function LibraryTab({
     }
   }
 
+  const replaceRef = useRef<HTMLInputElement>(null)
+  const [replacingFor, setReplacingFor] = useState<string | null>(null)
+  const startReplace = (fileName: string) => {
+    setReplacingFor(fileName)
+    replaceRef.current?.click()
+  }
+  const onReplaceFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file || !replacingFor) return
+    const fn = replacingFor
+    setReplacingFor(null)
+    setBusy(fn)
+    try {
+      await replaceLibraryFile(fn, file)
+      showToast('success', '已替换(含已安装的服务器)')
+      refresh()
+      onInstalled()
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : '替换失败')
+    } finally {
+      setBusy(null)
+    }
+  }
+
   return (
     <>
       <input ref={fileRef} type="file" accept=".mcdr,.pyz,.py" className="hidden" onChange={onUpload} />
+      <input ref={replaceRef} type="file" accept=".mcdr,.pyz,.py" className="hidden" onChange={onReplaceFile} />
       <PageSurface
         title="本地库"
         description="上传到面板的插件,可安装到任意服务器。"
@@ -320,38 +346,24 @@ function LibraryTab({
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1.5">
                         {installedFiles.has(stripDisabled(p.file_name)) || (p.id && installedIds.has(p.id)) ? (
-                          <>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="gap-1.5"
-                              disabled={busy === p.file_name}
-                              onClick={() => {
-                                if (window.confirm(`替换会先卸载服务器内已安装的「${p.name}」再装入本地库版本,确定?`))
-                                  act(p, () => replaceFromLibrary(serverId, p.file_name), '已替换', onInstalled)
-                              }}
-                            >
-                              {busy === p.file_name ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                              替换
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              disabled={busy === p.file_name}
-                              onClick={async () => {
-                                setBusy(p.file_name)
-                                try {
-                                  await onUninstall({ id: p.id, file: p.file_name })
-                                } finally {
-                                  setBusy(null)
-                                }
-                              }}
-                            >
-                              卸载
-                            </Button>
-                          </>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                            title="从服务器卸载"
+                            disabled={busy === p.file_name}
+                            onClick={async () => {
+                              setBusy(p.file_name)
+                              try {
+                                await onUninstall({ id: p.id, file: p.file_name })
+                              } finally {
+                                setBusy(null)
+                              }
+                            }}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
                         ) : (
                           <Button
                             type="button"
@@ -365,6 +377,10 @@ function LibraryTab({
                             安装到此服务器
                           </Button>
                         )}
+                        <Button type="button" variant="outline" size="sm" className="gap-1.5" disabled={busy === p.file_name} title="上传新文件替换(含已安装的服务器)" onClick={() => startReplace(p.file_name)}>
+                          {busy === p.file_name ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Replace className="h-3.5 w-3.5" />}
+                          替换
+                        </Button>
                         <Button
                           type="button"
                           variant="ghost"
@@ -481,7 +497,7 @@ function CatalogueTab({
                       <div className="flex items-center justify-end gap-1">
                         <InstalledChip />
                         <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" title="卸载" onClick={() => onUninstall({ id: p.id })}>
-                          <Trash2 className="h-4 w-4" />
+                          <X className="h-4 w-4" />
                         </Button>
                       </div>
                     ) : (
