@@ -13,6 +13,7 @@ export interface PanelSettings {
   default_min_memory: string
   default_max_memory: string
   token_expire_minutes: number
+  download_proxy: string
   java_installs: JavaInstall[]
 }
 
@@ -22,6 +23,7 @@ export interface SettingsPatch {
   default_min_memory?: string
   default_max_memory?: string
   token_expire_minutes?: number
+  download_proxy?: string
   java_paths?: string[]
   new_password?: string
 }

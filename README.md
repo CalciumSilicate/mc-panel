@@ -5,7 +5,9 @@
 - 后端:FastAPI · SQLAlchemy · SQLite · JWT(单管理员密码)
 - 前端:Vite 6 · React 19 · TypeScript · Tailwind · shadcn/ui(派生自 `frontend-template`)
 
-> 当前已实现 **仪表盘 / 服务器实例(新建 vanilla · 编辑 · 启停 · 删除)/ 实例控制台 / 系统设置**。实例目录用 UUID 命名(与显示名解耦,改名零风险)。用户/角色体系、插件管理等留作后续扩展。
+> 当前已实现 **仪表盘 / 服务器实例(新建 vanilla · 编辑 · 启停 · 删除)/ 实例控制台 / 插件管理(本地 + 官方库在线安装)/ 模组管理(本地 + Modrinth)/ 系统设置(含下载代理)**。实例目录用 UUID 命名。用户/角色体系留作后续扩展。
+>
+> 下载代理:系统设置里的「下载代理」(如 `http://127.0.0.1:7890`)对所有出站请求生效 —— Mojang 核心、MCDR 插件库、Modrinth、文件下载。模组需 Fabric/Forge 等加载器才会被服务端加载(当前仅创建 vanilla)。
 
 ## 目录结构
 

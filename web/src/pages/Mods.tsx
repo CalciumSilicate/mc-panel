@@ -1,0 +1,283 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Download, Loader2, RefreshCw, Search, Trash2, Upload } from 'lucide-react'
+
+import { ApiError } from '@/api/client'
+import {
+  type ModrinthHit,
+  deleteMod,
+  installMod,
+  listMods,
+  modVersions,
+  searchModrinth,
+  switchMod,
+  uploadMod,
+} from '@/api/mods'
+import { listServers } from '@/api/servers'
+import { InlineLoader } from '@/components/PageLoader'
+import { PageShell, PageSurface } from '@/components/layout/PageScaffold'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useGlobalToast } from '@/components/ui/use-global-toast'
+import { useResource } from '@/lib/use-resource'
+import { cn } from '@/lib/utils'
+
+const LOADERS = ['fabric', 'forge', 'neoforge', 'quilt']
+
+export default function Mods() {
+  const { showToast } = useGlobalToast()
+  const { data: servers } = useResource(() => listServers(), [])
+  const [serverId, setServerId] = useState<number | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (serverId === null && servers && servers.length > 0) setServerId(servers[0].id)
+  }, [servers, serverId])
+
+  const server = useMemo(() => (servers ?? []).find((s) => s.id === serverId), [servers, serverId])
+  const installed = useResource(
+    () => (serverId === null ? Promise.resolve([]) : listMods(serverId)),
+    [serverId],
+  )
+
+  const run = async (key: string, fn: () => Promise<unknown>, ok: string) => {
+    setBusy(key)
+    try {
+      await fn()
+      showToast('success', ok)
+      installed.refresh()
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : '操作失败')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const onUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file || serverId === null) return
+    await run('upload', () => uploadMod(serverId, file), '已上传')
+  }
+
+  return (
+    <PageShell
+      title="模组管理"
+      description="管理实例的模组,或从 Modrinth 在线安装。注意:vanilla 服务端需 Fabric/Forge 等加载器才会加载模组。"
+      width="7xl"
+      actions={
+        <Select value={serverId === null ? undefined : String(serverId)} onValueChange={(v) => setServerId(Number(v))}>
+          <SelectTrigger className="w-44">
+            <SelectValue placeholder="选择服务器" />
+          </SelectTrigger>
+          <SelectContent>
+            {(servers ?? []).map((s) => (
+              <SelectItem key={s.id} value={String(s.id)}>
+                {s.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      }
+    >
+      {serverId === null ? (
+        <PageSurface>
+          <p className="py-10 text-center text-sm text-muted-foreground">请先选择一个服务器。</p>
+        </PageSurface>
+      ) : (
+        <Tabs defaultValue="installed">
+          <TabsList>
+            <TabsTrigger value="installed">已安装</TabsTrigger>
+            <TabsTrigger value="modrinth">Modrinth</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="installed" className="pt-4">
+            <input ref={fileRef} type="file" accept=".jar" className="hidden" onChange={onUpload} />
+            <PageSurface
+              title="已安装模组"
+              actions={
+                <>
+                  <Button type="button" variant="outline" className="gap-2" onClick={() => installed.refresh()} disabled={installed.loading}>
+                    <RefreshCw className={cn('h-4 w-4', installed.loading && 'animate-spin')} />
+                    刷新
+                  </Button>
+                  <Button type="button" className="gap-2" onClick={() => fileRef.current?.click()} disabled={busy === 'upload'}>
+                    {busy === 'upload' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                    上传
+                  </Button>
+                </>
+              }
+              bodyClassName="p-0"
+            >
+              {installed.loading && !installed.data ? (
+                <div className="flex h-40 items-center justify-center"><InlineLoader /></div>
+              ) : !installed.data || installed.data.length === 0 ? (
+                <p className="py-10 text-center text-sm text-muted-foreground">还没有模组。</p>
+              ) : (
+                <div className="ops-table-shell border-0">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>名称</TableHead>
+                        <TableHead>版本</TableHead>
+                        <TableHead>加载器</TableHead>
+                        <TableHead>启用</TableHead>
+                        <TableHead className="text-right">操作</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {installed.data.map((m) => (
+                        <TableRow key={m.file_name}>
+                          <TableCell>
+                            <div className="font-medium">{m.name}</div>
+                            <div className="text-xs text-muted-foreground">{m.file_name}</div>
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">{m.version || '—'}</TableCell>
+                          <TableCell className="text-muted-foreground">{m.loader || '—'}</TableCell>
+                          <TableCell>
+                            <Switch
+                              checked={m.enabled}
+                              disabled={busy === m.file_name}
+                              onCheckedChange={(c) => run(m.file_name, () => switchMod(serverId, m.file_name, c), c ? '已启用' : '已禁用')}
+                            />
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                              disabled={busy === m.file_name}
+                              onClick={() => {
+                                if (window.confirm(`删除模组「${m.name}」?`)) run(m.file_name, () => deleteMod(serverId, m.file_name), '已删除')
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </PageSurface>
+          </TabsContent>
+
+          <TabsContent value="modrinth" className="pt-4">
+            <ModrinthTab serverId={serverId} mcVersion={server?.mc_version ?? ''} onInstalled={() => installed.refresh()} />
+          </TabsContent>
+        </Tabs>
+      )}
+    </PageShell>
+  )
+}
+
+function ModrinthTab({ serverId, mcVersion, onInstalled }: { serverId: number; mcVersion: string; onInstalled: () => void }) {
+  const { showToast } = useGlobalToast()
+  const [query, setQuery] = useState('')
+  const [loader, setLoader] = useState('fabric')
+  const [filterMc, setFilterMc] = useState(true)
+  const [hits, setHits] = useState<ModrinthHit[]>([])
+  const [searching, setSearching] = useState(false)
+  const [installing, setInstalling] = useState<string | null>(null)
+
+  const search = async () => {
+    setSearching(true)
+    try {
+      setHits(await searchModrinth({ q: query, mcVersion: filterMc ? mcVersion : undefined, loader, limit: 20 }))
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : '搜索失败')
+    } finally {
+      setSearching(false)
+    }
+  }
+
+  const install = async (hit: ModrinthHit) => {
+    setInstalling(hit.project_id)
+    try {
+      const versions = await modVersions(hit.project_id, filterMc ? mcVersion : undefined, loader)
+      if (versions.length === 0) {
+        showToast('error', '没有匹配当前版本/加载器的发布')
+        return
+      }
+      await installMod(serverId, versions[0].id)
+      showToast('success', `已安装 ${versions[0].version_number}`)
+      onInstalled()
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : '安装失败')
+    } finally {
+      setInstalling(null)
+    }
+  }
+
+  return (
+    <PageSurface bodyClassName="p-0">
+      <div className="flex flex-wrap items-center gap-2 border-b border-border/60 p-3">
+        <form
+          className="relative flex-1 min-w-48"
+          onSubmit={(e) => {
+            e.preventDefault()
+            search()
+          }}
+        >
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索 Modrinth 模组,回车搜索" className="pl-8" />
+        </form>
+        <Select value={loader} onValueChange={setLoader}>
+          <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {LOADERS.map((l) => (
+              <SelectItem key={l} value={l}>{l}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <label className="flex items-center gap-2 rounded-md border border-border/70 px-3 py-2 text-sm">
+          <Switch checked={filterMc} onCheckedChange={setFilterMc} />
+          仅 {mcVersion || '当前版本'}
+        </label>
+        <Button type="button" className="gap-2" onClick={search} disabled={searching}>
+          {searching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+          搜索
+        </Button>
+      </div>
+
+      {hits.length === 0 ? (
+        <p className="py-10 text-center text-sm text-muted-foreground">输入关键词后搜索 Modrinth。</p>
+      ) : (
+        <div className="ops-table-shell border-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>模组</TableHead>
+                <TableHead>下载量</TableHead>
+                <TableHead className="text-right">操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {hits.map((h) => (
+                <TableRow key={h.project_id}>
+                  <TableCell>
+                    <div className="font-medium">{h.title}</div>
+                    <div className="line-clamp-1 max-w-md text-xs text-muted-foreground">{h.description}</div>
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">{h.downloads.toLocaleString()}</TableCell>
+                  <TableCell className="text-right">
+                    <Button type="button" variant="outline" size="sm" className="gap-1.5" disabled={installing === h.project_id} onClick={() => install(h)}>
+                      {installing === h.project_id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                      安装最新
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+    </PageSurface>
+  )
+}

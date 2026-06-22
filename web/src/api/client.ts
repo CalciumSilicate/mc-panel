@@ -42,6 +42,21 @@ export class ApiError extends Error {
   }
 }
 
+/** multipart 文件上传:不设置 content-type(交给浏览器带 boundary),仍注入鉴权头。 */
+export async function apiUpload<T>(path: string, formData: FormData): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers: { ...authHeaders() },
+    body: formData,
+  })
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    const message = typeof payload?.error === 'string' ? payload.error : `HTTP ${response.status}`
+    throw new ApiError(message, response.status)
+  }
+  return payload as T
+}
+
 export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const method = init?.method || 'GET'
   const { requestId, startedAt } = apiRequestStarted(path, method)

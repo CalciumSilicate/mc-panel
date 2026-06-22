@@ -5,7 +5,9 @@ import {
   ChevronRight,
   LayoutDashboard,
   LogOut,
+  Package,
   PanelLeft,
+  Puzzle,
   Server,
   Settings,
 } from 'lucide-react'
@@ -22,6 +24,8 @@ import { cn } from '@/lib/utils'
 
 const Overview = lazy(() => import('@/pages/Overview'))
 const Servers = lazy(() => import('@/pages/Servers'))
+const Plugins = lazy(() => import('@/pages/Plugins'))
+const Mods = lazy(() => import('@/pages/Mods'))
 const SettingsPage = lazy(() => import('@/pages/Settings'))
 
 /**
@@ -32,7 +36,7 @@ const SettingsPage = lazy(() => import('@/pages/Settings'))
  * 真要做深链接/多级路由时,把 `currentPage` 状态换成 router 即可,其余结构不动。
  */
 
-type Page = 'overview' | 'servers' | 'settings'
+type Page = 'overview' | 'servers' | 'plugins' | 'mods' | 'settings'
 
 interface NavItem {
   key: Page
@@ -43,6 +47,8 @@ interface NavItem {
 const navItems: NavItem[] = [
   { key: 'overview', label: '仪表盘', icon: LayoutDashboard },
   { key: 'servers', label: '服务器实例', icon: Server },
+  { key: 'plugins', label: '插件', icon: Puzzle },
+  { key: 'mods', label: '模组', icon: Package },
   { key: 'settings', label: '设置', icon: Settings },
 ]
 
@@ -253,6 +259,8 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                     >
                       {currentPage === 'overview' ? <Overview /> : null}
                       {currentPage === 'servers' ? <Servers /> : null}
+                      {currentPage === 'plugins' ? <Plugins /> : null}
+                      {currentPage === 'mods' ? <Mods /> : null}
                       {currentPage === 'settings' ? <SettingsPage /> : null}
                     </motion.div>
                   </AnimatePresence>

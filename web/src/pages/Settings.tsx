@@ -35,6 +35,7 @@ export default function Settings() {
   const [minMem, setMinMem] = useState('')
   const [maxMem, setMaxMem] = useState('')
   const [tokenExpire, setTokenExpire] = useState('')
+  const [downloadProxy, setDownloadProxy] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [javaPaths, setJavaPaths] = useState<string[]>([])
@@ -47,6 +48,7 @@ export default function Settings() {
     setMinMem(data.default_min_memory)
     setMaxMem(data.default_max_memory)
     setTokenExpire(String(data.token_expire_minutes))
+    setDownloadProxy(data.download_proxy)
     setJavaPaths(data.java_installs.map((i) => i.path))
   }, [data])
 
@@ -69,6 +71,7 @@ export default function Settings() {
       default_min_memory: minMem.trim(),
       default_max_memory: maxMem.trim(),
       token_expire_minutes: Number(tokenExpire) || undefined,
+      download_proxy: downloadProxy.trim(),
       java_paths: javaPaths,
     }
     if (newPassword) patch.new_password = newPassword
@@ -147,6 +150,10 @@ export default function Settings() {
             <div className="space-y-2">
               <Label htmlFor="token-expire">登录有效期(分钟)</Label>
               <Input id="token-expire" value={tokenExpire} onChange={(e) => setTokenExpire(e.target.value)} inputMode="numeric" />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="download-proxy">下载代理</Label>
+              <Input id="download-proxy" value={downloadProxy} onChange={(e) => setDownloadProxy(e.target.value)} placeholder="http://127.0.0.1:7890" className="font-mono" />
             </div>
           </div>
 
