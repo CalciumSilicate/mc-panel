@@ -128,7 +128,7 @@ export function ServerConsoleDialog({ server, onClose, onChanged }: ServerConsol
     <Dialog open={server !== null} onOpenChange={(open) => (!open ? onClose() : undefined)}>
       <DialogContent className="flex h-[85vh] max-h-[900px] w-[94vw] max-w-6xl flex-col gap-3">
         <DialogHeader>
-          <div className="flex flex-wrap items-center justify-between gap-3 pr-6">
+          <div className="flex flex-wrap items-center gap-3 pr-10">
             <DialogTitle className="flex items-center gap-2">
               <Terminal className="h-4 w-4" />
               控制台 —— {server?.name}
@@ -201,23 +201,20 @@ export function ServerConsoleDialog({ server, onClose, onChanged }: ServerConsol
           )}
         </div>
 
-        <div className="space-y-1.5">
-          <div className="flex items-end gap-2">
-            <Textarea
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              onKeyDown={onTextareaKeyDown}
-              rows={2}
-              placeholder={canSend ? '输入命令,Enter 发送,Shift+Enter 换行' : '实例未运行,无法发送命令'}
-              disabled={!canSend}
-              className="max-h-40 min-h-[44px] flex-1 resize-y font-mono"
-            />
-            <Button type="button" className="h-[44px] gap-1.5" onClick={sendCommand} disabled={!canSend || !input.trim()}>
-              <SendHorizonal className="h-4 w-4" />
-              发送
-            </Button>
-          </div>
-          <p className="text-[11px] text-muted-foreground">Enter 发送 · Shift+Enter 换行</p>
+        <div className="flex items-end gap-2">
+          <Textarea
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
+            onKeyDown={onTextareaKeyDown}
+            rows={1}
+            placeholder={canSend ? '输入命令,Enter 发送,Shift+Enter 换行' : '实例未运行,无法发送命令'}
+            disabled={!canSend}
+            className="max-h-40 min-h-11 flex-1 resize-y py-2.5 font-mono leading-5"
+          />
+          <Button type="button" className="h-11 gap-1.5" onClick={sendCommand} disabled={!canSend || !input.trim()}>
+            <SendHorizonal className="h-4 w-4" />
+            发送
+          </Button>
         </div>
       </DialogContent>
     </Dialog>
