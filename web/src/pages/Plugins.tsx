@@ -346,28 +346,30 @@ function LibraryTab({
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1.5">
                         {installedFiles.has(stripDisabled(p.file_name)) || (p.id && installedIds.has(p.id)) ? (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="icon"
-                            className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                            title="从服务器卸载"
-                            disabled={busy === p.file_name}
-                            onClick={async () => {
-                              setBusy(p.file_name)
-                              try {
-                                await onUninstall({ id: p.id, file: p.file_name })
-                              } finally {
-                                setBusy(null)
-                              }
-                            }}
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
+                          <>
+                            <InstalledChip />
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                              title="从服务器卸载"
+                              disabled={busy === p.file_name}
+                              onClick={async () => {
+                                setBusy(p.file_name)
+                                try {
+                                  await onUninstall({ id: p.id, file: p.file_name })
+                                } finally {
+                                  setBusy(null)
+                                }
+                              }}
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          </>
                         ) : (
                           <Button
                             type="button"
-                            variant="outline"
                             size="sm"
                             className="gap-1.5"
                             disabled={busy === p.file_name}
@@ -377,9 +379,16 @@ function LibraryTab({
                             安装到此服务器
                           </Button>
                         )}
-                        <Button type="button" variant="outline" size="sm" className="gap-1.5" disabled={busy === p.file_name} title="上传新文件替换(含已安装的服务器)" onClick={() => startReplace(p.file_name)}>
-                          {busy === p.file_name ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Replace className="h-3.5 w-3.5" />}
-                          替换
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                          title="上传新文件替换(含已安装的服务器)"
+                          disabled={busy === p.file_name}
+                          onClick={() => startReplace(p.file_name)}
+                        >
+                          {busy === p.file_name ? <Loader2 className="h-4 w-4 animate-spin" /> : <Replace className="h-4 w-4" />}
                         </Button>
                         <Button
                           type="button"
@@ -501,7 +510,7 @@ function CatalogueTab({
                         </Button>
                       </div>
                     ) : (
-                      <Button type="button" variant="outline" size="sm" className="min-w-24 gap-1.5" disabled={p.id in progress} onClick={() => install(p)}>
+                      <Button type="button" size="sm" className="min-w-24 gap-1.5" disabled={p.id in progress} onClick={() => install(p)}>
                         {p.id in progress ? (
                           <>
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />
