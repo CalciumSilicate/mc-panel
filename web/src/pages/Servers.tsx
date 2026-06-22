@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Ban, Download, Loader2, Pencil, Play, Plus, RefreshCw, Server, Square, Terminal, Trash2 } from 'lucide-react'
+import { Ban, Download, Loader2, Network, Pencil, Play, Plus, RefreshCw, Server, Square, Terminal, Trash2 } from 'lucide-react'
 
 import {
   type JavaInfo,
@@ -24,6 +24,7 @@ import {
   updateVelocityConfig,
 } from '@/api/servers'
 import { type JavaInstall, getSettings } from '@/api/settings'
+import { type ServerGroup, createGroup, deleteGroup, listGroups, updateGroup } from '@/api/groups'
 import { useAuth } from '@/components/auth-context'
 import { InlineLoader } from '@/components/PageLoader'
 import { PageShell, PageSurface } from '@/components/layout/PageScaffold'
@@ -73,8 +74,10 @@ export default function Servers() {
   const canAdmin = roleAtLeast('admin')
   const canHelper = roleAtLeast('helper')
   const { data, loading, error, refresh } = useResource(() => listServers(), [])
+  const { data: groups, refresh: refreshGroups } = useResource(() => listGroups(), [])
   const { showToast } = useGlobalToast()
   const [createOpen, setCreateOpen] = useState(false)
+  const [manageGroupsOpen, setManageGroupsOpen] = useState(false)
   const [busyId, setBusyId] = useState<number | null>(null)
   const [consoleServer, setConsoleServer] = useState<ServerSummary | null>(null)
   const [editServer, setEditServer] = useState<ServerSummary | null>(null)
@@ -108,6 +111,12 @@ export default function Servers() {
             <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
             刷新
           </Button>
+          {canAdmin ? (
+            <Button type="button" variant="outline" className="gap-2" onClick={() => setManageGroupsOpen(true)}>
+              <Network className="h-4 w-4" />
+              互联组
+            </Button>
+          ) : null}
           {canAdmin ? (
             <Button type="button" className="gap-2" onClick={() => setCreateOpen(true)}>
               <Plus className="h-4 w-4" />
@@ -152,6 +161,7 @@ export default function Servers() {
                     <TableHead>类型</TableHead>
                     <TableHead>版本</TableHead>
                     <TableHead>加载器/核心</TableHead>
+                    <TableHead>互联组</TableHead>
                     <TableHead>内存</TableHead>
                     <TableHead>端口</TableHead>
                     <TableHead>状态</TableHead>
@@ -173,6 +183,7 @@ export default function Servers() {
                         </TableCell>
                         <TableCell className="text-muted-foreground">{server.mc_version || '—'}</TableCell>
                         <TableCell className="font-mono text-xs text-muted-foreground">{server.loader_version || '—'}</TableCell>
+                        <TableCell className="text-muted-foreground">{server.group_name || '—'}</TableCell>
                         <TableCell className="font-mono text-xs text-muted-foreground">
                           {server.min_memory} ~ {server.max_memory}
                         </TableCell>
@@ -278,6 +289,7 @@ export default function Servers() {
 
       <CreateServerDialog
         open={createOpen}
+        groups={groups ?? []}
         onOpenChange={setCreateOpen}
         onCreated={() => {
           setCreateOpen(false)
@@ -287,6 +299,7 @@ export default function Servers() {
 
       <EditServerDialog
         server={editServer}
+        groups={groups ?? []}
         onClose={() => setEditServer(null)}
         onSaved={() => {
           setEditServer(null)
@@ -294,6 +307,15 @@ export default function Servers() {
         }}
         onDeleted={() => {
           setEditServer(null)
+          refresh()
+        }}
+      />
+
+      <ManageGroupsDialog
+        open={manageGroupsOpen}
+        onClose={() => setManageGroupsOpen(false)}
+        onChanged={() => {
+          refreshGroups()
           refresh()
         }}
       />
@@ -327,18 +349,23 @@ function JavaHintText({ info }: { info: JavaInfo }) {
   )
 }
 
+const NO_GROUP = '__none__'
+
 function CreateServerDialog({
   open,
+  groups,
   onOpenChange,
   onCreated,
 }: {
   open: boolean
+  groups: ServerGroup[]
   onOpenChange: (open: boolean) => void
   onCreated: () => void
 }) {
   const { showToast } = useGlobalToast()
   const [name, setName] = useState('')
   const [type, setType] = useState<ServerType>('vanilla')
+  const [groupId, setGroupId] = useState<number | null>(null)
   const [channel, setChannel] = useState<VersionChannel>('release')
   const [mcVersion, setMcVersion] = useState('')
   const [loaderVersion, setLoaderVersion] = useState('')
@@ -361,6 +388,7 @@ function CreateServerDialog({
       setName('')
       setType('vanilla')
       setChannel('release')
+      setGroupId(null)
     }
   }, [open])
 
@@ -453,6 +481,7 @@ function CreateServerDialog({
         min_memory: minMemory.trim() || '1G',
         max_memory: maxMemory.trim() || '2G',
         port: Number(port) || 25565,
+        group_id: groupId,
       })
       showToast('success', '已创建,正在后台安装核心')
       onCreated()
@@ -566,6 +595,17 @@ function CreateServerDialog({
               <Input id="srv-port" value={port} onChange={(e) => setPort(e.target.value)} placeholder="25565" inputMode="numeric" />
             </div>
           </div>
+
+          <div className="space-y-2">
+            <Label>互联组(可选)</Label>
+            <Select value={groupId === null ? NO_GROUP : String(groupId)} onValueChange={(v) => setGroupId(v === NO_GROUP ? null : Number(v))}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NO_GROUP}>不加入</SelectItem>
+                {groups.map((g) => (<SelectItem key={g.id} value={String(g.id)}>{g.name}</SelectItem>))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
 
         <DialogFooter>
@@ -605,11 +645,13 @@ function PropSwitch({
 
 function EditServerDialog({
   server,
+  groups,
   onClose,
   onSaved,
   onDeleted,
 }: {
   server: ServerSummary | null
+  groups: ServerGroup[]
   onClose: () => void
   onSaved: () => void
   onDeleted: () => void
@@ -624,6 +666,7 @@ function EditServerDialog({
   const [extraJvm, setExtraJvm] = useState('')
   const [autoStart, setAutoStart] = useState(false)
   const [protectedFlag, setProtectedFlag] = useState(false)
+  const [groupId, setGroupId] = useState<number | null>(null)
   const [javaOverride, setJavaOverride] = useState('')
   const [props, setProps] = useState<Record<string, string>>({})
   const [velCfg, setVelCfg] = useState<VelocityConfig>({ motd: '', show_max_players: 500, online_mode: true, forwarding_mode: 'NONE' })
@@ -658,6 +701,7 @@ function EditServerDialog({
     setExtraJvm(server.extra_jvm_args)
     setAutoStart(server.auto_start)
     setProtectedFlag(server.protected)
+    setGroupId(server.group_id)
     setJavaOverride(server.java_path_override)
     // 仅在打开/切换实例时初始化,避免列表刷新覆盖正在编辑的内容
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -789,6 +833,7 @@ function EditServerDialog({
         auto_start: autoStart,
         java_path_override: javaOverride,
         protected: protectedFlag,
+        group_id: groupId,
       })
       if (isVelocity) {
         await updateVelocityConfig(server.id, velCfg)
@@ -900,6 +945,16 @@ function EditServerDialog({
                 <Label htmlFor="edit-port">端口</Label>
                 <Input id="edit-port" value={port} onChange={(e) => setPort(e.target.value)} inputMode="numeric" />
               </div>
+            </div>
+            <div className="space-y-2">
+              <Label>互联组</Label>
+              <Select value={groupId === null ? NO_GROUP : String(groupId)} onValueChange={(v) => setGroupId(v === NO_GROUP ? null : Number(v))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_GROUP}>不加入</SelectItem>
+                  {groups.map((g) => (<SelectItem key={g.id} value={String(g.id)}>{g.name}</SelectItem>))}
+                </SelectContent>
+              </Select>
             </div>
           </TabsContent>
 
@@ -1070,6 +1125,96 @@ function EditServerDialog({
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pencil className="h-4 w-4" />}
             {locked ? '取消保护' : '保存'}
           </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function ManageGroupsDialog({ open, onClose, onChanged }: { open: boolean; onClose: () => void; onChanged: () => void }) {
+  const { showToast } = useGlobalToast()
+  const [groups, setGroups] = useState<ServerGroup[]>([])
+  const [newName, setNewName] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const load = () => listGroups().then(setGroups).catch(() => undefined)
+  useEffect(() => {
+    if (open) {
+      setNewName('')
+      load()
+    }
+  }, [open])
+
+  const run = async (fn: () => Promise<unknown>, ok?: string) => {
+    setBusy(true)
+    try {
+      await fn()
+      if (ok) showToast('success', ok)
+      await load()
+      onChanged()
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : '操作失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const create = () => {
+    if (!newName.trim()) return
+    run(() => createGroup(newName.trim()), '已创建').then(() => setNewName(''))
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => (!o ? onClose() : undefined)}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>互联组管理</DialogTitle>
+          <DialogDescription>组内 MC 实例的玩家聊天可互相转发(纯组织,与权限无关)。</DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-2 py-2">
+          {groups.length === 0 ? (
+            <p className="py-4 text-center text-sm text-muted-foreground">还没有互联组。</p>
+          ) : (
+            groups.map((g) => (
+              <div key={g.id} className="flex items-center gap-2 rounded-md border border-border/70 px-3 py-2">
+                <span className="min-w-0 flex-1 truncate text-sm font-medium">{g.name}</span>
+                <span className="shrink-0 text-xs text-muted-foreground">{g.server_count} 个实例</span>
+                <span className="flex shrink-0 items-center gap-1.5" title="组内聊天互转">
+                  <span className="text-xs text-muted-foreground">互联</span>
+                  <Switch checked={g.bridge_enabled} disabled={busy} onCheckedChange={(v) => run(() => updateGroup(g.id, { bridge_enabled: v }))} />
+                </span>
+                <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" disabled={busy} title="重命名" onClick={() => {
+                  const n = window.prompt('新名称', g.name)
+                  if (n && n.trim() && n.trim() !== g.name) run(() => updateGroup(g.id, { name: n.trim() }), '已重命名')
+                }}>
+                  <Pencil className="h-4 w-4" />
+                </Button>
+                <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" disabled={busy} title="删除" onClick={() => {
+                  if (window.confirm(`删除互联组「${g.name}」?组内服务器会被解绑(不删除服务器)。`)) run(() => deleteGroup(g.id), '已删除')
+                }}>
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            ))
+          )}
+
+          <div className="flex items-center gap-2 pt-2">
+            <Input
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="新互联组名称"
+              onKeyDown={(e) => { if (e.key === 'Enter') create() }}
+            />
+            <Button type="button" className="gap-1.5 shrink-0" disabled={busy || !newName.trim()} onClick={create}>
+              <Plus className="h-4 w-4" />
+              新建
+            </Button>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onClose}>关闭</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

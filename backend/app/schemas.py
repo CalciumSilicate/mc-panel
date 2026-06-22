@@ -72,6 +72,27 @@ class UserUpdate(BaseModel):
     player_id: str | None = None
 
 
+# ---------- 互联组 ----------
+class ServerGroupCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    bridge_enabled: bool = True
+
+
+class ServerGroupUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    bridge_enabled: bool | None = None
+
+
+class ServerGroupOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    bridge_enabled: bool
+    created_at: datetime
+    server_count: int = 0
+
+
 # ---------- 服务器 ----------
 class ServerCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
@@ -81,6 +102,7 @@ class ServerCreate(BaseModel):
     min_memory: str = "1G"
     max_memory: str = "2G"
     port: int = 25565
+    group_id: int | None = None
 
 
 class ServerUpdate(BaseModel):
@@ -94,6 +116,7 @@ class ServerUpdate(BaseModel):
     auto_start: bool | None = None
     java_path_override: str | None = None
     protected: bool | None = None
+    group_id: int | None = None
 
 
 class PropertiesResponse(BaseModel):
@@ -125,6 +148,8 @@ class ServerSummary(BaseModel):
     auto_start: bool = False
     java_path_override: str = ""
     protected: bool = False
+    group_id: int | None = None
+    group_name: str = ""
     created_at: datetime
     # 运行时派生字段
     status: str = "stopped"

@@ -34,6 +34,18 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
+class ServerGroup(Base):
+    """互联组:纯组织/路由概念,只决定"谁和谁互联",不参与权限。"""
+
+    __tablename__ = "server_groups"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+    # 组内 MC 实例的玩家聊天是否互相转发
+    bridge_enabled: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
 class Server(Base):
     """一个被本面板管理的 MCDR 实例(对应 SERVERS_ROOT 下的一个目录)。"""
 
@@ -58,6 +70,8 @@ class Server(Base):
     java_path_override: Mapped[str] = mapped_column(String(512), default="")
     # 保护实例:开启后仅 admin 可停;编辑/删除/插件/模组/超平坦/恢复到本服 全禁
     protected: Mapped[bool] = mapped_column(default=False)
+    # 所属互联组(纯组织,与权限无关);空 = 不属于任何组
+    group_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 

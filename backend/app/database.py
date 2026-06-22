@@ -44,6 +44,7 @@ _COLUMN_MIGRATIONS = {
         "java_path_override": "VARCHAR(512) DEFAULT ''",
         "protected": "BOOLEAN DEFAULT 0",
         "loader_version": "VARCHAR(64) DEFAULT ''",
+        "group_id": "INTEGER",
     },
     "system_settings": {
         "download_proxy": "VARCHAR(255) DEFAULT ''",

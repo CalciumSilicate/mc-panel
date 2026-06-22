@@ -32,6 +32,8 @@ export interface ServerSummary {
   auto_start: boolean
   java_path_override: string
   protected: boolean
+  group_id: number | null
+  group_name: string
   created_at: string
   status: ServerStatus
   install?: InstallProgress | null
@@ -47,6 +49,7 @@ export interface CreateServerInput {
   min_memory: string
   max_memory: string
   port: number
+  group_id?: number | null
 }
 
 export function listServers(): Promise<ServerSummary[]> {
@@ -116,6 +119,7 @@ export interface ServerUpdateInput {
   port?: number
   mc_version?: string
   loader_version?: string
+  group_id?: number | null
   extra_jvm_args?: string
   auto_start?: boolean
   java_path_override?: string

@@ -28,7 +28,7 @@ from ..deps import (
 )
 from ..java import choose_java, detect_installs, get_java_paths, required_java_major
 from ..mcdr import manager
-from ..models import Server, User
+from ..models import Server, ServerGroup, User
 from ..security import decode_token
 from ..schemas import (
     CreateServerResponse,
@@ -59,9 +59,10 @@ from .. import versions as versions_mod
 router = APIRouter(prefix="/servers", tags=["servers"])
 
 
-def _to_summary(server: Server) -> ServerSummary:
+def _to_summary(server: Server, group_name: str = "") -> ServerSummary:
     summary = ServerSummary.model_validate(server)
     summary.status = manager.get_status(server)
+    summary.group_name = group_name
     if summary.status == "installing":
         prog = manager.install_progress(server.id)
         if prog is not None:
@@ -73,12 +74,20 @@ def _to_summary(server: Server) -> ServerSummary:
     return summary
 
 
+def _group_name(db: Session, group_id: int | None) -> str:
+    if not group_id:
+        return ""
+    g = db.get(ServerGroup, group_id)
+    return g.name if g else ""
+
+
 @router.get("", response_model=list[ServerSummary])
 def list_servers(
     _: str = Depends(require_auth), db: Session = Depends(get_db)
 ) -> list[ServerSummary]:
+    names = {g.id: g.name for g in db.scalars(select(ServerGroup)).all()}
     servers = db.scalars(select(Server).order_by(Server.id)).all()
-    return [_to_summary(s) for s in servers]
+    return [_to_summary(s, names.get(s.group_id, "")) for s in servers]
 
 
 @router.get("/versions", response_model=VersionList)
@@ -205,6 +214,8 @@ async def create_server(
     dir_name = uuid.uuid4().hex
 
     settings = get_settings_row(db)
+    if payload.group_id and not db.get(ServerGroup, payload.group_id):
+        raise HTTPException(status_code=400, detail="互联组不存在")
     server = Server(
         name=payload.name,
         dir_name=dir_name,
@@ -214,6 +225,7 @@ async def create_server(
         min_memory=payload.min_memory or settings.default_min_memory,
         max_memory=payload.max_memory or settings.default_max_memory,
         port=payload.port,
+        group_id=payload.group_id,
     )
     db.add(server)
     db.commit()
@@ -280,6 +292,10 @@ async def update_server(
         server.java_path_override = payload.java_path_override
     if payload.protected is not None:
         server.protected = payload.protected
+    if "group_id" in payload.model_fields_set:
+        if payload.group_id and not db.get(ServerGroup, payload.group_id):
+            raise HTTPException(status_code=400, detail="互联组不存在")
+        server.group_id = payload.group_id
 
     mc_changed = bool(payload.mc_version) and payload.mc_version != server.mc_version
     loader_changed = payload.loader_version is not None and payload.loader_version != server.loader_version
@@ -303,7 +319,7 @@ async def update_server(
     if version_changed:
         _launch_install(server.id, _redownload_in_background(server.id))
 
-    return _to_summary(server)
+    return _to_summary(server, _group_name(db, server.group_id))
 
 
 @router.get("/{server_id}/properties", response_model=PropertiesResponse)
