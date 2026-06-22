@@ -3,16 +3,17 @@
 机制(全程在面板进程内,无需 MCDR 插件):
   - manager 逐行钩子捕获某实例控制台里的玩家聊天 ``]: <玩家名> 内容``
   - 查该实例所属互联组(bridge_enabled)内其它**运行中的 MC 实例**
-  - 用 ``say`` 注入:``[来源服] 玩家: 内容``
+  - 照搬 asPanel 的渲染:用 ``tellraw @a`` 注入整条灰色 ``[来源服] <玩家> 内容``
+    (来源服可点击 /server,玩家名可点击 @)
 
 防回环:
-  - 聊天正则锚定在日志前缀 ``]:`` 之后紧跟 ``<名字>``,而注入的 say 行是
-    ``]: [Server] [来源服] 玩家: 内容``(``]:`` 后不是 ``<``),不会被再次匹配。
-  - 注入文本不含尖括号,双保险。
+  - ``tellraw`` 不会把内容回显到控制台,不产生新的聊天行,天然无回环。
+  - 另外聊天正则锚定 ``]:`` 后紧跟 ``<名字>``,双保险。
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 
 from sqlalchemy import select
@@ -63,10 +64,32 @@ def handle_line(server_id: int, line: str) -> None:
         return
     from .mcdr import manager
 
-    text = f"say [{src_name}] {player}: {content}"
+    command = _chat_tellraw(src_name, player, content)
     for tid, _name in targets:
         if manager.is_running(tid):
-            loop.create_task(_safe_send(tid, text))
+            loop.create_task(_safe_send(tid, command))
+
+
+def _chat_tellraw(src: str, player: str, content: str) -> str:
+    """照搬 asPanel 跨服聊天渲染:整条灰色 [来源服] <玩家> 内容,
+    来源服可点击建议 /server,玩家名可点击建议 @。"""
+    components = [
+        "",
+        {"text": "[", "color": "gray"},
+        {
+            "text": src,
+            "color": "gray",
+            "clickEvent": {"action": "suggest_command", "value": f"/server {src}"},
+        },
+        {"text": "] ", "color": "gray"},
+        {
+            "text": f"<{player}> ",
+            "color": "gray",
+            "clickEvent": {"action": "suggest_command", "value": f"@ {player}"},
+        },
+        {"text": content, "color": "gray"},
+    ]
+    return "tellraw @a " + json.dumps(components, ensure_ascii=False)
 
 
 async def _safe_send(server_id: int, command: str) -> None:
