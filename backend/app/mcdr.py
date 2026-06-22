@@ -82,8 +82,10 @@ def _mcdr_config(java_command: str, min_memory: str, max_memory: str) -> dict:
             "nogui",
         ],
         "handler": "vanilla_handler",
+        # 发送给服务端用 UTF-8;读取服务端输出先按 UTF-8,失败回退 GBK
+        # (Windows 下 Java 启动器/旧服务端常用系统码页),避免解码报错。
         "encoding": "utf8",
-        "decoding": "utf8",
+        "decoding": ["utf8", "gbk"],
         "plugin_directories": ["plugins"],
         "check_update": False,
         "advanced_console": False,
@@ -198,11 +200,30 @@ class MCDRManager:
         rc = proc.returncode
         self._append_line(server_id, f"[mc-panel] 进程已退出 (return code: {rc})")
 
+    def _reconcile_config(self, inst: Path) -> None:
+        """启动前同步实例 config.yml 的编码字段,让早于编码修复创建的实例也受益。
+        只改 encoding/decoding,不动用户可能自定义的 start_command。"""
+        config_path = inst / "config.yml"
+        if not config_path.exists():
+            return
+        try:
+            data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        except Exception:  # noqa: BLE001 - 配置损坏时不阻塞启动
+            return
+        if data.get("encoding") == "utf8" and data.get("decoding") == ["utf8", "gbk"]:
+            return
+        data["encoding"] = "utf8"
+        data["decoding"] = ["utf8", "gbk"]
+        config_path.write_text(
+            yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8"
+        )
+
     # ---------- 启停 ----------
     async def start(self, server: Server, python_executable: str) -> None:
         inst = self.instance_dir(server)
         if not (inst / "server" / "server.jar").exists():
             raise RuntimeError("服务端 jar 不存在,实例尚未安装完成")
+        self._reconcile_config(inst)
         existing = self._procs.get(server.id)
         if existing is not None and existing.returncode is None:
             return  # 已在运行
