@@ -3,14 +3,19 @@ import { Download, Loader2, RefreshCw, Search, Trash2, Upload } from 'lucide-rea
 
 import { ApiError } from '@/api/client'
 import {
+  type InstalledMod,
   type ModrinthHit,
+  deleteFromLibrary,
   deleteMod,
+  installFromLibrary,
   installMod,
+  listLibrary,
   listMods,
   modVersions,
   searchModrinth,
   switchMod,
   uploadMod,
+  uploadToLibrary,
 } from '@/api/mods'
 import { listServers } from '@/api/servers'
 import { InlineLoader } from '@/components/PageLoader'
@@ -93,6 +98,7 @@ export default function Mods() {
           <TabsList>
             <TabsTrigger value="installed">已安装</TabsTrigger>
             <TabsTrigger value="modrinth">Modrinth</TabsTrigger>
+            <TabsTrigger value="library">本地</TabsTrigger>
           </TabsList>
 
           <TabsContent value="installed" className="pt-4">
@@ -171,9 +177,130 @@ export default function Mods() {
           <TabsContent value="modrinth" className="pt-4">
             <ModrinthTab serverId={serverId} mcVersion={server?.mc_version ?? ''} onInstalled={() => installed.refresh()} />
           </TabsContent>
+
+          <TabsContent value="library" className="pt-4">
+            <LibraryTab serverId={serverId} onInstalled={() => installed.refresh()} />
+          </TabsContent>
         </Tabs>
       )}
     </PageShell>
+  )
+}
+
+function LibraryTab({ serverId, onInstalled }: { serverId: number; onInstalled: () => void }) {
+  const { showToast } = useGlobalToast()
+  const { data, loading, refresh } = useResource(() => listLibrary(), [])
+  const [busy, setBusy] = useState<string | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const onUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    setBusy('upload')
+    try {
+      await uploadToLibrary(file)
+      showToast('success', '已上传到本地库')
+      refresh()
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : '上传失败')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const act = async (m: InstalledMod, fn: () => Promise<unknown>, ok: string, after: () => void) => {
+    setBusy(m.file_name)
+    try {
+      await fn()
+      showToast('success', ok)
+      after()
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : '操作失败')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  return (
+    <>
+      <input ref={fileRef} type="file" accept=".jar" className="hidden" onChange={onUpload} />
+      <PageSurface
+        title="本地库"
+        description="上传到面板的模组,可安装到任意服务器。"
+        actions={
+          <>
+            <Button type="button" variant="outline" className="gap-2" onClick={refresh} disabled={loading}>
+              <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
+              刷新
+            </Button>
+            <Button type="button" className="gap-2" onClick={() => fileRef.current?.click()} disabled={busy === 'upload'}>
+              {busy === 'upload' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+              上传
+            </Button>
+          </>
+        }
+        bodyClassName="p-0"
+      >
+        {loading && !data ? (
+          <div className="flex h-40 items-center justify-center"><InlineLoader /></div>
+        ) : !data || data.length === 0 ? (
+          <p className="py-10 text-center text-sm text-muted-foreground">本地库还没有模组。</p>
+        ) : (
+          <div className="ops-table-shell border-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>名称</TableHead>
+                  <TableHead>版本</TableHead>
+                  <TableHead>加载器</TableHead>
+                  <TableHead className="text-right">操作</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.map((m) => (
+                  <TableRow key={m.file_name}>
+                    <TableCell>
+                      <div className="font-medium">{m.name}</div>
+                      <div className="text-xs text-muted-foreground">{m.file_name}</div>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{m.version || '—'}</TableCell>
+                    <TableCell className="text-muted-foreground">{m.loader || '—'}</TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-1.5">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="gap-1.5"
+                          disabled={busy === m.file_name}
+                          onClick={() => act(m, () => installFromLibrary(serverId, m.file_name), '已安装到服务器', onInstalled)}
+                        >
+                          {busy === m.file_name ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                          安装到此服务器
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                          disabled={busy === m.file_name}
+                          onClick={() => {
+                            if (window.confirm(`从本地库删除「${m.name}」?`)) act(m, () => deleteFromLibrary(m.file_name), '已删除', refresh)
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </PageSurface>
+    </>
   )
 }
 

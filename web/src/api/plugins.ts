@@ -53,3 +53,25 @@ export function uploadPlugin(serverId: number, file: File) {
   fd.append('file', file)
   return apiUpload<{ file_name: string }>(`/plugins/server/${serverId}/upload`, fd)
 }
+
+// ---- 本地中央库 ----
+export function listLibrary(): Promise<InstalledPlugin[]> {
+  return apiRequest<InstalledPlugin[]>('/plugins/library')
+}
+
+export function uploadToLibrary(file: File) {
+  const fd = new FormData()
+  fd.append('file', file)
+  return apiUpload<{ file_name: string }>('/plugins/library/upload', fd)
+}
+
+export function deleteFromLibrary(fileName: string) {
+  return apiRequest(`/plugins/library/${encodeURIComponent(fileName)}`, { method: 'DELETE' })
+}
+
+export function installFromLibrary(serverId: number, fileName: string) {
+  return apiRequest<{ file_name: string }>(`/plugins/server/${serverId}/install-from-library`, {
+    method: 'POST',
+    body: JSON.stringify({ file_name: fileName }),
+  })
+}

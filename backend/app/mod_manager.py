@@ -72,7 +72,9 @@ class ModManager:
         return instance_dir / "server" / "mods"
 
     def list_mods(self, instance_dir: Path) -> list[dict]:
-        mdir = self.mods_dir(instance_dir)
+        return self.scan_dir(self.mods_dir(instance_dir))
+
+    def scan_dir(self, mdir: Path) -> list[dict]:
         result: list[dict] = []
         if not mdir.exists():
             return result
@@ -107,18 +109,35 @@ class ModManager:
         return new_name
 
     def delete_mod(self, instance_dir: Path, file_name: str) -> None:
-        path = self.mods_dir(instance_dir) / file_name
+        self.delete_file(self.mods_dir(instance_dir), file_name)
+
+    def delete_file(self, directory: Path, file_name: str) -> None:
+        path = directory / Path(file_name).name
         if path.exists():
             path.unlink()
 
     def save_upload(self, instance_dir: Path, filename: str, content: bytes) -> str:
+        return self.save_file(self.mods_dir(instance_dir), filename, content)
+
+    def save_file(self, directory: Path, filename: str, content: bytes) -> str:
         name = Path(filename).name
         if not name.endswith(".jar"):
             raise ValueError("仅支持 .jar 模组文件")
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / name).write_bytes(content)
+        return name
+
+    def install_from_library(self, library_dir: Path, instance_dir: Path, file_name: str) -> str:
+        import shutil
+
+        src = library_dir / Path(file_name).name
+        if not src.exists():
+            raise FileNotFoundError("库中不存在该文件")
         mdir = self.mods_dir(instance_dir)
         mdir.mkdir(parents=True, exist_ok=True)
-        (mdir / name).write_bytes(content)
-        return name
+        dest = mdir / src.name
+        shutil.copyfile(src, dest)
+        return dest.name
 
     # ---------- Modrinth ----------
     async def search_modrinth(

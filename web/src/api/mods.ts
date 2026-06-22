@@ -77,3 +77,25 @@ export function installMod(serverId: number, versionId: string) {
     body: JSON.stringify({ version_id: versionId }),
   })
 }
+
+// ---- 本地中央库 ----
+export function listLibrary(): Promise<InstalledMod[]> {
+  return apiRequest<InstalledMod[]>('/mods/library')
+}
+
+export function uploadToLibrary(file: File) {
+  const fd = new FormData()
+  fd.append('file', file)
+  return apiUpload<{ file_name: string }>('/mods/library/upload', fd)
+}
+
+export function deleteFromLibrary(fileName: string) {
+  return apiRequest(`/mods/library/${encodeURIComponent(fileName)}`, { method: 'DELETE' })
+}
+
+export function installFromLibrary(serverId: number, fileName: string) {
+  return apiRequest<{ file_name: string }>(`/mods/server/${serverId}/install-from-library`, {
+    method: 'POST',
+    body: JSON.stringify({ file_name: fileName }),
+  })
+}

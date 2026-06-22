@@ -22,6 +22,9 @@ WEB_DIST = Path(os.environ.get("MCPANEL_WEB_DIST", PROJECT_ROOT / "web" / "dist"
 DATA_DIR = Path(os.environ.get("MCPANEL_DATA_DIR", PROJECT_ROOT / "data"))
 # 每个被管理的 MCDR 实例是 SERVERS_ROOT 下的一个子目录。
 SERVERS_ROOT = DATA_DIR / "servers"
+# 面板中央库:上传一次,可安装到任意实例。
+PLUGIN_LIBRARY = DATA_DIR / "library" / "plugins"
+MOD_LIBRARY = DATA_DIR / "library" / "mods"
 DB_PATH = DATA_DIR / "panel.db"
 SECRET_KEY_PATH = DATA_DIR / "secret.key"
 

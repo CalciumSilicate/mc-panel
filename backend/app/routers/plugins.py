@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from ..config import PLUGIN_LIBRARY
 from ..database import get_db
 from ..deps import get_settings_row, require_auth
 from ..mcdr import manager as mcdr_manager
@@ -12,6 +13,10 @@ from ..models import Server
 from ..plugin_manager import manager as plugins
 
 router = APIRouter(prefix="/plugins", tags=["plugins"])
+
+
+class InstallFromLibraryBody(BaseModel):
+    file_name: str
 
 
 def _instance_dir(db: Session, server_id: int):
@@ -80,6 +85,44 @@ async def upload_plugin(
         name = plugins.save_upload(inst, file.filename or "plugin", content)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    return {"file_name": name}
+
+
+@router.get("/library")
+def list_library(_: str = Depends(require_auth)) -> list[dict]:
+    return plugins.scan_dir(PLUGIN_LIBRARY)
+
+
+@router.post("/library/upload")
+async def upload_library(
+    file: UploadFile = File(...), _: str = Depends(require_auth)
+) -> dict:
+    content = await file.read()
+    try:
+        name = plugins.save_file(PLUGIN_LIBRARY, file.filename or "plugin", content)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"file_name": name}
+
+
+@router.delete("/library/{file_name}")
+def delete_library(file_name: str, _: str = Depends(require_auth)) -> dict:
+    plugins.delete_file(PLUGIN_LIBRARY, file_name)
+    return {"ok": True}
+
+
+@router.post("/server/{server_id}/install-from-library")
+def install_from_library(
+    server_id: int,
+    body: InstallFromLibraryBody,
+    _: str = Depends(require_auth),
+    db: Session = Depends(get_db),
+) -> dict:
+    inst = _instance_dir(db, server_id)
+    try:
+        name = plugins.install_from_library(PLUGIN_LIBRARY, inst, body.file_name)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
     return {"file_name": name}
 
 

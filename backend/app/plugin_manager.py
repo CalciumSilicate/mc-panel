@@ -93,7 +93,9 @@ class PluginManager:
         return instance_dir / "plugins"
 
     def list_plugins(self, instance_dir: Path) -> list[dict]:
-        pdir = self.plugins_dir(instance_dir)
+        return self.scan_dir(self.plugins_dir(instance_dir))
+
+    def scan_dir(self, pdir: Path) -> list[dict]:
         result: list[dict] = []
         if not pdir.exists():
             return result
@@ -134,22 +136,39 @@ class PluginManager:
         return new_name
 
     def delete_plugin(self, instance_dir: Path, file_name: str) -> None:
+        self.delete_file(self.plugins_dir(instance_dir), file_name)
+
+    def delete_file(self, directory: Path, file_name: str) -> None:
         import shutil
 
-        path = self.plugins_dir(instance_dir) / file_name
+        path = directory / Path(file_name).name
         if path.is_dir():
             shutil.rmtree(path, ignore_errors=True)
         elif path.exists():
             path.unlink()
 
     def save_upload(self, instance_dir: Path, filename: str, content: bytes) -> str:
+        return self.save_file(self.plugins_dir(instance_dir), filename, content)
+
+    def save_file(self, directory: Path, filename: str, content: bytes) -> str:
         name = Path(filename).name
         if not name.endswith(PLUGIN_SUFFIXES):
             raise ValueError("仅支持 .mcdr / .pyz / .py 插件文件")
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / name).write_bytes(content)
+        return name
+
+    def install_from_library(self, library_dir: Path, instance_dir: Path, file_name: str) -> str:
+        import shutil
+
+        src = library_dir / Path(file_name).name
+        if not src.exists():
+            raise FileNotFoundError("库中不存在该文件")
         pdir = self.plugins_dir(instance_dir)
         pdir.mkdir(parents=True, exist_ok=True)
-        (pdir / name).write_bytes(content)
-        return name
+        dest = pdir / src.name
+        shutil.copyfile(src, dest)
+        return dest.name
 
     # ---------- 在线 catalogue ----------
     async def fetch_catalogue(self, force: bool = False) -> dict:
