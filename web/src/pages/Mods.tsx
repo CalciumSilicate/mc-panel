@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Download, Loader2, RefreshCw, Search, Trash2, Upload } from 'lucide-react'
+import { Check, Download, Loader2, RefreshCw, Search, Trash2, Upload } from 'lucide-react'
 
 import { ApiError } from '@/api/client'
 import {
@@ -32,6 +32,16 @@ import { cn } from '@/lib/utils'
 
 const LOADERS = ['fabric', 'forge', 'neoforge', 'quilt']
 
+const stripDisabled = (n: string) => (n.endsWith('.disabled') ? n.slice(0, -'.disabled'.length) : n)
+
+function InstalledChip() {
+  return (
+    <span className="inline-flex items-center gap-1.5 px-2 text-sm text-emerald-600 dark:text-emerald-400">
+      <Check className="h-4 w-4" /> 已安装
+    </span>
+  )
+}
+
 export default function Mods() {
   const { showToast } = useGlobalToast()
   const { data: servers } = useResource(() => listServers(), [])
@@ -47,6 +57,14 @@ export default function Mods() {
   const installed = useResource(
     () => (serverId === null ? Promise.resolve([]) : listMods(serverId)),
     [serverId],
+  )
+  const installedIds = useMemo(
+    () => new Set((installed.data ?? []).map((m) => m.id.toLowerCase()).filter(Boolean)),
+    [installed.data],
+  )
+  const installedFiles = useMemo(
+    () => new Set((installed.data ?? []).map((m) => stripDisabled(m.file_name))),
+    [installed.data],
   )
 
   const run = async (key: string, fn: () => Promise<unknown>, ok: string) => {
@@ -175,11 +193,11 @@ export default function Mods() {
           </TabsContent>
 
           <TabsContent value="modrinth" className="pt-4">
-            <ModrinthTab serverId={serverId} mcVersion={server?.mc_version ?? ''} onInstalled={() => installed.refresh()} />
+            <ModrinthTab serverId={serverId} mcVersion={server?.mc_version ?? ''} installedIds={installedIds} onInstalled={() => installed.refresh()} />
           </TabsContent>
 
           <TabsContent value="library" className="pt-4">
-            <LibraryTab serverId={serverId} onInstalled={() => installed.refresh()} />
+            <LibraryTab serverId={serverId} installedFiles={installedFiles} onInstalled={() => installed.refresh()} />
           </TabsContent>
         </Tabs>
       )}
@@ -187,7 +205,15 @@ export default function Mods() {
   )
 }
 
-function LibraryTab({ serverId, onInstalled }: { serverId: number; onInstalled: () => void }) {
+function LibraryTab({
+  serverId,
+  installedFiles,
+  onInstalled,
+}: {
+  serverId: number
+  installedFiles: Set<string>
+  onInstalled: () => void
+}) {
   const { showToast } = useGlobalToast()
   const { data, loading, refresh } = useResource(() => listLibrary(), [])
   const [busy, setBusy] = useState<string | null>(null)
@@ -268,17 +294,21 @@ function LibraryTab({ serverId, onInstalled }: { serverId: number; onInstalled: 
                     <TableCell className="text-muted-foreground">{m.loader || '—'}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1.5">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="gap-1.5"
-                          disabled={busy === m.file_name}
-                          onClick={() => act(m, () => installFromLibrary(serverId, m.file_name), '已安装到服务器', onInstalled)}
-                        >
-                          {busy === m.file_name ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-                          安装到此服务器
-                        </Button>
+                        {installedFiles.has(stripDisabled(m.file_name)) ? (
+                          <InstalledChip />
+                        ) : (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="gap-1.5"
+                            disabled={busy === m.file_name}
+                            onClick={() => act(m, () => installFromLibrary(serverId, m.file_name), '已安装到服务器', onInstalled)}
+                          >
+                            {busy === m.file_name ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                            安装到此服务器
+                          </Button>
+                        )}
                         <Button
                           type="button"
                           variant="ghost"
@@ -304,7 +334,17 @@ function LibraryTab({ serverId, onInstalled }: { serverId: number; onInstalled: 
   )
 }
 
-function ModrinthTab({ serverId, mcVersion, onInstalled }: { serverId: number; mcVersion: string; onInstalled: () => void }) {
+function ModrinthTab({
+  serverId,
+  mcVersion,
+  installedIds,
+  onInstalled,
+}: {
+  serverId: number
+  mcVersion: string
+  installedIds: Set<string>
+  onInstalled: () => void
+}) {
   const { showToast } = useGlobalToast()
   const [query, setQuery] = useState('')
   const [loader, setLoader] = useState('fabric')
@@ -394,10 +434,14 @@ function ModrinthTab({ serverId, mcVersion, onInstalled }: { serverId: number; m
                   </TableCell>
                   <TableCell className="text-muted-foreground">{h.downloads.toLocaleString()}</TableCell>
                   <TableCell className="text-right">
-                    <Button type="button" variant="outline" size="sm" className="gap-1.5" disabled={installing === h.project_id} onClick={() => install(h)}>
-                      {installing === h.project_id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-                      安装最新
-                    </Button>
+                    {installedIds.has(h.slug.toLowerCase()) ? (
+                      <InstalledChip />
+                    ) : (
+                      <Button type="button" variant="outline" size="sm" className="gap-1.5" disabled={installing === h.project_id} onClick={() => install(h)}>
+                        {installing === h.project_id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                        安装最新
+                      </Button>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}
