@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from .. import archive_manager as am
 from .. import jobs as jobstore
+from .. import superflat
 from ..database import SessionLocal, get_db
 from ..deps import require_auth
 from ..mcdr import manager as mcdr_manager
@@ -61,13 +62,16 @@ async def _do_create(server_id: int, filename: str, job_id: str) -> None:
             am.archive_path(filename).unlink(missing_ok=True)
             jobstore.fail(job_id, str(exc))
             return
+        # 优先用世界 level.dat 的 DataVersion 反推版本,失败再用服务器版本
+        dv = am.data_version_from_world(inst)
+        mc_version = superflat.version_for_data_version(dv) if dv else server.mc_version
         db.add(Archive(
             name=am.default_archive_name(server, inst),
             filename=filename,
             size=size,
             source="server",
             source_server_id=server_id,
-            mc_version=server.mc_version,
+            mc_version=mc_version or server.mc_version,
         ))
         db.commit()
         jobstore.finish(job_id, filename)
@@ -102,9 +106,12 @@ async def upload_archive(
     dest.parent.mkdir(parents=True, exist_ok=True)
     content = await file.read()
     dest.write_bytes(content)
+    # 优先从上传的 level.dat 读 DataVersion 反推版本
+    dv = am.data_version_from_zip(dest)
+    detected = superflat.version_for_data_version(dv) if dv else ""
     rec = Archive(
         name=name[:-4], filename=filename, size=len(content),
-        source="uploaded", mc_version=mc_version.strip(),
+        source="uploaded", mc_version=detected or mc_version.strip(),
     )
     db.add(rec)
     db.commit()

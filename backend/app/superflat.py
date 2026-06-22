@@ -50,6 +50,19 @@ def data_version_for(mc_version: str) -> int:
     return max(DATA_VERSIONS.values())
 
 
+def version_for_data_version(dv: int) -> str:
+    """由 DataVersion 反查 MC 版本号:精确命中优先,否则取「不超过它的最大已知版本」。"""
+    if not dv:
+        return ""
+    for ver, val in DATA_VERSIONS.items():
+        if val == dv:
+            return ver
+    below = [(val, ver) for ver, val in DATA_VERSIONS.items() if val <= dv]
+    if below:
+        return max(below)[1]
+    return min(DATA_VERSIONS.items(), key=lambda kv: kv[1])[0]
+
+
 def _layers_nbt(layers: list[dict]) -> "List":
     return List[Compound]([
         Compound({"block": String(ly["block"]), "height": Int(int(ly["height"]))})

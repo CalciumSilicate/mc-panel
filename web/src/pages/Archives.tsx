@@ -153,14 +153,12 @@ export default function Archives() {
                     <TableCell className="text-muted-foreground">{fmtSize(a.size)}</TableCell>
                     <TableCell className="text-muted-foreground">{new Date(a.created_at).toLocaleString()}</TableCell>
                     <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <Button type="button" variant="outline" size="sm" className="gap-1.5" disabled={busy === a.id} onClick={() => onDownload(a)}>
-                          <Download className="h-3.5 w-3.5" />
-                          下载
+                      <div className="flex items-center justify-end gap-1">
+                        <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" disabled={busy === a.id} title="下载" onClick={() => onDownload(a)}>
+                          {busy === a.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
                         </Button>
-                        <Button type="button" variant="outline" size="sm" className="gap-1.5" disabled={busy === a.id} onClick={() => setRestoreFor(a)}>
-                          <RotateCcw className="h-3.5 w-3.5" />
-                          恢复
+                        <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" disabled={busy === a.id} title="恢复" onClick={() => setRestoreFor(a)}>
+                          <RotateCcw className="h-4 w-4" />
                         </Button>
                         <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" disabled={busy === a.id} title="编辑" onClick={() => setEditFor(a)}>
                           <Pencil className="h-4 w-4" />

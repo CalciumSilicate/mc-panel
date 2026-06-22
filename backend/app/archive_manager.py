@@ -4,13 +4,56 @@
 """
 from __future__ import annotations
 
+import gzip
+import io
 import shutil
 import uuid
 import zipfile
 from pathlib import Path
 
+import nbtlib
+
 from .config import ARCHIVES_DIR
 from .models import Server
+
+
+def read_data_version(level_dat_bytes: bytes) -> int | None:
+    """从 level.dat 字节(可能 gzip)解析 Data.DataVersion。"""
+    for raw in (level_dat_bytes,):
+        try:
+            data = gzip.decompress(raw)
+        except (OSError, EOFError):
+            data = raw
+        try:
+            nbt = nbtlib.File.parse(io.BytesIO(data))
+            section = nbt.get("Data") or nbt.get("")
+            if section is not None and "DataVersion" in section:
+                return int(section["DataVersion"])
+        except Exception:  # noqa: BLE001
+            return None
+    return None
+
+
+def data_version_from_world(instance_dir: Path) -> int | None:
+    level = world_dir(instance_dir) / "level.dat"
+    if not level.exists():
+        return None
+    return read_data_version(level.read_bytes())
+
+
+def data_version_from_zip(zip_path: Path) -> int | None:
+    try:
+        with zipfile.ZipFile(zip_path) as zf:
+            names = [
+                n for n in zf.namelist()
+                if n.endswith("level.dat") and not n.endswith("level.dat_old")
+            ]
+            if not names:
+                return None
+            name = min(names, key=lambda n: n.count("/"))
+            return read_data_version(zf.read(name))
+    except (zipfile.BadZipFile, OSError):
+        return None
 
 
 def world_name(instance_dir: Path) -> str:
