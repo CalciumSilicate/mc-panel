@@ -1,9 +1,10 @@
 """QQ 互通:OneBot 11 正向 ws 客户端(面板作客户端连 LLBot)。
 
-- 后台重连循环连接 LLBot 的 ob11.ws;收 group 消息 → 注入绑定互联组内的 MC 实例;
-  发送动作 send_group_msg 把 MC 侧消息发回 QQ 群。
-- QQ→MC 照搬 asPanel 的 CQ 段渲染(文本/图片/表情/@/回复…)成 tellraw 组件。
-- 配置来自 SystemSettings(onebot_enabled / onebot_ws_url / onebot_token)。
+QQ→MC 渲染照搬 asPanel:整条以 [QQ] <用户> 内容 [↑] 形式注入,各段(文本/表情/@/
+图片/语音/文件/分享/回复)用对应颜色 + suggest_command 点击(点击多为 .CQ 形式,
+配合 MC→QQ 的 . 前缀可回带表情/@/回复);回复消息单独渲染 │ 回复 <被回复者> 原文 一行。
+
+MC→QQ(在 bridge 里):仅转发以 . 或 。开头的聊天,去前缀后发 <玩家> 内容。
 """
 from __future__ import annotations
 
@@ -26,11 +27,12 @@ class OneBotClient:
         self._ws = None
         self._stop = False
         self._connected = False
+        self._echo = 0
+        self._pending: dict[str, asyncio.Future] = {}
         self.enabled = False
         self.url = ""
         self.token = ""
 
-    # ---------- 生命周期 ----------
     def start(self, enabled: bool, url: str, token: str) -> None:
         self.enabled, self.url, self.token = enabled, url.strip(), token.strip()
         self._stop = False
@@ -39,7 +41,6 @@ class OneBotClient:
 
     def reconfigure(self, enabled: bool, url: str, token: str) -> None:
         self.enabled, self.url, self.token = enabled, url.strip(), token.strip()
-        # 关掉当前连接让重连循环用新配置重连
         if self._ws is not None:
             asyncio.create_task(self._close_ws())
 
@@ -68,29 +69,28 @@ class OneBotClient:
                     self._connected = True
                     async for raw in ws:
                         try:
-                            self._on_message(json.loads(raw))
-                        except Exception:  # noqa: BLE001 - 单条消息异常不断流
+                            self._dispatch(json.loads(raw))
+                        except Exception:  # noqa: BLE001
                             pass
-            except Exception:  # noqa: BLE001 - 连接失败/中断,稍后重连
+            except Exception:  # noqa: BLE001
                 pass
             finally:
                 self._connected = False
                 self._ws = None
             await asyncio.sleep(5)
 
-    # ---------- 收 ----------
-    def _on_message(self, data: dict) -> None:
-        if data.get("post_type") != "message" or data.get("message_type") != "group":
+    def _dispatch(self, data: dict) -> None:
+        echo = data.get("echo")
+        if echo is not None:
+            fut = self._pending.pop(str(echo), None)
+            if fut and not fut.done():
+                fut.set_result(data)
             return
-        group_id = data.get("group_id")
-        sender = data.get("sender") or {}
-        name = str(sender.get("card") or sender.get("nickname") or data.get("user_id") or "?")
-        message = data.get("message")
-        _handle_qq_group_message(int(group_id), name, message)
+        if data.get("post_type") == "message" and data.get("message_type") == "group":
+            asyncio.create_task(_process_group_message(data))
 
     # ---------- 发 ----------
     def send_group(self, group_id: int, text: str) -> None:
-        """把纯文本发到 QQ 群(fire-and-forget)。"""
         if not self._connected or self._ws is None:
             return
         action = {"action": "send_group_msg", "params": {"group_id": group_id, "message": text}}
@@ -99,24 +99,147 @@ class OneBotClient:
         except Exception:  # noqa: BLE001
             pass
 
+    async def call_action(self, action: str, params: dict, timeout: float = 5.0) -> dict | None:
+        if not self._connected or self._ws is None:
+            return None
+        self._echo += 1
+        echo = f"mcp_{self._echo}"
+        fut: asyncio.Future = asyncio.get_running_loop().create_future()
+        self._pending[echo] = fut
+        try:
+            await self._ws.send(json.dumps({"action": action, "params": params, "echo": echo}))
+            return await asyncio.wait_for(fut, timeout)
+        except Exception:  # noqa: BLE001
+            self._pending.pop(echo, None)
+            return None
+
 
 client = OneBotClient()
 
 
-# ---------- QQ → MC ----------
-def _handle_qq_group_message(qq_group_id: int, sender: str, message) -> None:
-    """收到 QQ 群消息:注入所有绑定了该 QQ 群的互联组内运行中的 MC 实例。"""
+# ---------- 消息段工具 ----------
+def _seg_list(message) -> list[dict]:
+    if isinstance(message, list):
+        return message
+    if isinstance(message, str):
+        return [{"type": "text", "data": {"text": message}}]
+    return []
+
+
+def _plain(message) -> str:
+    out = []
+    for seg in _seg_list(message):
+        t, d = seg.get("type"), seg.get("data") or {}
+        if t == "text":
+            out.append(str(d.get("text") or ""))
+        elif t == "at":
+            out.append(f"@{d.get('name') or d.get('qq')}")
+    return "".join(out)
+
+
+def _seg_comp(seg: dict, modern: bool) -> dict | None:
     from . import bridge
 
+    t, d = seg.get("type"), seg.get("data") or {}
+    if t == "text":
+        return {"text": str(d.get("text") or ""), "color": "gray"}
+    if t == "face":
+        comp = {"text": "[表情]", "color": "yellow"}
+        comp.update(bridge.click_event("suggest_command", f".[CQ:face,id={d.get('id')}] ", modern))
+        return comp
+    if t == "at":
+        qq = str(d.get("qq") or "")
+        name = str(d.get("name") or d.get("text") or qq)
+        disp = "@全体成员" if qq.lower() == "all" else f"@{name}"
+        comp = {"text": disp, "color": "aqua"}
+        if qq and qq.lower() != "all":
+            comp.update(bridge.click_event("suggest_command", f".[CQ:at,qq={qq}] ", modern))
+        return comp
+    if t == "image":
+        url = str(d.get("url") or d.get("file") or "")
+        comp = {"text": "[图片]", "color": "aqua"}
+        if url:
+            comp.update(bridge.click_event("suggest_command", url, modern))
+        return comp
+    if t == "record":
+        url = str(d.get("url") or d.get("file") or "")
+        comp = {"text": "[语音]", "color": "aqua"}
+        if url:
+            comp.update(bridge.click_event("suggest_command", url, modern))
+        return comp
+    if t == "video":
+        return {"text": "[短视频]", "color": "gray"}
+    if t in ("share", "json", "xml"):
+        url = str(d.get("url") or d.get("jumpUrl") or d.get("file") or "")
+        comp = {"text": "[链接]", "color": "aqua"}
+        if url:
+            comp.update(bridge.click_event("suggest_command", url, modern))
+        return comp
+    if t == "file":
+        url = str(d.get("url") or d.get("file") or "")
+        comp = {"text": "[文件]", "color": "aqua"}
+        if url:
+            comp.update(bridge.click_event("suggest_command", url, modern))
+        return comp
+    if t == "forward":
+        return {"text": "[合并转发]", "color": "gray"}
+    return None  # reply 单独处理
+
+
+def _main_line(user: str, sender_qq: str, message, message_id, modern: bool) -> list:
+    from . import bridge
+
+    parts: list = ["", {"text": "[QQ] ", "color": "gray"}]
+    up = {"text": f"<{user}> ", "color": "gray"}
+    if sender_qq:
+        up.update(bridge.click_event("suggest_command", f".[CQ:at,qq={sender_qq}] ", modern))
+    parts.append(up)
+    for seg in _seg_list(message):
+        c = _seg_comp(seg, modern)
+        if c:
+            parts.append(c)
+    if message_id is not None:
+        up2 = {"text": " [↑]", "color": "gray"}
+        up2.update(bridge.click_event("suggest_command", f".[CQ:reply,id={message_id}] ", modern))
+        parts.append(up2)
+    return parts
+
+
+def _reply_line(reply_user: str, reply_plain: str, modern: bool) -> list:
+    content = reply_plain.strip()
+    if len(content) > 40:
+        content = content[:40] + "…"
+    return [
+        "",
+        {"text": "│ ", "color": "dark_gray"},
+        {"text": "回复 ", "color": "light_purple"},
+        {"text": f"<{reply_user}> ", "color": "dark_gray"},
+        {"text": content, "color": "dark_gray"},
+    ]
+
+
+# ---------- QQ → MC ----------
+async def _process_group_message(payload: dict) -> None:
+    from . import bridge
+    from .mcdr import manager
+
+    qq_group = int(payload.get("group_id") or 0)
+    sender = payload.get("sender") or {}
+    user = str(sender.get("card") or sender.get("nickname") or payload.get("user_id") or "?")
+    sender_qq = str(payload.get("user_id") or "")
+    message = payload.get("message")
+    message_id = payload.get("message_id")
+
+    # 目标:所有绑定了该 QQ 群的互联组内的 MC 实例
     db = SessionLocal()
     try:
-        targets: list[tuple[int, str]] = []  # (server_id, mc_version)
+        targets: list[tuple[int, str]] = []
         for g in db.scalars(select(ServerGroup)).all():
             try:
-                ids = json.loads(g.qq_group_ids or "[]")
+                ids = [int(x) for x in json.loads(g.qq_group_ids or "[]")]
             except Exception:  # noqa: BLE001
                 ids = []
-            if qq_group_id not in [int(x) for x in ids]:
+            if qq_group not in ids:
                 continue
             for s in db.scalars(select(Server).where(Server.group_id == g.id)).all():
                 if s.server_type in _MC_TYPES:
@@ -125,81 +248,32 @@ def _handle_qq_group_message(qq_group_id: int, sender: str, message) -> None:
         db.close()
     if not targets:
         return
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return
-    from .mcdr import manager
 
-    plain = _segments_to_plain(message)
+    # 回复:取被回复消息内容(get_msg)
+    reply_user = reply_plain = None
+    for seg in _seg_list(message):
+        if seg.get("type") == "reply":
+            rid = (seg.get("data") or {}).get("id")
+            if rid:
+                resp = await client.call_action("get_msg", {"message_id": int(rid)})
+                d = (resp or {}).get("data") or {}
+                rs = d.get("sender") or {}
+                reply_user = str(rs.get("card") or rs.get("nickname") or d.get("user_id") or "")
+                reply_plain = _plain(d.get("message"))
+            break
+
+    loop = asyncio.get_running_loop()
+    at_names = [s for s in _plain(message).replace("@", " @").split() if s.startswith("@")]
     for sid, mc_version in targets:
         if not manager.is_running(sid):
             continue
-        components = _qq_components(sender, message, bridge._modern(mc_version))
-        cmd = "tellraw @a " + json.dumps(components, ensure_ascii=False)
+        modern = bridge._modern(mc_version)
+        if reply_user is not None:
+            loop.create_task(bridge._safe_send(sid, "tellraw @a " + json.dumps(_reply_line(reply_user, reply_plain or "", modern), ensure_ascii=False)))
+        cmd = "tellraw @a " + json.dumps(_main_line(user, sender_qq, message, message_id, modern), ensure_ascii=False)
         loop.create_task(bridge._safe_send(sid, cmd))
-        # @ 在线本地真人 → 提示音
-        for player in bridge.online_players(sid):
-            if f"@{player}".lower() in plain.lower() or f"@ {player}".lower() in plain.lower():
-                loop.create_task(
-                    bridge._safe_send(
-                        sid,
-                        f"execute at {player} run playsound minecraft:entity.experience_orb.pickup player {player}",
-                    )
-                )
-
-
-def _seg_list(message) -> list[dict]:
-    """OneBot 消息归一成段数组(兼容 array 与 string/CQ 两种 messageFormat)。"""
-    if isinstance(message, list):
-        return message
-    if isinstance(message, str):
-        return [{"type": "text", "data": {"text": message}}]
-    return []
-
-
-def _segments_to_plain(message) -> str:
-    out = []
-    for seg in _seg_list(message):
-        t, d = seg.get("type"), seg.get("data") or {}
-        if t == "text":
-            out.append(str(d.get("text") or ""))
-        elif t == "at":
-            out.append(f"@{d.get('qq')}")
-    return "".join(out)
-
-
-def _qq_components(sender: str, message, modern: bool) -> list:
-    """照搬 asPanel:[QQ] 昵称: <富文本段>。图片/表情/@/回复等转可读组件。"""
-    from . import bridge
-
-    parts: list = [
-        "",
-        {"text": "[QQ] ", "color": "gold"},
-        {"text": f"{sender}: ", "color": "aqua"},
-    ]
-    for seg in _seg_list(message):
-        t, d = seg.get("type"), seg.get("data") or {}
-        if t == "text":
-            parts.append({"text": str(d.get("text") or ""), "color": "white"})
-        elif t == "at":
-            parts.append({"text": f"@{d.get('qq')} ", "color": "aqua"})
-        elif t == "image":
-            url = str(d.get("url") or d.get("file") or "")
-            c = {"text": "[图片]", "color": "aqua"}
-            if url:
-                c.update(bridge.click_event("open_url", url, modern))
-            parts.append(c)
-        elif t == "face":
-            parts.append({"text": "[表情]", "color": "yellow"})
-        elif t == "record":
-            parts.append({"text": "[语音]", "color": "aqua"})
-        elif t == "video":
-            parts.append({"text": "[视频]", "color": "aqua"})
-        elif t == "file":
-            parts.append({"text": "[文件]", "color": "aqua"})
-        elif t == "reply":
-            parts.append({"text": "[回复] ", "color": "light_purple"})
-        elif t == "json":
-            parts.append({"text": "[卡片]", "color": "gray"})
-    return parts
+        # @ 在线真人 → 提示音
+        plain_low = _plain(message).lower()
+        for p in bridge.online_players(sid):
+            if f"@{p}".lower() in plain_low:
+                loop.create_task(bridge._safe_send(sid, f"execute at {p} run playsound minecraft:entity.experience_orb.pickup player {p}"))

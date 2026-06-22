@@ -115,10 +115,16 @@ def handle_line(server_id: int, line: str) -> None:
         if m:
             player, content = m.group(1).strip(), m.group(2).strip()
             if content and not content.startswith("!!"):
+                # MC→QQ:仅转发以 . / 。 开头的,去前缀(同 asPanel)
+                qq_text = None
+                if content[:1] in (".", "。"):
+                    msg = content[1:].lstrip()
+                    if msg:
+                        qq_text = f"<{player}> {msg}"
                 _broadcast(
                     server_id,
                     lambda src, modern: _chat_components(src, player, content, modern),
-                    f"<{player}> {content}",
+                    qq_text,
                 )
             return
     mj = _JOIN_RE.search(line)
@@ -132,11 +138,11 @@ def handle_line(server_id: int, line: str) -> None:
         else:
             _BOTS[server_id].discard(name)
             _ONLINE[server_id].add(name)
-        tag = " (假人)" if is_bot else ""
+        tag = "(假人)" if is_bot else ""
         _broadcast(
             server_id,
             lambda src, modern: _join_components(src, name, is_bot, modern),
-            f"{name}{tag} 加入了服务器",
+            f"+{name}{tag}",
         )
         return
     ml = _LEFT_RE.search(line)
@@ -145,11 +151,11 @@ def handle_line(server_id: int, line: str) -> None:
         is_bot = name in _BOTS.get(server_id, set())
         _BOTS.get(server_id, set()).discard(name)
         _ONLINE.get(server_id, set()).discard(name)
-        tag = " (假人)" if is_bot else ""
+        tag = "(假人)" if is_bot else ""
         _broadcast(
             server_id,
             lambda src, modern: _leave_components(src, name, is_bot, modern),
-            f"{name}{tag} 离开了服务器",
+            f"-{name}{tag}",
         )
 
 
@@ -192,13 +198,13 @@ def _broadcast(server_id: int, builder, qq_text: str = "") -> None:
         cmd = "tellraw @a " + json.dumps(components, ensure_ascii=False)
         loop.create_task(_safe_send(tid, cmd))
 
-    # MC → QQ
+    # MC → QQ(文本已按 asPanel 规则组装,不再加 [来源服] 前缀)
     if qq_ids and qq_text:
         from .onebot import client as ob
 
         if ob.connected:
             for gid in qq_ids:
-                ob.send_group(gid, f"[{src_name}] {qq_text}")
+                ob.send_group(gid, qq_text)
 
 
 async def _safe_send(server_id: int, command: str) -> None:
