@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from .. import verification
 from ..database import get_db
 from ..deps import get_current_user, get_settings_row
 from ..models import User
@@ -13,8 +14,11 @@ from ..schemas import (
     BootstrapInfo,
     ChangePasswordRequest,
     Credentials,
+    MeOut,
     TokenResponse,
     UserOut,
+    VerifyInfo,
+    VerifyRequest,
 )
 from ..security import create_access_token, hash_password, verify_password
 
@@ -48,6 +52,7 @@ def setup(payload: Credentials, db: Session = Depends(get_db)) -> TokenResponse:
         username=payload.username.strip(),
         hashed_password=hash_password(payload.password),
         role="owner",
+        verified=True,
     )
     db.add(user)
     db.commit()
@@ -90,9 +95,31 @@ def status(user: User = Depends(get_current_user)) -> AuthStatusResponse:
     return AuthStatusResponse(authenticated=True, user=UserOut.model_validate(user))
 
 
-@router.get("/me", response_model=UserOut)
+@router.get("/me", response_model=MeOut)
 def me(user: User = Depends(get_current_user)) -> User:
     return user
+
+
+@router.post("/verify/request", response_model=VerifyInfo)
+def verify_request(
+    payload: VerifyRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> VerifyInfo:
+    """生成验证码并暂存待绑定的玩家名;用户随后在游戏内输入绑定指令。"""
+    code = verification.generate_code()
+    user.verify_code = code
+    user.verify_target = payload.player_id.strip()
+    db.commit()
+    return VerifyInfo(code=code, player_id=user.verify_target, command=verification.bind_command(code))
+
+
+@router.post("/verify/cancel")
+def verify_cancel(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
+    user.verify_code = ""
+    user.verify_target = ""
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("/change-password")

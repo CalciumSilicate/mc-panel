@@ -75,5 +75,12 @@ require_admin = require_role("admin")
 require_owner = require_role("owner")
 
 
+def require_operate(user: User = Depends(get_current_user)) -> User:
+    """可执行操作:未验证的 user 只读;helper 及以上不受限。"""
+    if user.role == "user" and not user.verified:
+        raise HTTPException(status_code=403, detail="账号未验证,当前为只读权限")
+    return user
+
+
 def role_at_least(user: User, min_role: str) -> bool:
     return ROLE_ORDER.get(user.role, 0) >= ROLE_ORDER[min_role]

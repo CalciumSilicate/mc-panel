@@ -13,7 +13,7 @@ from .. import archive_manager as am
 from .. import jobs as jobstore
 from .. import superflat
 from ..database import SessionLocal, get_db
-from ..deps import require_auth, require_helper, role_at_least
+from ..deps import require_auth, require_helper, require_operate, role_at_least
 from ..mcdr import manager as mcdr_manager
 from ..models import Archive, Server, User
 from ..schemas import ArchiveOut
@@ -102,7 +102,7 @@ async def create_from_server(
 async def upload_archive(
     file: UploadFile = File(...),
     mc_version: str = Form(default=""),
-    user: User = Depends(require_auth),
+    user: User = Depends(require_operate),
     db: Session = Depends(get_db),
 ) -> Archive:
     name = file.filename or "archive.zip"
@@ -193,7 +193,7 @@ async def _do_restore(archive_id: int, server_id: int, job_id: str) -> None:
 
 @router.post("/{archive_id}/restore/{server_id}")
 async def restore_archive(
-    archive_id: int, server_id: int, _: str = Depends(require_auth), db: Session = Depends(get_db)
+    archive_id: int, server_id: int, _: object = Depends(require_operate), db: Session = Depends(get_db)
 ) -> dict:
     _get_archive(db, archive_id)
     server = _get_server(db, server_id)

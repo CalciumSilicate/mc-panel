@@ -50,6 +50,12 @@ _COLUMN_MIGRATIONS = {
     "archives": {
         "owner_user_id": "INTEGER",
     },
+    "users": {
+        "verified": "BOOLEAN DEFAULT 0",
+        "player_id": "VARCHAR(64) DEFAULT ''",
+        "verify_code": "VARCHAR(16) DEFAULT ''",
+        "verify_target": "VARCHAR(64) DEFAULT ''",
+    },
 }
 
 

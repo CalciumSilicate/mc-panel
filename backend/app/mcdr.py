@@ -15,6 +15,7 @@ import re
 import shlex
 import shutil
 from collections import deque
+from collections.abc import Callable
 from pathlib import Path
 
 import yaml
@@ -132,6 +133,8 @@ class MCDRManager:
         self._install_progress: dict[int, tuple[int, int]] = {}
         # server_id -> 安装(下载)任务,用于中止
         self._install_tasks: dict[int, asyncio.Task] = {}
+        # 逐行钩子(如玩家绑定验证):每条输出行都会调用,异常被吞掉
+        self.line_hook: "Callable[[int, str], None] | None" = None
 
     # ---------- 路径 ----------
     def instance_dir(self, server: Server) -> Path:
@@ -255,6 +258,11 @@ class MCDRManager:
                 queue.put_nowait(line)
             except asyncio.QueueFull:
                 pass  # 慢消费者:丢弃该行而非阻塞读取
+        if self.line_hook is not None:
+            try:
+                self.line_hook(server_id, line)
+            except Exception:  # noqa: BLE001 - 钩子异常不能影响日志读取
+                pass
 
     def recent_lines(self, server_id: int) -> list[str]:
         return list(self._buffers.get(server_id, ()))
@@ -413,7 +421,10 @@ class MCDRManager:
         self._reader_tasks[server.id] = asyncio.create_task(self._read_output(server.id, proc))
 
     async def send_command(self, server: Server, command: str) -> None:
-        proc = self._procs.get(server.id)
+        await self.send_raw(server.id, command)
+
+    async def send_raw(self, server_id: int, command: str) -> None:
+        proc = self._procs.get(server_id)
         if proc is None or proc.returncode is not None or proc.stdin is None:
             raise RuntimeError("实例未在运行")
         try:

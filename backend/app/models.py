@@ -25,6 +25,12 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(16), default="user")
+    # 验证态与绑定的正版玩家名;未验证的 user 只读
+    verified: Mapped[bool] = mapped_column(default=False)
+    player_id: Mapped[str] = mapped_column(String(64), default="")
+    # 进行中的验证:验证码 + 待绑定的玩家名(目标)
+    verify_code: Mapped[str] = mapped_column(String(16), default="")
+    verify_target: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 

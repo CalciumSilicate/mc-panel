@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..database import SessionLocal, get_db
-from ..deps import ROLE_ORDER, get_settings_row, require_admin, require_auth
+from ..deps import ROLE_ORDER, get_settings_row, require_admin, require_auth, require_operate
 from ..java import choose_java, detect_installs, get_java_paths, required_java_major
 from ..mcdr import manager
 from ..models import Server, User
@@ -295,7 +295,7 @@ async def cancel_install(
 
 @router.post("/{server_id}/start")
 async def start_server(
-    server_id: int, _: str = Depends(require_auth), db: Session = Depends(get_db)
+    server_id: int, _: object = Depends(require_operate), db: Session = Depends(get_db)
 ) -> dict:
     server = _get_server_or_404(db, server_id)
     settings = get_settings_row(db)
@@ -315,7 +315,7 @@ async def start_server(
 
 @router.post("/{server_id}/stop")
 async def stop_server(
-    server_id: int, _: str = Depends(require_auth), db: Session = Depends(get_db)
+    server_id: int, _: object = Depends(require_operate), db: Session = Depends(get_db)
 ) -> dict:
     server = _get_server_or_404(db, server_id)
     await manager.stop(server)

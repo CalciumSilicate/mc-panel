@@ -53,6 +53,8 @@ def create_user(
         username=payload.username.strip(),
         hashed_password=hash_password(payload.password),
         role=payload.role,
+        # 仅 user 需要验证;其他角色直接视为已验证
+        verified=payload.role != "user",
     )
     db.add(user)
     db.commit()
@@ -75,6 +77,15 @@ def update_user(
         target.role = payload.role
     if payload.new_password:
         target.hashed_password = hash_password(payload.new_password)
+    # 直接修改验证态与绑定玩家
+    if payload.verified is not None:
+        target.verified = payload.verified
+        if not payload.verified:
+            target.player_id = ""
+            target.verify_code = ""
+            target.verify_target = ""
+    if payload.player_id is not None:
+        target.player_id = payload.player_id.strip()
     db.commit()
     db.refresh(target)
     return target

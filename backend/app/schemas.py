@@ -22,7 +22,16 @@ class UserOut(BaseModel):
     id: int
     username: str
     role: str
+    verified: bool = False
+    player_id: str = ""
     created_at: datetime
+
+
+class MeOut(UserOut):
+    """当前用户:额外带上进行中的验证信息(验证码 / 目标玩家名)。"""
+
+    verify_code: str = ""
+    verify_target: str = ""
 
 
 class AuthStatusResponse(BaseModel):
@@ -40,6 +49,16 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(min_length=1)
 
 
+class VerifyRequest(BaseModel):
+    player_id: str = Field(min_length=1, max_length=64)
+
+
+class VerifyInfo(BaseModel):
+    code: str
+    player_id: str
+    command: str
+
+
 class UserCreate(BaseModel):
     username: str = Field(min_length=1, max_length=64)
     password: str = Field(min_length=1)
@@ -49,6 +68,8 @@ class UserCreate(BaseModel):
 class UserUpdate(BaseModel):
     role: str | None = None
     new_password: str | None = Field(default=None, min_length=1)
+    verified: bool | None = None
+    player_id: str | None = None
 
 
 # ---------- 服务器 ----------
