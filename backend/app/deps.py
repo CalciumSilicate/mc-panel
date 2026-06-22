@@ -4,10 +4,13 @@ from __future__ import annotations
 from fastapi import Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
-from .config import DEFAULT_ADMIN_PASSWORD
+from .config import DEFAULT_ADMIN_PASSWORD, DEFAULT_PYTHON_EXECUTABLE
 from .database import get_db
 from .models import SystemSettings
 from .security import decode_token, hash_password
+
+# 旧的裸默认值:遇到这些一律改用后端解释器(它装了 mcdreforged)。
+_BARE_PYTHON_DEFAULTS = {"", "python", "python3"}
 
 
 def get_settings_row(db: Session) -> SystemSettings:
@@ -17,8 +20,14 @@ def get_settings_row(db: Session) -> SystemSettings:
         row = SystemSettings(
             id=1,
             admin_password_hash=hash_password(DEFAULT_ADMIN_PASSWORD),
+            python_executable=DEFAULT_PYTHON_EXECUTABLE,
         )
         db.add(row)
+        db.commit()
+        db.refresh(row)
+    elif row.python_executable in _BARE_PYTHON_DEFAULTS:
+        # 历史数据(或裸 "python")归一化到后端解释器,避免误用没装 mcdreforged 的全局 python。
+        row.python_executable = DEFAULT_PYTHON_EXECUTABLE
         db.commit()
         db.refresh(row)
     return row

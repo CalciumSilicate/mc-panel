@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import secrets
+import sys
 from pathlib import Path
 
 # 后端包根目录: .../mc-panel/backend
@@ -29,6 +30,11 @@ API_PORT = int(os.environ.get("MCPANEL_API_PORT", "16824"))
 
 # 首次启动时写入的默认管理员密码(之后可在「系统设置」里修改)。
 DEFAULT_ADMIN_PASSWORD = os.environ.get("MCPANEL_ADMIN_PASSWORD", "admin")
+
+# 启动 MCDR 实例所用的默认 Python 解释器。默认用后端自身的解释器,
+# 这样只要 `pip install -r requirements.txt`(含 mcdreforged),实例即可开箱启动,
+# 不会误用 PATH 上没装 mcdreforged 的全局 python。
+DEFAULT_PYTHON_EXECUTABLE = sys.executable or "python"
 
 JWT_ALGORITHM = "HS256"
 

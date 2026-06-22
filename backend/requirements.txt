@@ -7,3 +7,6 @@ bcrypt>=4.1
 psutil>=5.9
 httpx>=0.27
 PyYAML>=6.0
+# 被管理的 MCDR 实例以 `<python> -m mcdreforged` 启动;装进同一环境,
+# 默认即用后端自身的解释器(见 config.DEFAULT_PYTHON_EXECUTABLE),开箱即用。
+mcdreforged>=2.13
