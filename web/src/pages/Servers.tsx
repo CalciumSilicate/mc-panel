@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Loader2, Pencil, Play, Plus, RefreshCw, Server, Square, Terminal, Trash2 } from 'lucide-react'
+import { Download, Loader2, Pencil, Play, Plus, RefreshCw, Server, Square, Terminal, Trash2 } from 'lucide-react'
 
 import {
   type JavaInfo,
@@ -9,6 +9,7 @@ import {
   getJavaInfo,
   getVanillaVersions,
   listServers,
+  reinstallServer,
   startServer,
   stopServer,
   updateServer,
@@ -194,6 +195,19 @@ export default function Servers() {
                                 启动
                               </Button>
                             )}
+                            {server.status === 'error' || server.status === 'new_setup' ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                                disabled={busy}
+                                title="重新安装"
+                                onClick={() => runAction(server.id, () => reinstallServer(server.id), '已开始重新安装')}
+                              >
+                                <Download className="h-4 w-4" />
+                              </Button>
+                            ) : null}
                             <Button
                               type="button"
                               variant="ghost"

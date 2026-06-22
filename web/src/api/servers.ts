@@ -92,3 +92,7 @@ export function stopServer(id: number): Promise<{ status: ServerStatus }> {
 export function deleteServer(id: number): Promise<{ ok: boolean }> {
   return apiRequest<{ ok: boolean }>(`/servers/${id}`, { method: 'DELETE' })
 }
+
+export function reinstallServer(id: number): Promise<{ ok: boolean }> {
+  return apiRequest<{ ok: boolean }>(`/servers/${id}/reinstall`, { method: 'POST', body: '{}' })
+}

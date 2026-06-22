@@ -13,12 +13,15 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .config import API_PORT, WEB_DIST, ensure_dirs
 from .database import init_db
+from .mcdr import manager
 from .routers import auth, servers, settings, system
 
 # 在模块加载时就建表,确保无论以何种方式启动(uvicorn / TestClient / 直接 import)
 # 数据库都已就绪。
 ensure_dirs()
 init_db()
+# 清理上次运行残留的「安装中」标记(下载不会跨重启续传)
+manager.clear_stale_installing()
 
 app = FastAPI(title="mc-panel API")
 

@@ -203,6 +203,21 @@ def update_server(
     return _to_summary(server)
 
 
+@router.post("/{server_id}/reinstall")
+def reinstall_server(
+    server_id: int,
+    background: BackgroundTasks,
+    _: str = Depends(require_auth),
+    db: Session = Depends(get_db),
+) -> dict:
+    """重新下载服务端核心(用于安装失败/中断后的重试)。"""
+    server = _get_server_or_404(db, server_id)
+    if manager.get_status(server) in ("running", "installing"):
+        raise HTTPException(status_code=400, detail="运行中或安装中,无法重新安装")
+    background.add_task(_redownload_in_background, server.id)
+    return {"ok": True}
+
+
 @router.post("/{server_id}/start")
 async def start_server(
     server_id: int, _: str = Depends(require_auth), db: Session = Depends(get_db)

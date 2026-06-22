@@ -114,6 +114,19 @@ class MCDRManager:
     def instance_dir(self, server: Server) -> Path:
         return SERVERS_ROOT / server.dir_name
 
+    def clear_stale_installing(self) -> None:
+        """启动时调用:残留的 .installing 标记都已失效(下载随进程退出无法续传),
+        统一转成失败标记,让实例显示为「异常」并可重新安装,而不是永远「安装中」。"""
+        if not SERVERS_ROOT.exists():
+            return
+        for inst in SERVERS_ROOT.iterdir():
+            marker = inst / _INSTALLING_MARKER
+            if marker.exists():
+                marker.unlink(missing_ok=True)
+                (inst / _FAILED_MARKER).write_text(
+                    "安装被中断(服务重启),请点「重新安装」重试", encoding="utf-8"
+                )
+
     # ---------- 状态 ----------
     def get_status(self, server: Server) -> str:
         inst = self.instance_dir(server)
