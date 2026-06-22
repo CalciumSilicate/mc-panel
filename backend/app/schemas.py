@@ -118,6 +118,7 @@ class SettingsResponse(BaseModel):
     default_min_memory: str
     default_max_memory: str
     token_expire_minutes: int
+    download_proxy: str = ""
     # Java 安装池(带探测到的大版本)
     java_installs: list[JavaInstall] = []
 
@@ -128,6 +129,7 @@ class SettingsUpdate(BaseModel):
     default_min_memory: str | None = None
     default_max_memory: str | None = None
     token_expire_minutes: int | None = Field(default=None, ge=5)
+    download_proxy: str | None = None
     # Java 安装池路径列表(整体替换);为 None 时不改动
     java_paths: list[str] | None = None
     # 仅在需要修改时传入

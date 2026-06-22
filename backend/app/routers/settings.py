@@ -21,6 +21,7 @@ def _to_response(row) -> SettingsResponse:
         default_min_memory=row.default_min_memory,
         default_max_memory=row.default_max_memory,
         token_expire_minutes=row.token_expire_minutes,
+        download_proxy=row.download_proxy,
         java_installs=installs,
     )
 
@@ -49,6 +50,8 @@ def update_settings(
         row.default_max_memory = payload.default_max_memory
     if payload.token_expire_minutes is not None:
         row.token_expire_minutes = payload.token_expire_minutes
+    if payload.download_proxy is not None:
+        row.download_proxy = payload.download_proxy.strip()
     if payload.java_paths is not None:
         set_java_paths(row, payload.java_paths)
     if payload.new_password:

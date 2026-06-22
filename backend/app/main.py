@@ -20,7 +20,7 @@ from .deps import get_settings_row
 from .java import choose_java, detect_installs, get_java_paths
 from .mcdr import manager
 from .models import Server
-from .routers import auth, servers, settings, system
+from .routers import auth, mods, plugins, servers, settings, system
 
 # 在模块加载时就建表,确保无论以何种方式启动(uvicorn / TestClient / 直接 import)
 # 数据库都已就绪。
@@ -91,7 +91,14 @@ def health() -> dict:
     return {"status": "ok"}
 
 
-for r in (auth.router, system.router, servers.router, settings.router):
+for r in (
+    auth.router,
+    system.router,
+    servers.router,
+    settings.router,
+    plugins.router,
+    mods.router,
+):
     app.include_router(r, prefix="/api")
 
 

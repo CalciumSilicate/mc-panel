@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
+from . import net
 from .config import DEFAULT_ADMIN_PASSWORD, DEFAULT_PYTHON_EXECUTABLE
 from .database import get_db
 from .models import SystemSettings
@@ -30,6 +31,8 @@ def get_settings_row(db: Session) -> SystemSettings:
         row.python_executable = DEFAULT_PYTHON_EXECUTABLE
         db.commit()
         db.refresh(row)
+    # 同步下载代理到出站客户端
+    net.set_proxy(row.download_proxy)
     return row
 
 

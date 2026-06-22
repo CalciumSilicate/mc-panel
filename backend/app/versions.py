@@ -5,6 +5,8 @@ import time
 
 import httpx
 
+from . import net
+
 VERSION_MANIFEST_URL = (
     "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
 )
@@ -23,7 +25,7 @@ async def list_release_versions(limit: int = 60, force: bool = False) -> list[st
     cache = _versions_cache
     fresh = cache["data"] is not None and now - cache["ts"] < VERSIONS_CACHE_TTL
     if force or not fresh:
-        async with httpx.AsyncClient(timeout=20) as client:
+        async with net.client(timeout=20) as client:
             resp = await client.get(VERSION_MANIFEST_URL)
             resp.raise_for_status()
             data = resp.json()
@@ -40,7 +42,7 @@ async def get_server_download(mc_version: str) -> dict:
     先拉版本清单找到该版本,再拉其 meta(version detail),其中 downloads.server
     带有 url / sha1 / size。size 用于进度总量,sha1 用于本地缓存命中。
     """
-    async with httpx.AsyncClient(timeout=20) as client:
+    async with net.client(timeout=20) as client:
         resp = await client.get(VERSION_MANIFEST_URL)
         resp.raise_for_status()
         manifest = resp.json()
@@ -73,7 +75,7 @@ async def download_file(url: str, dest, *, chunk_size: int = 1 << 16, progress=N
     每读到一块就会重置该计时)。progress 回调签名 (downloaded:int, total:int)。
     """
     timeout = httpx.Timeout(30.0, read=120.0)
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+    async with net.client(timeout=timeout, follow_redirects=True) as client:
         async with client.stream("GET", url) as resp:
             resp.raise_for_status()
             total = int(resp.headers.get("content-length") or 0)

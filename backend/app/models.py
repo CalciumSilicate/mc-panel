@@ -51,4 +51,6 @@ class SystemSettings(Base):
     default_min_memory: Mapped[str] = mapped_column(String(16), default="1G")
     default_max_memory: Mapped[str] = mapped_column(String(16), default="2G")
     token_expire_minutes: Mapped[int] = mapped_column(Integer, default=60 * 24 * 7)
+    # 出站下载代理(http/https 共用),空 = 直连
+    download_proxy: Mapped[str] = mapped_column(String(255), default="")
     extra: Mapped[str] = mapped_column(Text, default="{}")
