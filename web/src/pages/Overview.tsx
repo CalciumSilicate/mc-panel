@@ -3,13 +3,13 @@ import { Cpu, HardDrive, MemoryStick, RefreshCw, Server } from 'lucide-react'
 
 import { getDashboardOverview } from '@/api/system'
 import { InlineLoader } from '@/components/PageLoader'
-import { PageShell, PageStat, PageStatStrip, PageSurface } from '@/components/layout/PageScaffold'
+import { PageShell, PageSurface } from '@/components/layout/PageScaffold'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { SERVER_STATUS_META } from '@/lib/server-status'
-import { motion, staggerContainer, staggerItem } from '@/lib/motion'
+import { motion, staggerContainer } from '@/lib/motion'
 import { cn } from '@/lib/utils'
 import { useResource } from '@/lib/use-resource'
 
@@ -52,57 +52,7 @@ export default function Overview() {
         </div>
       ) : data ? (
         <motion.div variants={staggerContainer} initial="hidden" animate="visible" className="space-y-6">
-          <PageStatStrip>
-            <motion.div variants={staggerItem}>
-              <PageStat
-                label="CPU"
-                value={`${data.cpu_percent.toFixed(0)}%`}
-                note={<Progress value={data.cpu_percent} className="mt-2 h-1.5" />}
-              />
-            </motion.div>
-            <motion.div variants={staggerItem}>
-              <PageStat
-                label="内存"
-                value={`${data.memory.percent.toFixed(0)}%`}
-                note={
-                  <>
-                    <Progress value={data.memory.percent} className="mt-2 h-1.5" />
-                    <span className="mt-1 block">
-                      {data.memory.used_gb} / {data.memory.total_gb} GB
-                    </span>
-                  </>
-                }
-              />
-            </motion.div>
-            <motion.div variants={staggerItem}>
-              <PageStat
-                label="磁盘"
-                value={`${data.disk.percent.toFixed(0)}%`}
-                note={
-                  <>
-                    <Progress value={data.disk.percent} className="mt-2 h-1.5" />
-                    <span className="mt-1 block">
-                      {data.disk.used_gb} / {data.disk.total_gb} GB
-                    </span>
-                  </>
-                }
-              />
-            </motion.div>
-            <motion.div variants={staggerItem}>
-              <PageStat
-                label="服务器"
-                value={
-                  <span className="inline-flex items-baseline gap-1">
-                    {data.running_servers}
-                    <span className="text-sm font-normal text-muted-foreground">/ {data.total_servers} 运行中</span>
-                  </span>
-                }
-                note="实例总数与在线数"
-              />
-            </motion.div>
-          </PageStatStrip>
-
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <ResourceCard icon={Cpu} label="CPU 占用" value={`${data.cpu_percent.toFixed(1)}%`} percent={data.cpu_percent} />
             <ResourceCard
               icon={MemoryStick}
@@ -116,6 +66,19 @@ export default function Overview() {
               value={`${data.disk.used_gb} / ${data.disk.total_gb} GB`}
               percent={data.disk.percent}
             />
+            <PageSurface>
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                  <Server className="h-5 w-5" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm text-muted-foreground">服务器</p>
+                  <p className="truncate text-sm font-medium text-foreground">
+                    {data.running_servers} / {data.total_servers} 运行中
+                  </p>
+                </div>
+              </div>
+            </PageSurface>
           </div>
 
           <PageSurface title="服务器实例" bodyClassName="p-0">
