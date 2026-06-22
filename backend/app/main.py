@@ -18,7 +18,7 @@ from .config import API_PORT, WEB_DIST, ensure_dirs
 from .database import SessionLocal, init_db
 from .deps import get_settings_row
 from .java import choose_java, detect_installs, get_java_paths
-from . import verification
+from . import bridge, verification
 from .mcdr import manager
 from .models import Server
 from .routers import archives, auth, groups, jobs, mods, plugins, servers, settings, system, tools, users
@@ -29,8 +29,13 @@ ensure_dirs()
 init_db()
 # 清理上次运行残留的「安装中」标记(下载不会跨重启续传)
 manager.clear_stale_installing()
-# 控制台逐行钩子:捕获玩家绑定指令完成验证
-manager.line_hook = verification.handle_line
+# 控制台逐行钩子:玩家绑定验证 + 互联组内聊天互转
+def _line_hook(server_id: int, line: str) -> None:
+    verification.handle_line(server_id, line)
+    bridge.handle_line(server_id, line)
+
+
+manager.line_hook = _line_hook
 
 
 async def _autostart() -> None:

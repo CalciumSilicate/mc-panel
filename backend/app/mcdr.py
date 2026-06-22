@@ -252,6 +252,10 @@ class MCDRManager:
                     "安装被中断(服务重启),请点「重新安装」重试", encoding="utf-8"
                 )
 
+    def is_running(self, server_id: int) -> bool:
+        p = self._procs.get(server_id)
+        return p is not None and p.returncode is None
+
     def _core_installed(self, server: Server) -> bool:
         """核心是否已就绪。Forge 现代版无 server.jar,改判 args 文件 / forge jar。"""
         sd = self.instance_dir(server) / "server"
