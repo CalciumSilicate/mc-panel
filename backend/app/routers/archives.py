@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -17,6 +18,11 @@ from ..models import Archive, Server
 from ..schemas import ArchiveOut
 
 router = APIRouter(prefix="/archives", tags=["archives"])
+
+
+class ArchiveUpdate(BaseModel):
+    name: str | None = None
+    mc_version: str | None = None
 
 
 def _get_server(db: Session, server_id: int) -> Server:
@@ -70,7 +76,7 @@ async def _do_create(server_id: int, filename: str, job_id: str) -> None:
 
 
 @router.post("/from-server/{server_id}")
-def create_from_server(
+async def create_from_server(
     server_id: int, _: str = Depends(require_auth), db: Session = Depends(get_db)
 ) -> dict:
     server = _get_server(db, server_id)
@@ -84,6 +90,7 @@ def create_from_server(
 @router.post("/upload", response_model=ArchiveOut)
 async def upload_archive(
     file: UploadFile = File(...),
+    mc_version: str = Form(default=""),
     _: str = Depends(require_auth),
     db: Session = Depends(get_db),
 ) -> Archive:
@@ -95,11 +102,31 @@ async def upload_archive(
     dest.parent.mkdir(parents=True, exist_ok=True)
     content = await file.read()
     dest.write_bytes(content)
-    rec = Archive(name=name[:-4], filename=filename, size=len(content), source="uploaded")
+    rec = Archive(
+        name=name[:-4], filename=filename, size=len(content),
+        source="uploaded", mc_version=mc_version.strip(),
+    )
     db.add(rec)
     db.commit()
     db.refresh(rec)
     return rec
+
+
+@router.patch("/{archive_id}", response_model=ArchiveOut)
+def update_archive(
+    archive_id: int,
+    body: ArchiveUpdate,
+    _: str = Depends(require_auth),
+    db: Session = Depends(get_db),
+) -> Archive:
+    arc = _get_archive(db, archive_id)
+    if body.name is not None and body.name.strip():
+        arc.name = body.name.strip()
+    if body.mc_version is not None:
+        arc.mc_version = body.mc_version.strip()
+    db.commit()
+    db.refresh(arc)
+    return arc
 
 
 @router.get("/{archive_id}/download")
@@ -147,7 +174,7 @@ async def _do_restore(archive_id: int, server_id: int, job_id: str) -> None:
 
 
 @router.post("/{archive_id}/restore/{server_id}")
-def restore_archive(
+async def restore_archive(
     archive_id: int, server_id: int, _: str = Depends(require_auth), db: Session = Depends(get_db)
 ) -> dict:
     _get_archive(db, archive_id)

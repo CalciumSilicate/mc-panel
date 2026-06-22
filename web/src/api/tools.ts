@@ -14,8 +14,8 @@ export interface SuperflatApplyInput {
   overwrite: boolean
 }
 
-export function applySuperflat(input: SuperflatApplyInput): Promise<{ generator_settings: string; overwritten: boolean }> {
-  return apiRequest<{ generator_settings: string; overwritten: boolean }>('/tools/superflat/apply', {
+export function applySuperflat(input: SuperflatApplyInput): Promise<{ data_version: number; format: string; mc_version: string }> {
+  return apiRequest<{ data_version: number; format: string; mc_version: string }>('/tools/superflat/apply', {
     method: 'POST',
     body: JSON.stringify(input),
   })

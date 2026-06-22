@@ -33,6 +33,17 @@ export function deleteArchive(id: number) {
   return apiRequest(`/archives/${id}`, { method: 'DELETE' })
 }
 
+export function updateArchive(id: number, patch: { name?: string; mc_version?: string }): Promise<Archive> {
+  return apiRequest<Archive>(`/archives/${id}`, { method: 'PATCH', body: JSON.stringify(patch) })
+}
+
+export function uploadArchiveWithVersion(file: File, mcVersion: string): Promise<Archive> {
+  const fd = new FormData()
+  fd.append('file', file)
+  fd.append('mc_version', mcVersion)
+  return apiUpload<Archive>('/archives/upload', fd)
+}
+
 export function restoreArchive(id: number, serverId: number): Promise<{ job_id: string }> {
   return apiRequest<{ job_id: string }>(`/archives/${id}/restore/${serverId}`, {
     method: 'POST',

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Archive as ArchiveIcon, Download, Loader2, RefreshCw, RotateCcw, Save, Trash2, Upload } from 'lucide-react'
+import { Archive as ArchiveIcon, Download, Loader2, Pencil, RefreshCw, RotateCcw, Save, Trash2, Upload } from 'lucide-react'
 
 import { ApiError } from '@/api/client'
 import {
@@ -9,6 +9,7 @@ import {
   downloadArchive,
   listArchives,
   restoreArchive,
+  updateArchive,
   uploadArchive,
 } from '@/api/archives'
 import { pollJob } from '@/api/jobs'
@@ -25,6 +26,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useGlobalToast } from '@/components/ui/use-global-toast'
@@ -43,6 +46,7 @@ export default function Archives() {
   const { data: servers } = useResource(() => listServers(), [])
   const [createOpen, setCreateOpen] = useState(false)
   const [restoreFor, setRestoreFor] = useState<Archive | null>(null)
+  const [editFor, setEditFor] = useState<Archive | null>(null)
   const [busy, setBusy] = useState<number | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -129,6 +133,7 @@ export default function Archives() {
               <TableHeader>
                 <TableRow>
                   <TableHead>名称</TableHead>
+                  <TableHead>版本</TableHead>
                   <TableHead>来源</TableHead>
                   <TableHead>大小</TableHead>
                   <TableHead>创建时间</TableHead>
@@ -139,6 +144,7 @@ export default function Archives() {
                 {data.map((a) => (
                   <TableRow key={a.id}>
                     <TableCell className="font-medium">{a.name}</TableCell>
+                    <TableCell className="text-muted-foreground">{a.mc_version || '—'}</TableCell>
                     <TableCell>
                       <Badge variant="outline" className="text-[11px]">
                         {a.source === 'uploaded' ? '上传' : serverName(a.source_server_id)}
@@ -155,6 +161,9 @@ export default function Archives() {
                         <Button type="button" variant="outline" size="sm" className="gap-1.5" disabled={busy === a.id} onClick={() => setRestoreFor(a)}>
                           <RotateCcw className="h-3.5 w-3.5" />
                           恢复
+                        </Button>
+                        <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" disabled={busy === a.id} title="编辑" onClick={() => setEditFor(a)}>
+                          <Pencil className="h-4 w-4" />
                         </Button>
                         <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" disabled={busy === a.id} onClick={() => onDelete(a)}>
                           <Trash2 className="h-4 w-4" />
@@ -197,7 +206,78 @@ export default function Archives() {
         }
         onDone={() => setRestoreFor(null)}
       />
+
+      <EditArchiveDialog
+        archive={editFor}
+        onClose={() => setEditFor(null)}
+        onSaved={() => {
+          setEditFor(null)
+          refresh()
+        }}
+      />
     </PageShell>
+  )
+}
+
+function EditArchiveDialog({
+  archive,
+  onClose,
+  onSaved,
+}: {
+  archive: Archive | null
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const { showToast } = useGlobalToast()
+  const [name, setName] = useState('')
+  const [mcVersion, setMcVersion] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    if (archive) {
+      setName(archive.name)
+      setMcVersion(archive.mc_version)
+    }
+  }, [archive])
+
+  const save = async () => {
+    if (!archive) return
+    setBusy(true)
+    try {
+      await updateArchive(archive.id, { name: name.trim(), mc_version: mcVersion.trim() })
+      showToast('success', '已保存')
+      onSaved()
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : '保存失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Dialog open={archive !== null} onOpenChange={(o) => (!o ? onClose() : undefined)}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>编辑存档</DialogTitle>
+        </DialogHeader>
+        <div className="grid gap-4 py-2">
+          <div className="space-y-2">
+            <Label htmlFor="arc-name">名称</Label>
+            <Input id="arc-name" value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="arc-ver">MC 版本</Label>
+            <Input id="arc-ver" value={mcVersion} onChange={(e) => setMcVersion(e.target.value)} placeholder="如 1.20.1" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onClose} disabled={busy}>取消</Button>
+          <Button type="button" onClick={save} disabled={busy}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : '保存'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -225,9 +305,11 @@ function ServerPickDialog({
   const [busy, setBusy] = useState(false)
   const [pct, setPct] = useState<number | null>(null)
 
+  const selectable = (s: ServerSummary) => s.status !== 'running' && s.status !== 'installing'
+
   useEffect(() => {
     if (open) {
-      setServerId(servers[0]?.id ?? null)
+      setServerId(servers.find(selectable)?.id ?? null)
       setPct(null)
     }
   }, [open, servers])
@@ -262,10 +344,14 @@ function ServerPickDialog({
             <SelectTrigger><SelectValue placeholder="选择服务器" /></SelectTrigger>
             <SelectContent>
               {servers.map((s) => (
-                <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
+                <SelectItem key={s.id} value={String(s.id)} disabled={!selectable(s)}>
+                  {s.name}
+                  {s.status === 'running' ? '(运行中,不可选)' : s.status === 'installing' ? '(安装中,不可选)' : ''}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
+          <p className="mt-2 text-xs text-muted-foreground">运行中的实例不可选,请先停止。</p>
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={onClose} disabled={busy}>取消</Button>

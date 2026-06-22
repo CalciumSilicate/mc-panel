@@ -1,7 +1,6 @@
-"""工具:超平坦世界生成器(写入 server.properties)。"""
+"""工具:超平坦世界生成器(生成 level.dat,格式按服务器 MC 版本决定)。"""
 from __future__ import annotations
 
-import json
 import shutil
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,6 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from .. import archive_manager as am
+from .. import superflat
 from ..database import get_db
 from ..deps import require_auth
 from ..mcdr import manager as mcdr_manager
@@ -30,16 +30,6 @@ class SuperflatApply(BaseModel):
     overwrite: bool = False
 
 
-def build_generator_settings(layers: list[Layer], biome: str, structures: list[str]) -> str:
-    settings: dict = {
-        "layers": [{"block": ly.block, "height": ly.height} for ly in layers],
-        "biome": biome,
-    }
-    if structures:
-        settings["structure_overrides"] = structures
-    return json.dumps(settings, separators=(",", ":"), ensure_ascii=False)
-
-
 @router.post("/superflat/apply")
 def superflat_apply(
     body: SuperflatApply, _: str = Depends(require_auth), db: Session = Depends(get_db)
@@ -49,15 +39,32 @@ def superflat_apply(
         raise HTTPException(status_code=404, detail="服务器不存在")
     if not body.layers:
         raise HTTPException(status_code=400, detail="至少需要一层")
+
+    inst = mcdr_manager.instance_dir(server)
+    wdir = am.world_dir(inst)
+    world_exists = wdir.exists()
+    if world_exists and not body.overwrite:
+        raise HTTPException(status_code=400, detail="世界已存在,勾选「重置世界」以覆盖")
     if body.overwrite and mcdr_manager.get_status(server) in ("running", "installing"):
         raise HTTPException(status_code=400, detail="重置世界需先停止实例")
 
-    gen = build_generator_settings(body.layers, body.biome, body.structures)
-    mcdr_manager.write_properties(
-        server, {"level-type": "minecraft:flat", "generator-settings": gen}
-    )
-    if body.overwrite:
-        wdir = am.world_dir(mcdr_manager.instance_dir(server))
-        if wdir.exists():
-            shutil.rmtree(wdir, ignore_errors=True)
-    return {"generator_settings": gen, "overwritten": body.overwrite}
+    try:
+        data = superflat.build_level_dat(
+            server.mc_version,
+            [ly.model_dump() for ly in body.layers],
+            body.biome,
+            body.structures,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"生成 level.dat 失败: {exc}")
+
+    if world_exists and body.overwrite:
+        shutil.rmtree(wdir, ignore_errors=True)
+    wdir.mkdir(parents=True, exist_ok=True)
+    (wdir / "level.dat").write_bytes(data)
+
+    return {
+        "data_version": superflat.data_version_for(server.mc_version),
+        "format": superflat.format_name(server.mc_version),
+        "mc_version": server.mc_version,
+    }

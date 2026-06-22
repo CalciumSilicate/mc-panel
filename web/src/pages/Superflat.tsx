@@ -72,14 +72,14 @@ export default function Superflat() {
     }
     setApplying(true)
     try {
-      await applySuperflat({
+      const r = await applySuperflat({
         server_id: serverId,
         layers: layers.map((l) => ({ block: l.block.trim(), height: Number(l.height) || 1 })),
         biome: `minecraft:${biome}`,
         structures: structures.map((s) => `minecraft:${s}`),
         overwrite,
       })
-      showToast('success', overwrite ? '已应用并重置世界' : '已应用到 server.properties')
+      showToast('success', `已生成 level.dat(${r.format} · DataVersion ${r.data_version})`)
     } catch (err) {
       showToast('error', err instanceof ApiError ? err.message : '应用失败')
     } finally {
@@ -90,7 +90,7 @@ export default function Superflat() {
   return (
     <PageShell
       title="超平坦世界"
-      description="配置超平坦预设并写入实例的 server.properties(level-type=flat)。对新世界生效。"
+      description="按服务器 MC 版本生成对应格式的 level.dat,写入实例世界目录。对未生成的世界生效。"
       width="6xl"
       actions={
         <div className="flex items-center gap-2">
@@ -167,7 +167,7 @@ export default function Superflat() {
           </div>
         </PageSurface>
 
-        <PageSurface title="预设预览 (generator-settings)" bodyClassName="space-y-3">
+        <PageSurface title="配置预览" bodyClassName="space-y-3">
           <pre className="overflow-x-auto rounded-md border border-border/70 bg-muted/40 p-3 font-mono text-xs">{generatorSettings}</pre>
           <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={() => { navigator.clipboard?.writeText(generatorSettings); showToast('success', '已复制') }}>
             <Copy className="h-3.5 w-3.5" />
