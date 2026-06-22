@@ -33,3 +33,27 @@ def init_db() -> None:
     from . import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    _migrate_columns()
+
+
+# 新增字段时在此登记:create_all 不会给已存在的表补列,这里用 ALTER TABLE 补齐。
+_COLUMN_MIGRATIONS = {
+    "servers": {
+        "extra_jvm_args": "VARCHAR(1024) DEFAULT ''",
+        "auto_start": "BOOLEAN DEFAULT 0",
+        "java_path_override": "VARCHAR(512) DEFAULT ''",
+    },
+}
+
+
+def _migrate_columns() -> None:
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        for table, columns in _COLUMN_MIGRATIONS.items():
+            existing = {
+                row[1] for row in conn.execute(text(f'PRAGMA table_info("{table}")'))
+            }
+            for name, ddl in columns.items():
+                if name not in existing:
+                    conn.execute(text(f'ALTER TABLE "{table}" ADD COLUMN {name} {ddl}'))

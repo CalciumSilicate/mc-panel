@@ -26,6 +26,9 @@ export interface ServerSummary {
   min_memory: string
   max_memory: string
   port: number
+  extra_jvm_args: string
+  auto_start: boolean
+  java_path_override: string
   created_at: string
   status: ServerStatus
   install?: InstallProgress | null
@@ -73,6 +76,9 @@ export interface ServerUpdateInput {
   max_memory?: string
   port?: number
   mc_version?: string
+  extra_jvm_args?: string
+  auto_start?: boolean
+  java_path_override?: string
 }
 
 export function updateServer(id: number, patch: ServerUpdateInput): Promise<ServerSummary> {
@@ -80,6 +86,21 @@ export function updateServer(id: number, patch: ServerUpdateInput): Promise<Serv
     method: 'PATCH',
     body: JSON.stringify(patch),
   })
+}
+
+export type ServerProperties = Record<string, string>
+
+export function getProperties(id: number): Promise<ServerProperties> {
+  return apiRequest<{ properties: ServerProperties }>(`/servers/${id}/properties`).then(
+    (r) => r.properties,
+  )
+}
+
+export function updateProperties(id: number, properties: ServerProperties): Promise<ServerProperties> {
+  return apiRequest<{ properties: ServerProperties }>(`/servers/${id}/properties`, {
+    method: 'PATCH',
+    body: JSON.stringify({ properties }),
+  }).then((r) => r.properties)
 }
 
 export function startServer(id: number): Promise<{ status: ServerStatus }> {

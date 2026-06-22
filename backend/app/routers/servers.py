@@ -25,11 +25,26 @@ from ..schemas import (
     CreateServerResponse,
     InstallProgress,
     JavaInfo,
+    PropertiesResponse,
+    PropertiesUpdate,
     ServerCreate,
     ServerSummary,
     ServerUpdate,
     VersionList,
 )
+
+# 编辑对话框「服务器属性」开放的 server.properties 键(其余键写回时保留不动)
+COMMON_PROPERTY_KEYS = [
+    "motd",
+    "max-players",
+    "difficulty",
+    "gamemode",
+    "view-distance",
+    "white-list",
+    "pvp",
+    "online-mode",
+    "level-seed",
+]
 from ..versions import list_release_versions
 
 router = APIRouter(prefix="/servers", tags=["servers"])
@@ -184,17 +199,25 @@ async def update_server(
             raise HTTPException(status_code=409, detail="同名服务器已存在")
         server.name = payload.name
 
-    mem_changed = False
+    start_cmd_changed = False
     if payload.min_memory and payload.min_memory != server.min_memory:
         server.min_memory = payload.min_memory
-        mem_changed = True
+        start_cmd_changed = True
     if payload.max_memory and payload.max_memory != server.max_memory:
         server.max_memory = payload.max_memory
-        mem_changed = True
+        start_cmd_changed = True
+    if payload.extra_jvm_args is not None and payload.extra_jvm_args != server.extra_jvm_args:
+        server.extra_jvm_args = payload.extra_jvm_args
+        start_cmd_changed = True
 
     port_changed = payload.port is not None and payload.port != server.port
     if port_changed:
         server.port = payload.port
+
+    if payload.auto_start is not None:
+        server.auto_start = payload.auto_start
+    if payload.java_path_override is not None:
+        server.java_path_override = payload.java_path_override
 
     version_changed = bool(payload.mc_version) and payload.mc_version != server.mc_version
     if version_changed:
@@ -205,15 +228,41 @@ async def update_server(
     db.commit()
     db.refresh(server)
 
-    # 落盘(内存/端口改动重启后生效)
-    if mem_changed:
-        manager.apply_memory(server)
+    # 落盘(内存/JVM/端口改动重启后生效)
+    if start_cmd_changed:
+        manager.apply_start_command(server)
     if port_changed:
         manager.apply_port(server)
     if version_changed:
         _launch_install(server.id, _redownload_in_background(server.id))
 
     return _to_summary(server)
+
+
+@router.get("/{server_id}/properties", response_model=PropertiesResponse)
+def get_properties(
+    server_id: int, _: str = Depends(require_auth), db: Session = Depends(get_db)
+) -> PropertiesResponse:
+    server = _get_server_or_404(db, server_id)
+    current = manager.read_properties(server)
+    return PropertiesResponse(properties={k: current.get(k, "") for k in COMMON_PROPERTY_KEYS})
+
+
+@router.patch("/{server_id}/properties", response_model=PropertiesResponse)
+def update_properties(
+    server_id: int,
+    payload: PropertiesUpdate,
+    _: str = Depends(require_auth),
+    db: Session = Depends(get_db),
+) -> PropertiesResponse:
+    server = _get_server_or_404(db, server_id)
+    updates = {
+        k: str(v) for k, v in payload.properties.items() if k in COMMON_PROPERTY_KEYS
+    }
+    if updates:
+        manager.write_properties(server, updates)
+    current = manager.read_properties(server)
+    return PropertiesResponse(properties={k: current.get(k, "") for k in COMMON_PROPERTY_KEYS})
 
 
 @router.post("/{server_id}/reinstall")
@@ -250,10 +299,13 @@ async def start_server(
 ) -> dict:
     server = _get_server_or_404(db, server_id)
     settings = get_settings_row(db)
-    installs = detect_installs(get_java_paths(settings))
-    java_path, java_error = choose_java(server.mc_version, installs, settings.java_command)
-    if java_error:
-        raise HTTPException(status_code=400, detail=java_error)
+    if server.java_path_override:
+        java_path = server.java_path_override
+    else:
+        installs = detect_installs(get_java_paths(settings))
+        java_path, java_error = choose_java(server.mc_version, installs, settings.java_command)
+        if java_error:
+            raise HTTPException(status_code=400, detail=java_error)
     try:
         await manager.start(server, settings.python_executable, java_path)
     except Exception as exc:  # noqa: BLE001

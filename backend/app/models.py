@@ -30,6 +30,12 @@ class Server(Base):
     min_memory: Mapped[str] = mapped_column(String(16), default="1G")
     max_memory: Mapped[str] = mapped_column(String(16), default="2G")
     port: Mapped[int] = mapped_column(Integer, default=25565)
+    # 额外 JVM 参数(空格分隔,拼到 -Xmx 与 -jar 之间)
+    extra_jvm_args: Mapped[str] = mapped_column(String(1024), default="")
+    # 面板启动时自动拉起
+    auto_start: Mapped[bool] = mapped_column(default=False)
+    # 指定该实例使用的 java 可执行文件;空 = 按版本自动选择
+    java_path_override: Mapped[str] = mapped_column(String(512), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 

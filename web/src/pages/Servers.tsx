@@ -8,13 +8,16 @@ import {
   createServer,
   deleteServer,
   getJavaInfo,
+  getProperties,
   getVanillaVersions,
   listServers,
   reinstallServer,
   startServer,
   stopServer,
+  updateProperties,
   updateServer,
 } from '@/api/servers'
+import { type JavaInstall, getSettings } from '@/api/settings'
 import { InlineLoader } from '@/components/PageLoader'
 import { PageShell, PageSurface } from '@/components/layout/PageScaffold'
 import { Badge } from '@/components/ui/badge'
@@ -31,7 +34,10 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ServerConsoleDialog } from '@/components/ServerConsoleDialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Textarea } from '@/components/ui/textarea'
 import { useGlobalToast } from '@/components/ui/use-global-toast'
 import { ApiError } from '@/api/client'
 import { SERVER_STATUS_META } from '@/lib/server-status'
@@ -450,6 +456,27 @@ function CreateServerDialog({
   )
 }
 
+const DIFFICULTY_OPTIONS = ['peaceful', 'easy', 'normal', 'hard']
+const GAMEMODE_OPTIONS = ['survival', 'creative', 'adventure', 'spectator']
+const JAVA_AUTO = '__auto__'
+
+function PropSwitch({
+  label,
+  value,
+  onChange,
+}: {
+  label: string
+  value: string
+  onChange: (v: string) => void
+}) {
+  return (
+    <label className="flex items-center justify-between gap-4 rounded-md border border-border/70 px-3 py-2">
+      <span className="text-sm">{label}</span>
+      <Switch checked={value === 'true'} onCheckedChange={(c) => onChange(c ? 'true' : 'false')} />
+    </label>
+  )
+}
+
 function EditServerDialog({
   server,
   onClose,
@@ -460,14 +487,20 @@ function EditServerDialog({
   onSaved: () => void
 }) {
   const { showToast } = useGlobalToast()
+  const [tab, setTab] = useState('basic')
   const [name, setName] = useState('')
   const [version, setVersion] = useState('')
   const [minMemory, setMinMemory] = useState('1G')
   const [maxMemory, setMaxMemory] = useState('2G')
   const [port, setPort] = useState('25565')
+  const [extraJvm, setExtraJvm] = useState('')
+  const [autoStart, setAutoStart] = useState(false)
+  const [javaOverride, setJavaOverride] = useState('')
+  const [props, setProps] = useState<Record<string, string>>({})
   const [versions, setVersions] = useState<string[]>([])
   const [versionsLoading, setVersionsLoading] = useState(false)
   const [javaInfo, setJavaInfo] = useState<JavaInfo | null>(null)
+  const [javaInstalls, setJavaInstalls] = useState<JavaInstall[]>([])
   const [submitting, setSubmitting] = useState(false)
 
   const open = server !== null
@@ -475,23 +508,32 @@ function EditServerDialog({
 
   useEffect(() => {
     if (!server) return
+    setTab('basic')
     setName(server.name)
     setVersion(server.mc_version)
     setMinMemory(server.min_memory)
     setMaxMemory(server.max_memory)
     setPort(String(server.port))
+    setExtraJvm(server.extra_jvm_args)
+    setAutoStart(server.auto_start)
+    setJavaOverride(server.java_path_override)
     // 仅在打开/切换实例时初始化,避免列表刷新覆盖正在编辑的内容
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [server?.id])
 
   useEffect(() => {
-    if (!open) return
+    if (!open || !server) return
     setVersionsLoading(true)
     getVanillaVersions()
       .then(setVersions)
       .catch(() => undefined)
       .finally(() => setVersionsLoading(false))
-  }, [open])
+    getProperties(server.id).then(setProps).catch(() => setProps({}))
+    getSettings()
+      .then((s) => setJavaInstalls(s.java_installs))
+      .catch(() => setJavaInstalls([]))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, server?.id])
 
   useEffect(() => {
     if (!open || !version) {
@@ -519,6 +561,8 @@ function EditServerDialog({
     }
   }
 
+  const setProp = (key: string, value: string) => setProps((p) => ({ ...p, [key]: value }))
+
   const submit = async () => {
     if (!server) return
     if (!name.trim()) {
@@ -533,7 +577,12 @@ function EditServerDialog({
         max_memory: maxMemory.trim() || '2G',
         port: Number(port) || 25565,
         mc_version: version,
+        extra_jvm_args: extraJvm,
+        auto_start: autoStart,
+        java_path_override: javaOverride,
       })
+      const toWrite = Object.fromEntries(Object.entries(props).filter(([, v]) => v !== ''))
+      await updateProperties(server.id, toWrite)
       showToast('success', version !== server.mc_version ? '已保存,正在重新下载核心' : '已保存')
       onSaved()
     } catch (err) {
@@ -545,69 +594,183 @@ function EditServerDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => (!o ? onClose() : undefined)}>
-      <DialogContent>
+      <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>编辑实例 —— {server?.name}</DialogTitle>
         </DialogHeader>
 
-        <div className="grid gap-4 py-2">
-          <div className="space-y-2">
-            <Label htmlFor="edit-name">名称</Label>
-            <Input id="edit-name" value={name} onChange={(e) => setName(e.target.value)} />
-          </div>
-          <div className="space-y-2">
-            <div className="flex items-center justify-between gap-3">
-              <Label htmlFor="edit-version" className="shrink-0">Minecraft 版本</Label>
-              {running ? (
-                <span className="min-w-0 truncate text-right text-xs text-muted-foreground">运行中不可更换版本,请先停止</span>
-              ) : javaInfo ? (
-                <JavaHintText info={javaInfo} />
-              ) : null}
+        <Tabs value={tab} onValueChange={setTab}>
+          <TabsList className="grid w-full grid-cols-3">
+            <TabsTrigger value="basic">基本</TabsTrigger>
+            <TabsTrigger value="properties">服务器属性</TabsTrigger>
+            <TabsTrigger value="advanced">高级</TabsTrigger>
+          </TabsList>
+
+          {/* 基本 */}
+          <TabsContent value="basic" className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="edit-name">名称</Label>
+              <Input id="edit-name" value={name} onChange={(e) => setName(e.target.value)} />
             </div>
-            <div className="flex items-center gap-2">
-              <Select value={version} onValueChange={setVersion} disabled={versionsLoading || running}>
-                <SelectTrigger id="edit-version" className="flex-1">
-                  <SelectValue placeholder={versionsLoading ? '加载中…' : '选择版本'} />
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <Label htmlFor="edit-version" className="shrink-0">Minecraft 版本</Label>
+                {running ? (
+                  <span className="min-w-0 truncate text-right text-xs text-muted-foreground">运行中不可更换版本,请先停止</span>
+                ) : javaInfo ? (
+                  <JavaHintText info={javaInfo} />
+                ) : null}
+              </div>
+              <div className="flex items-center gap-2">
+                <Select value={version} onValueChange={setVersion} disabled={versionsLoading || running}>
+                  <SelectTrigger id="edit-version" className="flex-1">
+                    <SelectValue placeholder={versionsLoading ? '加载中…' : '选择版本'} />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-72">
+                    {version && !versions.includes(version) ? (
+                      <SelectItem value={version}>{version}(当前)</SelectItem>
+                    ) : null}
+                    {versions.map((v) => (
+                      <SelectItem key={v} value={v}>
+                        {v}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="shrink-0"
+                  disabled={versionsLoading}
+                  title="刷新版本列表"
+                  onClick={refreshVersions}
+                >
+                  <RefreshCw className={cn('h-4 w-4', versionsLoading && 'animate-spin')} />
+                </Button>
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="edit-min">最小内存</Label>
+                <Input id="edit-min" value={minMemory} onChange={(e) => setMinMemory(e.target.value)} placeholder="1G" />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-max">最大内存</Label>
+                <Input id="edit-max" value={maxMemory} onChange={(e) => setMaxMemory(e.target.value)} placeholder="2G" />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-port">端口</Label>
+                <Input id="edit-port" value={port} onChange={(e) => setPort(e.target.value)} inputMode="numeric" />
+              </div>
+            </div>
+          </TabsContent>
+
+          {/* 服务器属性 */}
+          <TabsContent value="properties" className="space-y-4 py-2">
+            <p className="text-xs text-muted-foreground">对应 server.properties,重启后生效。</p>
+            <div className="space-y-2">
+              <Label htmlFor="prop-motd">服务器描述 (MOTD)</Label>
+              <Input id="prop-motd" value={props['motd'] ?? ''} onChange={(e) => setProp('motd', e.target.value)} />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="prop-max">最大玩家数</Label>
+                <Input id="prop-max" value={props['max-players'] ?? ''} onChange={(e) => setProp('max-players', e.target.value)} inputMode="numeric" />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="prop-view">视距</Label>
+                <Input id="prop-view" value={props['view-distance'] ?? ''} onChange={(e) => setProp('view-distance', e.target.value)} inputMode="numeric" />
+              </div>
+              <div className="space-y-2">
+                <Label>难度</Label>
+                <Select value={props['difficulty'] ?? ''} onValueChange={(v) => setProp('difficulty', v)}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="默认" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {DIFFICULTY_OPTIONS.map((d) => (
+                      <SelectItem key={d} value={d}>
+                        {d}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>游戏模式</Label>
+                <Select value={props['gamemode'] ?? ''} onValueChange={(v) => setProp('gamemode', v)}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="默认" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {GAMEMODE_OPTIONS.map((g) => (
+                      <SelectItem key={g} value={g}>
+                        {g}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="prop-seed">世界种子 (level-seed)</Label>
+              <Input id="prop-seed" value={props['level-seed'] ?? ''} onChange={(e) => setProp('level-seed', e.target.value)} placeholder="留空随机;仅对新世界生效" />
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <PropSwitch label="正版验证" value={props['online-mode'] ?? ''} onChange={(v) => setProp('online-mode', v)} />
+              <PropSwitch label="白名单" value={props['white-list'] ?? ''} onChange={(v) => setProp('white-list', v)} />
+              <PropSwitch label="PVP" value={props['pvp'] ?? ''} onChange={(v) => setProp('pvp', v)} />
+            </div>
+          </TabsContent>
+
+          {/* 高级 */}
+          <TabsContent value="advanced" className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="edit-jvm">额外 JVM 参数</Label>
+              <Textarea
+                id="edit-jvm"
+                value={extraJvm}
+                onChange={(e) => setExtraJvm(e.target.value)}
+                rows={2}
+                placeholder="如 -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
+                className="font-mono"
+              />
+              <p className="text-xs text-muted-foreground">拼到 -Xmx 与 -jar 之间,重启生效。</p>
+            </div>
+            <div className="space-y-2">
+              <Label>指定 Java</Label>
+              <Select
+                value={javaOverride || JAVA_AUTO}
+                onValueChange={(v) => setJavaOverride(v === JAVA_AUTO ? '' : v)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
                 </SelectTrigger>
-                <SelectContent className="max-h-72">
-                  {version && !versions.includes(version) ? (
-                    <SelectItem value={version}>{version}(当前)</SelectItem>
+                <SelectContent>
+                  <SelectItem value={JAVA_AUTO}>自动(按版本选择)</SelectItem>
+                  {javaOverride && !javaInstalls.some((i) => i.path === javaOverride) ? (
+                    <SelectItem value={javaOverride}>{javaOverride}</SelectItem>
                   ) : null}
-                  {versions.map((v) => (
-                    <SelectItem key={v} value={v}>
-                      {v}
+                  {javaInstalls.map((i) => (
+                    <SelectItem key={i.path} value={i.path}>
+                      {i.major ? `Java ${i.major} — ` : ''}
+                      {i.path}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-              <Button
-                type="button"
-                variant="outline"
-                size="icon"
-                className="shrink-0"
-                disabled={versionsLoading}
-                title="刷新版本列表"
-                onClick={refreshVersions}
-              >
-                <RefreshCw className={cn('h-4 w-4', versionsLoading && 'animate-spin')} />
-              </Button>
+              <p className="text-xs text-muted-foreground">覆盖自动选择;Java 池在「设置」里维护。</p>
             </div>
-          </div>
-          <div className="grid grid-cols-3 gap-3">
-            <div className="space-y-2">
-              <Label htmlFor="edit-min">最小内存</Label>
-              <Input id="edit-min" value={minMemory} onChange={(e) => setMinMemory(e.target.value)} placeholder="1G" />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-max">最大内存</Label>
-              <Input id="edit-max" value={maxMemory} onChange={(e) => setMaxMemory(e.target.value)} placeholder="2G" />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-port">端口</Label>
-              <Input id="edit-port" value={port} onChange={(e) => setPort(e.target.value)} inputMode="numeric" />
-            </div>
-          </div>
-        </div>
+            <label className="flex items-center justify-between gap-4 rounded-md border border-border/70 px-3 py-2.5">
+              <span>
+                <span className="block text-sm font-medium">开机自启</span>
+                <span className="block text-xs text-muted-foreground">面板启动时自动拉起该实例</span>
+              </span>
+              <Switch checked={autoStart} onCheckedChange={setAutoStart} />
+            </label>
+          </TabsContent>
+        </Tabs>
 
         <DialogFooter>
           <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>

@@ -34,6 +34,17 @@ class ServerUpdate(BaseModel):
     max_memory: str | None = None
     port: int | None = None
     mc_version: str | None = None
+    extra_jvm_args: str | None = None
+    auto_start: bool | None = None
+    java_path_override: str | None = None
+
+
+class PropertiesResponse(BaseModel):
+    properties: dict[str, str]
+
+
+class PropertiesUpdate(BaseModel):
+    properties: dict[str, str]
 
 
 class InstallProgress(BaseModel):
@@ -52,6 +63,9 @@ class ServerSummary(BaseModel):
     min_memory: str
     max_memory: str
     port: int
+    extra_jvm_args: str = ""
+    auto_start: bool = False
+    java_path_override: str = ""
     created_at: datetime
     # 运行时派生字段
     status: str = "stopped"

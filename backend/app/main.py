@@ -4,16 +4,22 @@
 """
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import select
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .config import API_PORT, WEB_DIST, ensure_dirs
-from .database import init_db
+from .database import SessionLocal, init_db
+from .deps import get_settings_row
+from .java import choose_java, detect_installs, get_java_paths
 from .mcdr import manager
+from .models import Server
 from .routers import auth, servers, settings, system
 
 # 在模块加载时就建表,确保无论以何种方式启动(uvicorn / TestClient / 直接 import)
@@ -23,7 +29,42 @@ init_db()
 # 清理上次运行残留的「安装中」标记(下载不会跨重启续传)
 manager.clear_stale_installing()
 
-app = FastAPI(title="mc-panel API")
+
+async def _autostart() -> None:
+    """面板启动时拉起标记了 auto_start 的实例。"""
+    db = SessionLocal()
+    try:
+        servers_to_start = db.scalars(
+            select(Server).where(Server.auto_start.is_(True))
+        ).all()
+        if not servers_to_start:
+            return
+        sys_settings = get_settings_row(db)
+        installs = detect_installs(get_java_paths(sys_settings))
+        for s in servers_to_start:
+            if manager.get_status(s) != "stopped":
+                continue
+            if s.java_path_override:
+                java_path = s.java_path_override
+            else:
+                java_path, err = choose_java(s.mc_version, installs, sys_settings.java_command)
+                if err:
+                    continue
+            try:
+                await manager.start(s, sys_settings.python_executable, java_path)
+            except Exception:  # noqa: BLE001 - 单个实例自启失败不影响其它
+                pass
+    finally:
+        db.close()
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    await _autostart()
+    yield
+
+
+app = FastAPI(title="mc-panel API", lifespan=lifespan)
 
 # 开发期允许 vite dev server 跨域;生产由反代同源,可收紧。
 app.add_middleware(

@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import shlex
 import shutil
 from collections import deque
 from pathlib import Path
@@ -68,21 +69,37 @@ def _server_properties_text(port: int) -> str:
     )
 
 
-def _mcdr_config(java_command: str, min_memory: str, max_memory: str) -> dict:
+def build_start_command(
+    java_command: str, min_memory: str, max_memory: str, extra_jvm_args: str = ""
+) -> list[str]:
+    """组装 MC 服务端启动命令:java + 内存 + UTF-8 + 额外参数 + -jar。"""
+    try:
+        extra = shlex.split(extra_jvm_args) if extra_jvm_args else []
+    except ValueError:
+        extra = extra_jvm_args.split()
+    return [
+        java_command,
+        f"-Xms{min_memory}",
+        f"-Xmx{max_memory}",
+        # 强制服务端以 UTF-8 输出,避免 Windows 下控制台用系统码页(GBK)导致乱码
+        "-Dfile.encoding=UTF-8",
+        *extra,
+        "-jar",
+        "server.jar",
+        "nogui",
+    ]
+
+
+def _mcdr_config(
+    java_command: str, min_memory: str, max_memory: str, extra_jvm_args: str = ""
+) -> dict:
     """构造 vanilla 服务器的 MCDR config.yml 内容。"""
     return {
         "language": "zh_cn",
         "working_directory": "server",
-        "start_command": [
-            java_command,
-            f"-Xms{min_memory}",
-            f"-Xmx{max_memory}",
-            # 强制服务端以 UTF-8 输出,避免 Windows 下控制台用系统码页(GBK)导致乱码
-            "-Dfile.encoding=UTF-8",
-            "-jar",
-            "server.jar",
-            "nogui",
-        ],
+        "start_command": build_start_command(
+            java_command, min_memory, max_memory, extra_jvm_args
+        ),
         "handler": "vanilla_handler",
         # 发送给服务端用 UTF-8;读取服务端输出先按 UTF-8,失败回退 GBK
         # (Windows 下 Java 启动器/旧服务端常用系统码页),避免解码报错。
@@ -210,7 +227,12 @@ class MCDRManager:
 
             (inst / "config.yml").write_text(
                 yaml.safe_dump(
-                    _mcdr_config(java_command, server.min_memory, server.max_memory),
+                    _mcdr_config(
+                        java_command,
+                        server.min_memory,
+                        server.max_memory,
+                        server.extra_jvm_args,
+                    ),
                     allow_unicode=True,
                     sort_keys=False,
                 ),
@@ -284,26 +306,10 @@ class MCDRManager:
             yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8"
         )
 
-    def _apply_java(self, inst: Path, java_path: str) -> None:
-        """把所选 java 写入实例 config.yml 的 start_command[0](保留其余参数)。"""
-        config_path = inst / "config.yml"
-        if not config_path.exists():
-            return
-        try:
-            data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-        except Exception:  # noqa: BLE001
-            return
-        cmd = data.get("start_command")
-        if isinstance(cmd, list) and cmd and cmd[0] != java_path:
-            cmd[0] = java_path
-            data["start_command"] = cmd
-            config_path.write_text(
-                yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8"
-            )
-
     # ---------- 编辑:把改动落到实例文件 ----------
-    def apply_memory(self, server: Server) -> None:
-        """把 server 的 min/max 内存写入 config.yml 的 start_command(-Xms/-Xmx)。"""
+    def apply_start_command(self, server: Server, java: str | None = None) -> None:
+        """按 server 的内存/额外 JVM 参数重建 config.yml 的 start_command。
+        java 为 None 时沿用现有 start_command[0](默认 'java')。"""
         config_path = self.instance_dir(server) / "config.yml"
         if not config_path.exists():
             return
@@ -311,46 +317,55 @@ class MCDRManager:
             data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
         except Exception:  # noqa: BLE001
             return
-        cmd = data.get("start_command")
-        if not isinstance(cmd, list) or not cmd:
-            return
-        new_cmd: list = []
-        had_xms = had_xmx = False
-        for tok in cmd:
-            if isinstance(tok, str) and tok.startswith("-Xms"):
-                new_cmd.append(f"-Xms{server.min_memory}")
-                had_xms = True
-            elif isinstance(tok, str) and tok.startswith("-Xmx"):
-                new_cmd.append(f"-Xmx{server.max_memory}")
-                had_xmx = True
-            else:
-                new_cmd.append(tok)
-        # 缺失则补在 java 可执行文件(index 0)之后
-        if not had_xmx:
-            new_cmd.insert(1, f"-Xmx{server.max_memory}")
-        if not had_xms:
-            new_cmd.insert(1, f"-Xms{server.min_memory}")
-        data["start_command"] = new_cmd
+        if java is None:
+            cmd = data.get("start_command")
+            java = cmd[0] if isinstance(cmd, list) and cmd else "java"
+        data["start_command"] = build_start_command(
+            java, server.min_memory, server.max_memory, server.extra_jvm_args
+        )
         config_path.write_text(
             yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8"
         )
 
-    def apply_port(self, server: Server) -> None:
-        """把 server.port 写入 server/server.properties 的 server-port。"""
-        props = self.instance_dir(server) / "server" / "server.properties"
-        if not props.exists():
-            return
+    # ---------- server.properties ----------
+    def _properties_path(self, server: Server) -> Path:
+        return self.instance_dir(server) / "server" / "server.properties"
+
+    def read_properties(self, server: Server) -> dict[str, str]:
+        path = self._properties_path(server)
+        result: dict[str, str] = {}
+        if path.exists():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                stripped = line.lstrip()
+                if not stripped or stripped.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                result[key.strip()] = value
+        return result
+
+    def write_properties(self, server: Server, updates: dict[str, str]) -> None:
+        """更新 server.properties 中给定键,保留其余行/注释/顺序。"""
+        path = self._properties_path(server)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+        seen: set[str] = set()
         out: list[str] = []
-        found = False
-        for line in props.read_text(encoding="utf-8").splitlines():
-            if line.startswith("server-port="):
-                out.append(f"server-port={server.port}")
-                found = True
-            else:
-                out.append(line)
-        if not found:
-            out.append(f"server-port={server.port}")
-        props.write_text("\n".join(out) + "\n", encoding="utf-8")
+        for line in lines:
+            stripped = line.lstrip()
+            if stripped and not stripped.startswith("#") and "=" in line:
+                key = line.split("=", 1)[0].strip()
+                if key in updates:
+                    out.append(f"{key}={updates[key]}")
+                    seen.add(key)
+                    continue
+            out.append(line)
+        for key, value in updates.items():
+            if key not in seen:
+                out.append(f"{key}={value}")
+        path.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+    def apply_port(self, server: Server) -> None:
+        self.write_properties(server, {"server-port": str(server.port)})
 
     async def redownload_jar(self, server: Server) -> None:
         """更换版本:仅重新下载 server.jar(保留世界/配置)。"""
@@ -380,8 +395,8 @@ class MCDRManager:
         if not (inst / "server" / "server.jar").exists():
             raise RuntimeError("服务端 jar 不存在,实例尚未安装完成")
         self._reconcile_config(inst)
-        if java_path:
-            self._apply_java(inst, java_path)
+        # 用所选 java + 当前内存/额外参数重建启动命令
+        self.apply_start_command(server, java=java_path)
         existing = self._procs.get(server.id)
         if existing is not None and existing.returncode is None:
             return  # 已在运行
