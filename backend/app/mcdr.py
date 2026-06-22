@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 from collections import deque
 from pathlib import Path
@@ -74,6 +75,8 @@ def _mcdr_config(java_command: str, min_memory: str, max_memory: str) -> dict:
             java_command,
             f"-Xms{min_memory}",
             f"-Xmx{max_memory}",
+            # 强制服务端以 UTF-8 输出,避免 Windows 下控制台用系统码页(GBK)导致乱码
+            "-Dfile.encoding=UTF-8",
             "-jar",
             "server.jar",
             "nogui",
@@ -204,6 +207,9 @@ class MCDRManager:
         if existing is not None and existing.returncode is None:
             return  # 已在运行
 
+        # 强制 MCDR(Python)以 UTF-8 读写其 stdio,否则 Windows 下会用系统码页(GBK)
+        # 写日志,我们按 UTF-8 解码就会乱码。这样无论宿主机区域设置如何都统一为 UTF-8。
+        env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
         proc = await asyncio.create_subprocess_exec(
             python_executable,
             "-m",
@@ -212,6 +218,7 @@ class MCDRManager:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            env=env,
         )
         self._procs[server.id] = proc
         # 新一轮运行清空旧缓冲,并启动输出读取任务

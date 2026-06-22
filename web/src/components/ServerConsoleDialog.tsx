@@ -6,6 +6,7 @@ import type { ServerSummary } from '@/api/servers'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { parseAnsi } from '@/lib/ansi'
 import { cn } from '@/lib/utils'
 
 /**
@@ -119,7 +120,18 @@ export function ServerConsoleDialog({ server, onClose }: ServerConsoleDialogProp
           ) : (
             lines.map((line, index) => (
               <div key={index} className="whitespace-pre-wrap break-all">
-                {line}
+                {parseAnsi(line).map((seg, i) => (
+                  <span
+                    key={i}
+                    style={{
+                      color: seg.color,
+                      fontWeight: seg.bold ? 700 : undefined,
+                      opacity: seg.dim ? 0.65 : undefined,
+                    }}
+                  >
+                    {seg.text}
+                  </span>
+                ))}
               </div>
             ))
           )}
