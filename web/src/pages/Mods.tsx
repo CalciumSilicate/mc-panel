@@ -12,6 +12,7 @@ import {
   listLibrary,
   listMods,
   modVersions,
+  replaceFromLibrary,
   searchModrinth,
   switchMod,
   uploadMod,
@@ -67,6 +68,25 @@ export default function Mods() {
     () => new Set((installed.data ?? []).map((m) => stripDisabled(m.file_name))),
     [installed.data],
   )
+
+  const uninstall = async (match: { id?: string; file?: string }) => {
+    if (serverId === null) return
+    const files = (installed.data ?? [])
+      .filter(
+        (m) =>
+          (match.id && m.id.toLowerCase() === match.id.toLowerCase()) ||
+          (match.file && stripDisabled(m.file_name) === stripDisabled(match.file)),
+      )
+      .map((m) => m.file_name)
+    if (!files.length) return
+    try {
+      for (const f of files) await deleteMod(serverId, f)
+      showToast('success', '已卸载')
+      installed.refresh()
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : '卸载失败')
+    }
+  }
 
   const run = async (key: string, fn: () => Promise<unknown>, ok: string) => {
     setBusy(key)
@@ -194,11 +214,11 @@ export default function Mods() {
           </TabsContent>
 
           <TabsContent value="modrinth" className="pt-4">
-            <ModrinthTab serverId={serverId} mcVersion={server?.mc_version ?? ''} installedIds={installedIds} onInstalled={() => installed.refresh()} />
+            <ModrinthTab serverId={serverId} mcVersion={server?.mc_version ?? ''} installedIds={installedIds} onInstalled={() => installed.refresh()} onUninstall={uninstall} />
           </TabsContent>
 
           <TabsContent value="library" className="pt-4">
-            <LibraryTab serverId={serverId} installedFiles={installedFiles} onInstalled={() => installed.refresh()} />
+            <LibraryTab serverId={serverId} installedFiles={installedFiles} installedIds={installedIds} onInstalled={() => installed.refresh()} onUninstall={uninstall} />
           </TabsContent>
         </Tabs>
       )}
@@ -209,11 +229,15 @@ export default function Mods() {
 function LibraryTab({
   serverId,
   installedFiles,
+  installedIds,
   onInstalled,
+  onUninstall,
 }: {
   serverId: number
   installedFiles: Set<string>
+  installedIds: Set<string>
   onInstalled: () => void
+  onUninstall: (match: { id?: string; file?: string }) => Promise<void>
 }) {
   const { showToast } = useGlobalToast()
   const { data, loading, refresh } = useResource(() => listLibrary(), [])
@@ -295,8 +319,39 @@ function LibraryTab({
                     <TableCell className="text-muted-foreground">{m.loader || '—'}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1.5">
-                        {installedFiles.has(stripDisabled(m.file_name)) ? (
-                          <InstalledChip />
+                        {installedFiles.has(stripDisabled(m.file_name)) || (m.id && installedIds.has(m.id.toLowerCase())) ? (
+                          <>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="gap-1.5"
+                              disabled={busy === m.file_name}
+                              onClick={() => {
+                                if (window.confirm(`替换会先卸载服务器内已安装的「${m.name}」再装入本地库版本,确定?`))
+                                  act(m, () => replaceFromLibrary(serverId, m.file_name), '已替换', onInstalled)
+                              }}
+                            >
+                              {busy === m.file_name ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                              替换
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              disabled={busy === m.file_name}
+                              onClick={async () => {
+                                setBusy(m.file_name)
+                                try {
+                                  await onUninstall({ id: m.id, file: m.file_name })
+                                } finally {
+                                  setBusy(null)
+                                }
+                              }}
+                            >
+                              卸载
+                            </Button>
+                          </>
                         ) : (
                           <Button
                             type="button"
@@ -315,6 +370,7 @@ function LibraryTab({
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                          title="从库删除"
                           disabled={busy === m.file_name}
                           onClick={() => {
                             if (window.confirm(`从本地库删除「${m.name}」?`)) act(m, () => deleteFromLibrary(m.file_name), '已删除', refresh)
@@ -340,11 +396,13 @@ function ModrinthTab({
   mcVersion,
   installedIds,
   onInstalled,
+  onUninstall,
 }: {
   serverId: number
   mcVersion: string
   installedIds: Set<string>
   onInstalled: () => void
+  onUninstall: (match: { id?: string; file?: string }) => Promise<void>
 }) {
   const { showToast } = useGlobalToast()
   const [query, setQuery] = useState('')
@@ -446,7 +504,12 @@ function ModrinthTab({
                   <TableCell className="text-muted-foreground">{h.downloads.toLocaleString()}</TableCell>
                   <TableCell className="text-right">
                     {installedIds.has(h.slug.toLowerCase()) ? (
-                      <InstalledChip />
+                      <div className="flex items-center justify-end gap-1">
+                        <InstalledChip />
+                        <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" title="卸载" onClick={() => onUninstall({ id: h.slug })}>
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     ) : (
                       <Button type="button" variant="outline" size="sm" className="min-w-28 gap-1.5" disabled={h.project_id in progress} onClick={() => install(h)}>
                         {h.project_id in progress ? (

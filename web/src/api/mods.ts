@@ -99,3 +99,10 @@ export function installFromLibrary(serverId: number, fileName: string) {
     body: JSON.stringify({ file_name: fileName }),
   })
 }
+
+export function replaceFromLibrary(serverId: number, fileName: string) {
+  return apiRequest<{ file_name: string }>(`/mods/server/${serverId}/replace-from-library`, {
+    method: 'POST',
+    body: JSON.stringify({ file_name: fileName }),
+  })
+}

@@ -118,6 +118,34 @@ def install_from_library(
     return {"file_name": name}
 
 
+def _strip_disabled(n: str) -> str:
+    return n[: -len(".disabled")] if n.endswith(".disabled") else n
+
+
+@router.post("/server/{server_id}/replace-from-library")
+def replace_from_library(
+    server_id: int,
+    body: InstallFromLibraryBody,
+    _: str = Depends(require_auth),
+    db: Session = Depends(get_db),
+) -> dict:
+    server = _get_server(db, server_id)
+    inst = mcdr_manager.instance_dir(server)
+    target = next((i for i in mods.scan_dir(MOD_LIBRARY) if i["file_name"] == body.file_name), None)
+    if target is None:
+        raise HTTPException(status_code=404, detail="库中不存在该文件")
+    lib_id = target["id"]
+    lib_stripped = _strip_disabled(body.file_name)
+    for item in mods.list_mods(inst):
+        if (lib_id and item["id"] == lib_id) or _strip_disabled(item["file_name"]) == lib_stripped:
+            mods.delete_mod(inst, item["file_name"])
+    try:
+        name = mods.install_from_library(MOD_LIBRARY, inst, body.file_name)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return {"file_name": name}
+
+
 @router.get("/search")
 async def search_mods(
     q: str = Query(default=""),

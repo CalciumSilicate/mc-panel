@@ -150,13 +150,10 @@ export default function Superflat() {
               </SelectContent>
             </Select>
           </div>
-          <label className="flex items-center justify-between gap-4 rounded-md border border-border/70 px-3 py-2.5 sm:max-w-md">
-            <span>
-              <span className="block text-sm font-medium">生成结构</span>
-              <span className="block text-xs text-muted-foreground">关闭则完全禁用所有结构(村庄、要塞、试炼密室等)</span>
-            </span>
+          <div className="flex items-center gap-3">
             <Switch checked={generateStructures} onCheckedChange={setGenerateStructures} />
-          </label>
+            <Label>生成结构</Label>
+          </div>
           {generateStructures ? (
             <div className="space-y-2">
               <Label>结构(可多选;不选则按版本默认)</Label>
