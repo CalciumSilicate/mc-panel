@@ -16,6 +16,7 @@ import {
   uploadPlugin,
   uploadToLibrary,
 } from '@/api/plugins'
+import { pollJob } from '@/api/jobs'
 import { listServers } from '@/api/servers'
 import { InlineLoader } from '@/components/PageLoader'
 import { PageShell, PageSurface } from '@/components/layout/PageScaffold'
@@ -347,6 +348,7 @@ function CatalogueTab({
   const { data, loading, error, refresh } = useResource(() => getCatalogue(), [])
   const [query, setQuery] = useState('')
   const [installing, setInstalling] = useState<string | null>(null)
+  const [pct, setPct] = useState<number | null>(null)
 
   const filtered = useMemo(() => {
     const list = data ?? []
@@ -359,14 +361,20 @@ function CatalogueTab({
 
   const install = async (p: CataloguePlugin) => {
     setInstalling(p.id)
+    setPct(null)
     try {
-      const r = await installPlugin(serverId, p.id)
-      showToast('success', r.requirements_ok === false ? '已安装(部分依赖安装失败)' : '已安装')
-      onInstalled()
+      const { job_id } = await installPlugin(serverId, p.id)
+      const final = await pollJob(job_id, setPct)
+      if (final.status === 'error') showToast('error', final.message || '安装失败')
+      else {
+        showToast('success', '已安装')
+        onInstalled()
+      }
     } catch (err) {
       showToast('error', err instanceof ApiError ? err.message : '安装失败')
     } finally {
       setInstalling(null)
+      setPct(null)
     }
   }
 
@@ -413,9 +421,18 @@ function CatalogueTab({
                     {installedIds.has(p.id) ? (
                       <InstalledChip />
                     ) : (
-                      <Button type="button" variant="outline" size="sm" className="gap-1.5" disabled={installing === p.id} onClick={() => install(p)}>
-                        {installing === p.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-                        安装
+                      <Button type="button" variant="outline" size="sm" className="min-w-24 gap-1.5" disabled={installing !== null} onClick={() => install(p)}>
+                        {installing === p.id ? (
+                          <>
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            {pct != null ? `${pct}%` : '安装中'}
+                          </>
+                        ) : (
+                          <>
+                            <Download className="h-3.5 w-3.5" />
+                            安装
+                          </>
+                        )}
                       </Button>
                     )}
                   </TableCell>

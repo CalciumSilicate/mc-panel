@@ -1,10 +1,13 @@
 """MCDR 插件管理接口。"""
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from .. import jobs as jobstore
 from ..config import PLUGIN_LIBRARY
 from ..database import get_db
 from ..deps import get_settings_row, require_auth
@@ -135,11 +138,20 @@ async def install_plugin(
 ) -> dict:
     inst = _instance_dir(db, server_id)
     settings = get_settings_row(db)
-    try:
-        return await plugins.install_from_catalogue(
-            inst, body.plugin_id, body.version, settings.python_executable
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=f"安装失败: {exc}")
+    job_id = jobstore.create()
+
+    async def task() -> None:
+        try:
+            result = await plugins.install_from_catalogue(
+                inst,
+                body.plugin_id,
+                body.version,
+                settings.python_executable,
+                progress=lambda d, t: jobstore.update(job_id, d, t),
+            )
+            jobstore.finish(job_id, result["file_name"])
+        except Exception as exc:  # noqa: BLE001
+            jobstore.fail(job_id, str(exc))
+
+    asyncio.create_task(task())
+    return {"job_id": job_id}

@@ -17,6 +17,7 @@ import {
   uploadMod,
   uploadToLibrary,
 } from '@/api/mods'
+import { pollJob } from '@/api/jobs'
 import { listServers } from '@/api/servers'
 import { InlineLoader } from '@/components/PageLoader'
 import { PageShell, PageSurface } from '@/components/layout/PageScaffold'
@@ -352,6 +353,7 @@ function ModrinthTab({
   const [hits, setHits] = useState<ModrinthHit[]>([])
   const [searching, setSearching] = useState(false)
   const [installing, setInstalling] = useState<string | null>(null)
+  const [pct, setPct] = useState<number | null>(null)
 
   const search = async () => {
     setSearching(true)
@@ -366,19 +368,25 @@ function ModrinthTab({
 
   const install = async (hit: ModrinthHit) => {
     setInstalling(hit.project_id)
+    setPct(null)
     try {
       const versions = await modVersions(hit.project_id, filterMc ? mcVersion : undefined, loader)
       if (versions.length === 0) {
         showToast('error', '没有匹配当前版本/加载器的发布')
         return
       }
-      await installMod(serverId, versions[0].id)
-      showToast('success', `已安装 ${versions[0].version_number}`)
-      onInstalled()
+      const { job_id } = await installMod(serverId, versions[0].id)
+      const final = await pollJob(job_id, setPct)
+      if (final.status === 'error') showToast('error', final.message || '安装失败')
+      else {
+        showToast('success', `已安装 ${versions[0].version_number}`)
+        onInstalled()
+      }
     } catch (err) {
       showToast('error', err instanceof ApiError ? err.message : '安装失败')
     } finally {
       setInstalling(null)
+      setPct(null)
     }
   }
 
@@ -437,9 +445,18 @@ function ModrinthTab({
                     {installedIds.has(h.slug.toLowerCase()) ? (
                       <InstalledChip />
                     ) : (
-                      <Button type="button" variant="outline" size="sm" className="gap-1.5" disabled={installing === h.project_id} onClick={() => install(h)}>
-                        {installing === h.project_id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-                        安装最新
+                      <Button type="button" variant="outline" size="sm" className="min-w-28 gap-1.5" disabled={installing !== null} onClick={() => install(h)}>
+                        {installing === h.project_id ? (
+                          <>
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            {pct != null ? `${pct}%` : '安装中'}
+                          </>
+                        ) : (
+                          <>
+                            <Download className="h-3.5 w-3.5" />
+                            安装最新
+                          </>
+                        )}
                       </Button>
                     )}
                   </TableCell>

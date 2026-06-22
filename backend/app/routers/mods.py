@@ -1,10 +1,13 @@
 """模组管理接口(本地 + Modrinth)。"""
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from .. import jobs as jobstore
 from ..config import MOD_LIBRARY
 from ..database import get_db
 from ..deps import require_auth
@@ -151,10 +154,17 @@ async def install_mod(
     db: Session = Depends(get_db),
 ) -> dict:
     server = _get_server(db, server_id)
-    try:
-        name = await mods.install_from_modrinth(mcdr_manager.instance_dir(server), body.version_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=f"安装失败: {exc}")
-    return {"file_name": name}
+    inst = mcdr_manager.instance_dir(server)
+    job_id = jobstore.create()
+
+    async def task() -> None:
+        try:
+            name = await mods.install_from_modrinth(
+                inst, body.version_id, progress=lambda d, t: jobstore.update(job_id, d, t)
+            )
+            jobstore.finish(job_id, name)
+        except Exception as exc:  # noqa: BLE001
+            jobstore.fail(job_id, str(exc))
+
+    asyncio.create_task(task())
+    return {"job_id": job_id}

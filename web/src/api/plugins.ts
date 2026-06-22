@@ -42,10 +42,10 @@ export function deletePlugin(serverId: number, fileName: string) {
 }
 
 export function installPlugin(serverId: number, pluginId: string, version?: string) {
-  return apiRequest<{ file_name: string; requirements_ok: boolean }>(
-    `/plugins/server/${serverId}/install`,
-    { method: 'POST', body: JSON.stringify({ plugin_id: pluginId, version }) },
-  )
+  return apiRequest<{ job_id: string }>(`/plugins/server/${serverId}/install`, {
+    method: 'POST',
+    body: JSON.stringify({ plugin_id: pluginId, version }),
+  })
 }
 
 export function uploadPlugin(serverId: number, file: File) {

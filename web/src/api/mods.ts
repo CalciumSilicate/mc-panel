@@ -72,7 +72,7 @@ export function modVersions(projectId: string, mcVersion?: string, loader?: stri
 }
 
 export function installMod(serverId: number, versionId: string) {
-  return apiRequest<{ file_name: string }>(`/mods/server/${serverId}/install`, {
+  return apiRequest<{ job_id: string }>(`/mods/server/${serverId}/install`, {
     method: 'POST',
     body: JSON.stringify({ version_id: versionId }),
   })

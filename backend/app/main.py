@@ -20,7 +20,7 @@ from .deps import get_settings_row
 from .java import choose_java, detect_installs, get_java_paths
 from .mcdr import manager
 from .models import Server
-from .routers import auth, mods, plugins, servers, settings, system
+from .routers import auth, jobs, mods, plugins, servers, settings, system
 
 # 在模块加载时就建表,确保无论以何种方式启动(uvicorn / TestClient / 直接 import)
 # 数据库都已就绪。
@@ -98,6 +98,7 @@ for r in (
     settings.router,
     plugins.router,
     mods.router,
+    jobs.router,
 ):
     app.include_router(r, prefix="/api")
 

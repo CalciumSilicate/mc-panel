@@ -226,7 +226,12 @@ class PluginManager:
         return releases[0]
 
     async def install_from_catalogue(
-        self, instance_dir: Path, plugin_id: str, version: str | None, python_executable: str
+        self,
+        instance_dir: Path,
+        plugin_id: str,
+        version: str | None,
+        python_executable: str,
+        progress=None,
     ) -> dict:
         data = await self.fetch_catalogue()
         entry = (data.get("plugins") or {}).get(plugin_id)
@@ -250,6 +255,7 @@ class PluginManager:
             algo="sha256",
             hexhash=asset.get("hash_sha256", ""),
             size=asset.get("size", 0) or 0,
+            progress=progress,
         )
 
         # 安装 Python 依赖(best-effort)

@@ -195,7 +195,7 @@ class ModManager:
             for v in versions
         ]
 
-    async def install_from_modrinth(self, instance_dir: Path, version_id: str) -> str:
+    async def install_from_modrinth(self, instance_dir: Path, version_id: str, progress=None) -> str:
         async with net.client(timeout=30) as client:
             resp = await client.get(f"{MODRINTH_API}/version/{version_id}")
             resp.raise_for_status()
@@ -212,7 +212,7 @@ class ModManager:
         mdir.mkdir(parents=True, exist_ok=True)
         dest = mdir / file_name
         await jar_cache.cached_download(
-            url, dest, algo="sha1", hexhash=sha1, size=chosen.get("size", 0) or 0
+            url, dest, algo="sha1", hexhash=sha1, size=chosen.get("size", 0) or 0, progress=progress
         )
         return dest.name
 
