@@ -1,0 +1,66 @@
+import { apiRequest } from '@/api/client'
+
+/**
+ * 服务器实例(MCDR)相关接口。
+ * 网络细节关在这里,页面只调类型化函数(见 README 约定 4)。
+ */
+
+export type ServerStatus =
+  | 'installing'
+  | 'new_setup'
+  | 'running'
+  | 'stopped'
+  | 'error'
+
+export interface ServerSummary {
+  id: number
+  name: string
+  server_type: string
+  mc_version: string
+  min_memory: string
+  max_memory: string
+  port: number
+  created_at: string
+  status: ServerStatus
+}
+
+export interface CreateServerInput {
+  name: string
+  mc_version: string
+  min_memory: string
+  max_memory: string
+  port: number
+}
+
+export function listServers(): Promise<ServerSummary[]> {
+  return apiRequest<ServerSummary[]>('/servers')
+}
+
+export function getVanillaVersions(): Promise<string[]> {
+  return apiRequest<{ versions: string[] }>('/servers/versions').then((r) => r.versions)
+}
+
+export function createServer(input: CreateServerInput): Promise<{ id: number }> {
+  return apiRequest<{ id: number }>('/servers', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+}
+
+export function startServer(id: number): Promise<{ status: ServerStatus }> {
+  return apiRequest<{ status: ServerStatus }>(`/servers/${id}/start`, {
+    method: 'POST',
+    body: '{}',
+  })
+}
+
+export function stopServer(id: number): Promise<{ status: ServerStatus }> {
+  return apiRequest<{ status: ServerStatus }>(`/servers/${id}/stop`, {
+    method: 'POST',
+    body: '{}',
+  })
+}
+
+export function deleteServer(id: number): Promise<{ ok: boolean }> {
+  return apiRequest<{ ok: boolean }>(`/servers/${id}`, { method: 'DELETE' })
+}
