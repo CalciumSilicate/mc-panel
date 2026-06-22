@@ -288,7 +288,11 @@ export default function Dashboard({ onLogout }: DashboardProps) {
             </header>
 
             <main className="p-4 md:p-6">
-              {user.role === 'user' && !user.verified ? <VerifyPanel /> : null}
+              {user.role === 'user' && !user.verified ? (
+                <div className="mx-auto w-full max-w-7xl">
+                  <VerifyPanel />
+                </div>
+              ) : null}
               <ChunkLoadBoundary scopeLabel={currentItem.label}>
                 <Suspense fallback={<PageLoader />}>
                   <AnimatePresence mode="wait">
