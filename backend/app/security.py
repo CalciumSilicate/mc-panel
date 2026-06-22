@@ -20,10 +20,11 @@ def verify_password(password: str, hashed: str) -> bool:
         return False
 
 
-def create_access_token(subject: str, expire_minutes: int) -> str:
+def create_access_token(user_id: int, role: str, expire_minutes: int) -> str:
     now = datetime.now(timezone.utc)
     payload = {
-        "sub": subject,
+        "sub": str(user_id),
+        "role": role,
         "iat": now,
         "exp": now + timedelta(minutes=expire_minutes),
     }

@@ -16,10 +16,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..database import SessionLocal, get_db
-from ..deps import get_settings_row, require_auth
+from ..deps import ROLE_ORDER, get_settings_row, require_admin, require_auth
 from ..java import choose_java, detect_installs, get_java_paths, required_java_major
 from ..mcdr import manager
-from ..models import Server
+from ..models import Server, User
 from ..security import decode_token
 from ..schemas import (
     CreateServerResponse,
@@ -74,7 +74,7 @@ def list_servers(
 
 @router.get("/versions", response_model=VersionList)
 async def get_versions(
-    refresh: bool = Query(default=False), _: str = Depends(require_auth)
+    refresh: bool = Query(default=False), _: str = Depends(require_admin)
 ) -> VersionList:
     try:
         return VersionList(versions=await list_release_versions(force=refresh))
@@ -85,7 +85,7 @@ async def get_versions(
 @router.get("/java-info", response_model=JavaInfo)
 def java_info(
     mc_version: str = Query(...),
-    _: str = Depends(require_auth),
+    _: str = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> JavaInfo:
     """某 MC 版本的 Java 需求与当前是否可满足(供新建对话框提示)。"""
@@ -146,7 +146,7 @@ def _launch_install(server_id: int, coro) -> None:
 @router.post("", response_model=CreateServerResponse)
 async def create_server(
     payload: ServerCreate,
-    _: str = Depends(require_auth),
+    _: str = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> CreateServerResponse:
     if db.scalar(select(Server).where(Server.name == payload.name)):
@@ -185,7 +185,7 @@ def _get_server_or_404(db: Session, server_id: int) -> Server:
 async def update_server(
     server_id: int,
     payload: ServerUpdate,
-    _: str = Depends(require_auth),
+    _: str = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> ServerSummary:
     server = _get_server_or_404(db, server_id)
@@ -241,7 +241,7 @@ async def update_server(
 
 @router.get("/{server_id}/properties", response_model=PropertiesResponse)
 def get_properties(
-    server_id: int, _: str = Depends(require_auth), db: Session = Depends(get_db)
+    server_id: int, _: str = Depends(require_admin), db: Session = Depends(get_db)
 ) -> PropertiesResponse:
     server = _get_server_or_404(db, server_id)
     current = manager.read_properties(server)
@@ -252,7 +252,7 @@ def get_properties(
 def update_properties(
     server_id: int,
     payload: PropertiesUpdate,
-    _: str = Depends(require_auth),
+    _: str = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> PropertiesResponse:
     server = _get_server_or_404(db, server_id)
@@ -268,7 +268,7 @@ def update_properties(
 @router.post("/{server_id}/reinstall")
 async def reinstall_server(
     server_id: int,
-    _: str = Depends(require_auth),
+    _: str = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> dict:
     """重新下载服务端核心(用于安装失败/中断后的重试)。"""
@@ -282,7 +282,7 @@ async def reinstall_server(
 @router.post("/{server_id}/cancel-install")
 async def cancel_install(
     server_id: int,
-    _: str = Depends(require_auth),
+    _: str = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> dict:
     """中止进行中的安装/下载。"""
@@ -324,7 +324,7 @@ async def stop_server(
 
 @router.delete("/{server_id}")
 async def delete_server(
-    server_id: int, _: str = Depends(require_auth), db: Session = Depends(get_db)
+    server_id: int, _: str = Depends(require_admin), db: Session = Depends(get_db)
 ) -> dict:
     server = _get_server_or_404(db, server_id)
     await manager.delete_instance(server)
@@ -340,15 +340,24 @@ async def console_ws(websocket: WebSocket, server_id: int, token: str = Query(de
 
     浏览器 WebSocket 无法自定义请求头,故 token 经 query 参数传入。
     """
-    if not decode_token(token):
+    payload = decode_token(token)
+    if not payload:
         await websocket.close(code=4401)
         return
 
     db = SessionLocal()
     try:
+        try:
+            user = db.get(User, int(payload.get("sub") or 0))
+        except (TypeError, ValueError):
+            user = None
         server = db.get(Server, server_id)
     finally:
         db.close()
+    # 控制台需 helper 及以上
+    if user is None or ROLE_ORDER.get(user.role, 0) < ROLE_ORDER["helper"]:
+        await websocket.close(code=4403)
+        return
     if server is None:
         await websocket.close(code=4404)
         return

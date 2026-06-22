@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from .. import jobs as jobstore
 from ..config import PLUGIN_LIBRARY
 from ..database import get_db
-from ..deps import get_settings_row, require_auth
+from ..deps import get_settings_row, require_helper
 from ..mcdr import manager as mcdr_manager
 from ..models import Server
 from ..plugin_manager import manager as plugins
@@ -37,7 +37,7 @@ class InstallPluginBody(BaseModel):
 
 @router.get("/catalogue")
 async def get_catalogue(
-    refresh: bool = Query(default=False), _: str = Depends(require_auth)
+    refresh: bool = Query(default=False), _: str = Depends(require_helper)
 ) -> list[dict]:
     try:
         return await plugins.list_catalogue(force=refresh)
@@ -47,7 +47,7 @@ async def get_catalogue(
 
 @router.get("/server/{server_id}")
 def list_installed(
-    server_id: int, _: str = Depends(require_auth), db: Session = Depends(get_db)
+    server_id: int, _: str = Depends(require_helper), db: Session = Depends(get_db)
 ) -> list[dict]:
     return plugins.list_plugins(_instance_dir(db, server_id))
 
@@ -57,7 +57,7 @@ def switch_plugin(
     server_id: int,
     file_name: str,
     enable: bool = Query(...),
-    _: str = Depends(require_auth),
+    _: str = Depends(require_helper),
     db: Session = Depends(get_db),
 ) -> dict:
     inst = _instance_dir(db, server_id)
@@ -70,7 +70,7 @@ def switch_plugin(
 
 @router.delete("/server/{server_id}/{file_name}")
 def delete_plugin(
-    server_id: int, file_name: str, _: str = Depends(require_auth), db: Session = Depends(get_db)
+    server_id: int, file_name: str, _: str = Depends(require_helper), db: Session = Depends(get_db)
 ) -> dict:
     plugins.delete_plugin(_instance_dir(db, server_id), file_name)
     return {"ok": True}
@@ -80,7 +80,7 @@ def delete_plugin(
 async def upload_plugin(
     server_id: int,
     file: UploadFile = File(...),
-    _: str = Depends(require_auth),
+    _: str = Depends(require_helper),
     db: Session = Depends(get_db),
 ) -> dict:
     inst = _instance_dir(db, server_id)
@@ -93,13 +93,13 @@ async def upload_plugin(
 
 
 @router.get("/library")
-def list_library(_: str = Depends(require_auth)) -> list[dict]:
+def list_library(_: str = Depends(require_helper)) -> list[dict]:
     return plugins.scan_dir(PLUGIN_LIBRARY)
 
 
 @router.post("/library/upload")
 async def upload_library(
-    file: UploadFile = File(...), _: str = Depends(require_auth)
+    file: UploadFile = File(...), _: str = Depends(require_helper)
 ) -> dict:
     content = await file.read()
     try:
@@ -110,7 +110,7 @@ async def upload_library(
 
 
 @router.delete("/library/{file_name}")
-def delete_library(file_name: str, _: str = Depends(require_auth)) -> dict:
+def delete_library(file_name: str, _: str = Depends(require_helper)) -> dict:
     plugins.delete_file(PLUGIN_LIBRARY, file_name)
     return {"ok": True}
 
@@ -119,7 +119,7 @@ def delete_library(file_name: str, _: str = Depends(require_auth)) -> dict:
 def install_from_library(
     server_id: int,
     body: InstallFromLibraryBody,
-    _: str = Depends(require_auth),
+    _: str = Depends(require_helper),
     db: Session = Depends(get_db),
 ) -> dict:
     inst = _instance_dir(db, server_id)
@@ -138,7 +138,7 @@ def _strip_disabled(n: str) -> str:
 async def replace_library(
     file_name: str,
     file: UploadFile = File(...),
-    _: str = Depends(require_auth),
+    _: str = Depends(require_helper),
     db: Session = Depends(get_db),
 ) -> dict:
     """用上传的新文件替换库中该插件,并替换所有已安装它的服务器里的版本。"""
@@ -171,7 +171,7 @@ async def replace_library(
 async def install_plugin(
     server_id: int,
     body: InstallPluginBody,
-    _: str = Depends(require_auth),
+    _: str = Depends(require_helper),
     db: Session = Depends(get_db),
 ) -> dict:
     inst = _instance_dir(db, server_id)

@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from .. import jobs as jobstore
 from ..config import MOD_LIBRARY
 from ..database import get_db
-from ..deps import require_auth
+from ..deps import require_helper
 from ..mcdr import manager as mcdr_manager
 from ..mod_manager import manager as mods
 from ..models import Server
@@ -36,7 +36,7 @@ class InstallModBody(BaseModel):
 
 @router.get("/server/{server_id}")
 def list_installed(
-    server_id: int, _: str = Depends(require_auth), db: Session = Depends(get_db)
+    server_id: int, _: str = Depends(require_helper), db: Session = Depends(get_db)
 ) -> list[dict]:
     server = _get_server(db, server_id)
     return mods.list_mods(mcdr_manager.instance_dir(server))
@@ -47,7 +47,7 @@ def switch_mod(
     server_id: int,
     file_name: str,
     enable: bool = Query(...),
-    _: str = Depends(require_auth),
+    _: str = Depends(require_helper),
     db: Session = Depends(get_db),
 ) -> dict:
     server = _get_server(db, server_id)
@@ -60,7 +60,7 @@ def switch_mod(
 
 @router.delete("/server/{server_id}/{file_name}")
 def delete_mod(
-    server_id: int, file_name: str, _: str = Depends(require_auth), db: Session = Depends(get_db)
+    server_id: int, file_name: str, _: str = Depends(require_helper), db: Session = Depends(get_db)
 ) -> dict:
     server = _get_server(db, server_id)
     mods.delete_mod(mcdr_manager.instance_dir(server), file_name)
@@ -71,7 +71,7 @@ def delete_mod(
 async def upload_mod(
     server_id: int,
     file: UploadFile = File(...),
-    _: str = Depends(require_auth),
+    _: str = Depends(require_helper),
     db: Session = Depends(get_db),
 ) -> dict:
     server = _get_server(db, server_id)
@@ -84,12 +84,12 @@ async def upload_mod(
 
 
 @router.get("/library")
-def list_library(_: str = Depends(require_auth)) -> list[dict]:
+def list_library(_: str = Depends(require_helper)) -> list[dict]:
     return mods.scan_dir(MOD_LIBRARY)
 
 
 @router.post("/library/upload")
-async def upload_library(file: UploadFile = File(...), _: str = Depends(require_auth)) -> dict:
+async def upload_library(file: UploadFile = File(...), _: str = Depends(require_helper)) -> dict:
     content = await file.read()
     try:
         name = mods.save_file(MOD_LIBRARY, file.filename or "mod.jar", content)
@@ -99,7 +99,7 @@ async def upload_library(file: UploadFile = File(...), _: str = Depends(require_
 
 
 @router.delete("/library/{file_name}")
-def delete_library(file_name: str, _: str = Depends(require_auth)) -> dict:
+def delete_library(file_name: str, _: str = Depends(require_helper)) -> dict:
     mods.delete_file(MOD_LIBRARY, file_name)
     return {"ok": True}
 
@@ -108,7 +108,7 @@ def delete_library(file_name: str, _: str = Depends(require_auth)) -> dict:
 def install_from_library(
     server_id: int,
     body: InstallFromLibraryBody,
-    _: str = Depends(require_auth),
+    _: str = Depends(require_helper),
     db: Session = Depends(get_db),
 ) -> dict:
     server = _get_server(db, server_id)
@@ -127,7 +127,7 @@ def _strip_disabled(n: str) -> str:
 async def replace_library(
     file_name: str,
     file: UploadFile = File(...),
-    _: str = Depends(require_auth),
+    _: str = Depends(require_helper),
     db: Session = Depends(get_db),
 ) -> dict:
     """用上传的新文件替换库中该模组,并替换所有已安装它的服务器里的版本。"""
@@ -163,7 +163,7 @@ async def search_mods(
     loader: str | None = Query(default=None),
     limit: int = Query(default=20),
     offset: int = Query(default=0),
-    _: str = Depends(require_auth),
+    _: str = Depends(require_helper),
 ) -> list[dict]:
     try:
         return await mods.search_modrinth(q, mc_version, loader, limit, offset)
@@ -176,7 +176,7 @@ async def mod_versions(
     project_id: str = Query(...),
     mc_version: str | None = Query(default=None),
     loader: str | None = Query(default=None),
-    _: str = Depends(require_auth),
+    _: str = Depends(require_helper),
 ) -> list[dict]:
     try:
         return await mods.list_versions(project_id, mc_version, loader)
@@ -188,7 +188,7 @@ async def mod_versions(
 async def install_mod(
     server_id: int,
     body: InstallModBody,
-    _: str = Depends(require_auth),
+    _: str = Depends(require_helper),
     db: Session = Depends(get_db),
 ) -> dict:
     server = _get_server(db, server_id)

@@ -45,6 +45,10 @@ _COLUMN_MIGRATIONS = {
     },
     "system_settings": {
         "download_proxy": "VARCHAR(255) DEFAULT ''",
+        "allow_register": "BOOLEAN DEFAULT 0",
+    },
+    "archives": {
+        "owner_user_id": "INTEGER",
     },
 }
 

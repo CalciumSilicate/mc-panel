@@ -7,16 +7,48 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 # ---------- 鉴权 ----------
-class LoginRequest(BaseModel):
-    password: str
+class Credentials(BaseModel):
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1)
 
 
 class TokenResponse(BaseModel):
     token: str
 
 
+class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    username: str
+    role: str
+    created_at: datetime
+
+
 class AuthStatusResponse(BaseModel):
     authenticated: bool
+    user: UserOut | None = None
+
+
+class BootstrapInfo(BaseModel):
+    needs_setup: bool
+    allow_register: bool
+
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str = Field(min_length=1)
+
+
+class UserCreate(BaseModel):
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1)
+    role: str = "user"
+
+
+class UserUpdate(BaseModel):
+    role: str | None = None
+    new_password: str | None = Field(default=None, min_length=1)
 
 
 # ---------- 服务器 ----------
@@ -132,6 +164,7 @@ class SettingsResponse(BaseModel):
     default_max_memory: str
     token_expire_minutes: int
     download_proxy: str = ""
+    allow_register: bool = False
     # Java 安装池(带探测到的大版本)
     java_installs: list[JavaInstall] = []
 
@@ -143,7 +176,6 @@ class SettingsUpdate(BaseModel):
     default_max_memory: str | None = None
     token_expire_minutes: int | None = Field(default=None, ge=5)
     download_proxy: str | None = None
+    allow_register: bool | None = None
     # Java 安装池路径列表(整体替换);为 None 时不改动
     java_paths: list[str] | None = None
-    # 仅在需要修改时传入
-    new_password: str | None = Field(default=None, min_length=1)

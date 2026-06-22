@@ -1,14 +1,13 @@
-"""系统设置:MCDR 运行参数 + Java 安装池 + 修改管理员密码。"""
+"""系统设置:MCDR 运行参数 + Java 安装池 + 下载代理 + 注册开关(admin+)。"""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..deps import get_settings_row, require_auth
+from ..deps import get_settings_row, require_admin
 from ..java import detect_installs, get_java_paths, set_java_paths
 from ..schemas import JavaInstall, SettingsResponse, SettingsUpdate
-from ..security import hash_password
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -22,21 +21,20 @@ def _to_response(row) -> SettingsResponse:
         default_max_memory=row.default_max_memory,
         token_expire_minutes=row.token_expire_minutes,
         download_proxy=row.download_proxy,
+        allow_register=row.allow_register,
         java_installs=installs,
     )
 
 
 @router.get("", response_model=SettingsResponse)
-def get_settings(
-    _: str = Depends(require_auth), db: Session = Depends(get_db)
-) -> SettingsResponse:
+def get_settings(_: object = Depends(require_admin), db: Session = Depends(get_db)) -> SettingsResponse:
     return _to_response(get_settings_row(db))
 
 
 @router.patch("", response_model=SettingsResponse)
 def update_settings(
     payload: SettingsUpdate,
-    _: str = Depends(require_auth),
+    _: object = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> SettingsResponse:
     row = get_settings_row(db)
@@ -52,10 +50,10 @@ def update_settings(
         row.token_expire_minutes = payload.token_expire_minutes
     if payload.download_proxy is not None:
         row.download_proxy = payload.download_proxy.strip()
+    if payload.allow_register is not None:
+        row.allow_register = payload.allow_register
     if payload.java_paths is not None:
         set_java_paths(row, payload.java_paths)
-    if payload.new_password:
-        row.admin_password_hash = hash_password(payload.new_password)
     db.commit()
     db.refresh(row)
     return _to_response(row)

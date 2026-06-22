@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from .. import archive_manager as am
 from .. import superflat
 from ..database import get_db
-from ..deps import require_auth
+from ..deps import require_helper
 from ..mcdr import manager as mcdr_manager
 from ..models import Server
 
@@ -33,7 +33,7 @@ class SuperflatApply(BaseModel):
 
 @router.post("/superflat/apply")
 def superflat_apply(
-    body: SuperflatApply, _: str = Depends(require_auth), db: Session = Depends(get_db)
+    body: SuperflatApply, _: str = Depends(require_helper), db: Session = Depends(get_db)
 ) -> dict:
     server = db.get(Server, body.server_id)
     if server is None:

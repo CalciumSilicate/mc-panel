@@ -13,9 +13,9 @@ from .. import archive_manager as am
 from .. import jobs as jobstore
 from .. import superflat
 from ..database import SessionLocal, get_db
-from ..deps import require_auth
+from ..deps import require_auth, require_helper, role_at_least
 from ..mcdr import manager as mcdr_manager
-from ..models import Archive, Server
+from ..models import Archive, Server, User
 from ..schemas import ArchiveOut
 
 router = APIRouter(prefix="/archives", tags=["archives"])
@@ -40,12 +40,18 @@ def _get_archive(db: Session, archive_id: int) -> Archive:
     return arc
 
 
+def _ensure_own_or_helper(user: User, arc: Archive) -> None:
+    """user 角色只能操作自己上传的存档;helper 及以上不限。"""
+    if not role_at_least(user, "helper") and arc.owner_user_id != user.id:
+        raise HTTPException(status_code=403, detail="只能操作自己上传的存档")
+
+
 @router.get("", response_model=list[ArchiveOut])
 def list_archives(_: str = Depends(require_auth), db: Session = Depends(get_db)) -> list[Archive]:
     return list(db.scalars(select(Archive).order_by(Archive.id.desc())).all())
 
 
-async def _do_create(server_id: int, filename: str, job_id: str) -> None:
+async def _do_create(server_id: int, filename: str, job_id: str, owner_user_id: int) -> None:
     db = SessionLocal()
     try:
         server = db.get(Server, server_id)
@@ -72,6 +78,7 @@ async def _do_create(server_id: int, filename: str, job_id: str) -> None:
             source="server",
             source_server_id=server_id,
             mc_version=mc_version or server.mc_version,
+            owner_user_id=owner_user_id,
         ))
         db.commit()
         jobstore.finish(job_id, filename)
@@ -81,13 +88,13 @@ async def _do_create(server_id: int, filename: str, job_id: str) -> None:
 
 @router.post("/from-server/{server_id}")
 async def create_from_server(
-    server_id: int, _: str = Depends(require_auth), db: Session = Depends(get_db)
+    server_id: int, user: User = Depends(require_helper), db: Session = Depends(get_db)
 ) -> dict:
     server = _get_server(db, server_id)
     if mcdr_manager.get_status(server) in ("running", "installing"):
         raise HTTPException(status_code=400, detail="请先停止实例再创建存档")
     job_id = jobstore.create()
-    asyncio.create_task(_do_create(server_id, am.new_archive_filename(), job_id))
+    asyncio.create_task(_do_create(server_id, am.new_archive_filename(), job_id, user.id))
     return {"job_id": job_id}
 
 
@@ -95,7 +102,7 @@ async def create_from_server(
 async def upload_archive(
     file: UploadFile = File(...),
     mc_version: str = Form(default=""),
-    _: str = Depends(require_auth),
+    user: User = Depends(require_auth),
     db: Session = Depends(get_db),
 ) -> Archive:
     name = file.filename or "archive.zip"
@@ -112,6 +119,7 @@ async def upload_archive(
     rec = Archive(
         name=name[:-4], filename=filename, size=len(content),
         source="uploaded", mc_version=detected or mc_version.strip(),
+        owner_user_id=user.id,
     )
     db.add(rec)
     db.commit()
@@ -123,10 +131,11 @@ async def upload_archive(
 def update_archive(
     archive_id: int,
     body: ArchiveUpdate,
-    _: str = Depends(require_auth),
+    user: User = Depends(require_auth),
     db: Session = Depends(get_db),
 ) -> Archive:
     arc = _get_archive(db, archive_id)
+    _ensure_own_or_helper(user, arc)
     if body.name is not None and body.name.strip():
         arc.name = body.name.strip()
     if body.mc_version is not None:
@@ -138,9 +147,10 @@ def update_archive(
 
 @router.get("/{archive_id}/download")
 def download_archive(
-    archive_id: int, _: str = Depends(require_auth), db: Session = Depends(get_db)
+    archive_id: int, user: User = Depends(require_auth), db: Session = Depends(get_db)
 ) -> FileResponse:
     arc = _get_archive(db, archive_id)
+    _ensure_own_or_helper(user, arc)
     path = am.archive_path(arc.filename)
     if not path.exists():
         raise HTTPException(status_code=404, detail="存档文件丢失")
@@ -149,9 +159,10 @@ def download_archive(
 
 @router.delete("/{archive_id}")
 def delete_archive(
-    archive_id: int, _: str = Depends(require_auth), db: Session = Depends(get_db)
+    archive_id: int, user: User = Depends(require_auth), db: Session = Depends(get_db)
 ) -> dict:
     arc = _get_archive(db, archive_id)
+    _ensure_own_or_helper(user, arc)
     am.archive_path(arc.filename).unlink(missing_ok=True)
     db.delete(arc)
     db.commit()

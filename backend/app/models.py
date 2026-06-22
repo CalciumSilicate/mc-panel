@@ -16,6 +16,18 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class User(Base):
+    """面板用户。角色:owner(唯一)> admin > helper > user。"""
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    username: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[str] = mapped_column(String(16), default="user")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
 class Server(Base):
     """一个被本面板管理的 MCDR 实例(对应 SERVERS_ROOT 下的一个目录)。"""
 
@@ -51,6 +63,8 @@ class Archive(Base):
     source: Mapped[str] = mapped_column(String(16), default="server")  # server / uploaded
     source_server_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     mc_version: Mapped[str] = mapped_column(String(64), default="")
+    # 上传/创建者用户 id;user 角色只能管理自己的存档
+    owner_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
@@ -68,4 +82,6 @@ class SystemSettings(Base):
     token_expire_minutes: Mapped[int] = mapped_column(Integer, default=60 * 24 * 7)
     # 出站下载代理(http/https 共用),空 = 直连
     download_proxy: Mapped[str] = mapped_column(String(255), default="")
+    # 是否允许自助注册(默认关闭)
+    allow_register: Mapped[bool] = mapped_column(default=False)
     extra: Mapped[str] = mapped_column(Text, default="{}")
