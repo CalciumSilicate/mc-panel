@@ -10,8 +10,8 @@
     --card-foreground: 270 25% 9%;
     --popover: 0 0% 100%;
     --popover-foreground: 270 25% 9%;
-    --primary: 270 84% 70%;
-    --primary-foreground: 270 60% 98%;
+    --primary: 268 78% 78%;
+    --primary-foreground: 270 45% 22%;
     --secondary: 270 60% 97%;
     --secondary-foreground: 270 25% 16%;
     --muted: 270 50% 97%;
@@ -22,15 +22,15 @@
     --destructive-foreground: 270 60% 98%;
     --border: 270 32% 91%;
     --input: 270 32% 91%;
-    --ring: 270 84% 70%;
-    --chart-1: 270 84% 70%;
+    --ring: 268 78% 78%;
+    --chart-1: 268 78% 78%;
     --chart-2: 166 35% 39%;
     --chart-3: 296 28% 34%;
     --chart-4: 43 74% 66%;
     --chart-5: 27 87% 67%;
     --radius: 0.625rem;
     --sidebar-bg: 270 44% 98%;
-    --sidebar-active: 270 84% 70%;
+    --sidebar-active: 268 78% 78%;
     --font-ui-cjk: "Noto Sans SC UI Subset";
   }
   .dark {
@@ -40,7 +40,7 @@
     --card-foreground: 270 30% 97%;
     --popover: 270 16% 12%;
     --popover-foreground: 270 30% 97%;
-    --primary: 270 80% 78%;
+    --primary: 268 76% 83%;
     --primary-foreground: 270 40% 13%;
     --secondary: 270 16% 16%;
     --secondary-foreground: 270 30% 97%;
@@ -52,14 +52,14 @@
     --destructive-foreground: 270 60% 98%;
     --border: 270 14% 22%;
     --input: 270 14% 20%;
-    --ring: 270 80% 78%;
-    --chart-1: 270 80% 78%;
+    --ring: 268 76% 83%;
+    --chart-1: 268 76% 83%;
     --chart-2: 166 46% 58%;
     --chart-3: 296 43% 70%;
     --chart-4: 41 100% 66%;
     --chart-5: 334 86% 69%;
     --sidebar-bg: 270 18% 10%;
-    --sidebar-active: 270 80% 78%;
+    --sidebar-active: 268 76% 83%;
   }
 }
 
