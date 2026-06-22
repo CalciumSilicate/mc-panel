@@ -291,6 +291,20 @@ function CreateServerDialog({
     }
   }, [open, version])
 
+  const refreshVersions = async () => {
+    setVersionsLoading(true)
+    try {
+      const list = await getVanillaVersions(true)
+      setVersions(list)
+      setVersion((current) => current || list[0] || '')
+      showToast('success', '版本列表已刷新')
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : '刷新失败')
+    } finally {
+      setVersionsLoading(false)
+    }
+  }
+
   const submit = async () => {
     if (!name.trim() || !version) {
       showToast('error', '请填写名称并选择版本')
@@ -330,18 +344,31 @@ function CreateServerDialog({
           </div>
           <div className="space-y-2">
             <Label htmlFor="srv-version">Minecraft 版本</Label>
-            <Select value={version} onValueChange={setVersion} disabled={versionsLoading}>
-              <SelectTrigger id="srv-version">
-                <SelectValue placeholder={versionsLoading ? '加载中…' : '选择版本'} />
-              </SelectTrigger>
-              <SelectContent className="max-h-72">
-                {versions.map((v) => (
-                  <SelectItem key={v} value={v}>
-                    {v}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="flex items-center gap-2">
+              <Select value={version} onValueChange={setVersion} disabled={versionsLoading}>
+                <SelectTrigger id="srv-version" className="flex-1">
+                  <SelectValue placeholder={versionsLoading ? '加载中…' : '选择版本'} />
+                </SelectTrigger>
+                <SelectContent className="max-h-72">
+                  {versions.map((v) => (
+                    <SelectItem key={v} value={v}>
+                      {v}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="shrink-0"
+                disabled={versionsLoading}
+                title="刷新版本列表"
+                onClick={refreshVersions}
+              >
+                <RefreshCw className={cn('h-4 w-4', versionsLoading && 'animate-spin')} />
+              </Button>
+            </div>
             {javaInfo ? (
               <p className={cn('text-xs', javaInfo.satisfied ? 'text-muted-foreground' : 'text-destructive')}>
                 {javaInfo.required_major
@@ -442,6 +469,18 @@ function EditServerDialog({
     }
   }, [open, version])
 
+  const refreshVersions = async () => {
+    setVersionsLoading(true)
+    try {
+      setVersions(await getVanillaVersions(true))
+      showToast('success', '版本列表已刷新')
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : '刷新失败')
+    } finally {
+      setVersionsLoading(false)
+    }
+  }
+
   const submit = async () => {
     if (!server) return
     if (!name.trim()) {
@@ -481,21 +520,34 @@ function EditServerDialog({
           </div>
           <div className="space-y-2">
             <Label htmlFor="edit-version">Minecraft 版本</Label>
-            <Select value={version} onValueChange={setVersion} disabled={versionsLoading || running}>
-              <SelectTrigger id="edit-version">
-                <SelectValue placeholder={versionsLoading ? '加载中…' : '选择版本'} />
-              </SelectTrigger>
-              <SelectContent className="max-h-72">
-                {version && !versions.includes(version) ? (
-                  <SelectItem value={version}>{version}(当前)</SelectItem>
-                ) : null}
-                {versions.map((v) => (
-                  <SelectItem key={v} value={v}>
-                    {v}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="flex items-center gap-2">
+              <Select value={version} onValueChange={setVersion} disabled={versionsLoading || running}>
+                <SelectTrigger id="edit-version" className="flex-1">
+                  <SelectValue placeholder={versionsLoading ? '加载中…' : '选择版本'} />
+                </SelectTrigger>
+                <SelectContent className="max-h-72">
+                  {version && !versions.includes(version) ? (
+                    <SelectItem value={version}>{version}(当前)</SelectItem>
+                  ) : null}
+                  {versions.map((v) => (
+                    <SelectItem key={v} value={v}>
+                      {v}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="shrink-0"
+                disabled={versionsLoading}
+                title="刷新版本列表"
+                onClick={refreshVersions}
+              >
+                <RefreshCw className={cn('h-4 w-4', versionsLoading && 'animate-spin')} />
+              </Button>
+            </div>
             {running ? (
               <p className="text-xs text-muted-foreground">运行中不可更换版本,请先停止。</p>
             ) : javaInfo ? (

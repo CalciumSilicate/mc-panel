@@ -50,9 +50,11 @@ def list_servers(
 
 
 @router.get("/versions", response_model=VersionList)
-async def get_versions(_: str = Depends(require_auth)) -> VersionList:
+async def get_versions(
+    refresh: bool = Query(default=False), _: str = Depends(require_auth)
+) -> VersionList:
     try:
-        return VersionList(versions=await list_release_versions())
+        return VersionList(versions=await list_release_versions(force=refresh))
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"获取版本列表失败: {exc}")
 

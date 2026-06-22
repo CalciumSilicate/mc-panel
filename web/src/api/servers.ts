@@ -36,8 +36,9 @@ export function listServers(): Promise<ServerSummary[]> {
   return apiRequest<ServerSummary[]>('/servers')
 }
 
-export function getVanillaVersions(): Promise<string[]> {
-  return apiRequest<{ versions: string[] }>('/servers/versions').then((r) => r.versions)
+export function getVanillaVersions(force = false): Promise<string[]> {
+  const query = force ? '?refresh=true' : ''
+  return apiRequest<{ versions: string[] }>(`/servers/versions${query}`).then((r) => r.versions)
 }
 
 export interface JavaInfo {

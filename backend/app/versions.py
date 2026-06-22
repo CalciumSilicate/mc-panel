@@ -1,21 +1,37 @@
 """Mojang 版本清单:列出可用的正式版,以及解析服务端 jar 下载地址。"""
 from __future__ import annotations
 
+import time
+
 import httpx
 
 VERSION_MANIFEST_URL = (
     "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
 )
 
+# 正式版列表的内存 TTL 缓存(进程级,所有客户端共享)。
+VERSIONS_CACHE_TTL = 1800  # 30 分钟
+_versions_cache: dict = {"data": None, "ts": 0.0}
 
-async def list_release_versions(limit: int = 60) -> list[str]:
-    """返回最近的若干正式版(release)版本号,新到旧。"""
-    async with httpx.AsyncClient(timeout=20) as client:
-        resp = await client.get(VERSION_MANIFEST_URL)
-        resp.raise_for_status()
-        data = resp.json()
-    releases = [v["id"] for v in data.get("versions", []) if v.get("type") == "release"]
-    return releases[:limit]
+
+async def list_release_versions(limit: int = 60, force: bool = False) -> list[str]:
+    """返回最近的若干正式版(release)版本号,新到旧。
+
+    结果带 TTL 缓存;force=True 时无视缓存强制刷新并更新缓存。
+    """
+    now = time.time()
+    cache = _versions_cache
+    fresh = cache["data"] is not None and now - cache["ts"] < VERSIONS_CACHE_TTL
+    if force or not fresh:
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.get(VERSION_MANIFEST_URL)
+            resp.raise_for_status()
+            data = resp.json()
+        cache["data"] = [
+            v["id"] for v in data.get("versions", []) if v.get("type") == "release"
+        ]
+        cache["ts"] = now
+    return cache["data"][:limit]
 
 
 async def get_server_jar_url(mc_version: str) -> str:
