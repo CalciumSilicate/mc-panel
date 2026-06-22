@@ -34,8 +34,12 @@ async def list_release_versions(limit: int = 60, force: bool = False) -> list[st
     return cache["data"][:limit]
 
 
-async def get_server_jar_url(mc_version: str) -> str:
-    """解析指定版本的官方服务端 jar 下载地址。"""
+async def get_server_download(mc_version: str) -> dict:
+    """解析指定版本官方服务端 jar 的下载信息:{url, sha1, size}。
+
+    先拉版本清单找到该版本,再拉其 meta(version detail),其中 downloads.server
+    带有 url / sha1 / size。size 用于进度总量,sha1 用于本地缓存命中。
+    """
     async with httpx.AsyncClient(timeout=20) as client:
         resp = await client.get(VERSION_MANIFEST_URL)
         resp.raise_for_status()
@@ -55,7 +59,11 @@ async def get_server_jar_url(mc_version: str) -> str:
     server = detail.get("downloads", {}).get("server")
     if not server or "url" not in server:
         raise ValueError(f"版本 {mc_version} 没有提供官方服务端 jar")
-    return server["url"]
+    return {
+        "url": server["url"],
+        "sha1": server.get("sha1", ""),
+        "size": int(server.get("size", 0) or 0),
+    }
 
 
 async def download_file(url: str, dest, *, chunk_size: int = 1 << 16, progress=None) -> None:

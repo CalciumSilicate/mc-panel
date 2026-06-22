@@ -29,7 +29,6 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Progress } from '@/components/ui/progress'
 import { ServerConsoleDialog } from '@/components/ServerConsoleDialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -143,22 +142,11 @@ export default function Servers() {
                         </TableCell>
                         <TableCell className="font-mono text-muted-foreground">{server.port}</TableCell>
                         <TableCell>
-                          {installing ? (
-                            <div className="flex w-28 flex-col gap-1">
-                              <Badge variant="outline" className={cn('w-fit gap-1 text-[11px]', meta.tone)}>
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                                {meta.label}
-                                {server.install ? ` ${server.install.percent}%` : ''}
-                              </Badge>
-                              {server.install && server.install.total > 0 ? (
-                                <Progress value={server.install.percent} className="h-1" />
-                              ) : null}
-                            </div>
-                          ) : (
-                            <Badge variant="outline" className={cn('gap-1 text-[11px]', meta.tone)}>
-                              {meta.label}
-                            </Badge>
-                          )}
+                          <Badge variant="outline" className={cn('gap-1 text-[11px]', meta.tone)}>
+                            {installing ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                            {meta.label}
+                            {installing && server.install ? ` ${server.install.percent}%` : ''}
+                          </Badge>
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center justify-end gap-1.5">

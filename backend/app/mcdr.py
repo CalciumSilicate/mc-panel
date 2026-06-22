@@ -12,14 +12,16 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import shutil
 from collections import deque
 from pathlib import Path
 
 import yaml
 
+from . import jar_cache
 from .config import SERVERS_ROOT
 from .models import Server
-from .versions import download_file, get_server_jar_url
+from .versions import download_file, get_server_download
 
 # 状态常量
 STATUS_INSTALLING = "installing"
@@ -167,6 +169,29 @@ class MCDRManager:
         self._install_progress.pop(server.id, None)
         self._install_tasks.pop(server.id, None)
 
+    async def _fetch_jar(self, server: Server, dest: Path) -> None:
+        """获取服务端 jar:命中本地缓存则复用,否则下载、校验 sha1 并入缓存。
+        进度总量用 meta 的 size。"""
+        info = await get_server_download(server.mc_version)
+        sha1 = info.get("sha1", "")
+        size = info.get("size", 0) or 0
+        self._install_progress[server.id] = (0, size)
+
+        cached = jar_cache.lookup(sha1)
+        if cached is not None and (size == 0 or cached.stat().st_size == size):
+            shutil.copyfile(cached, dest)
+            self._install_progress[server.id] = (size, size)
+            return
+
+        await download_file(
+            info["url"],
+            dest,
+            progress=lambda d, t: self._install_progress.__setitem__(server.id, (d, size or t)),
+        )
+        if sha1 and jar_cache.compute_sha1(dest) != sha1:
+            raise RuntimeError("下载校验失败:sha1 不匹配")
+        jar_cache.store(sha1, dest, server.mc_version, size or dest.stat().st_size)
+
     # ---------- 创建 ----------
     async def create_instance(self, server: Server, java_command: str) -> None:
         """生成实例目录并下载服务端 jar。耗时较长,应在后台任务中调用。"""
@@ -197,12 +222,7 @@ class MCDRManager:
                 _server_properties_text(server.port), encoding="utf-8"
             )
 
-            jar_url = await get_server_jar_url(server.mc_version)
-            await download_file(
-                jar_url,
-                server_dir / "server.jar",
-                progress=lambda d, t: self._install_progress.__setitem__(server.id, (d, t)),
-            )
+            await self._fetch_jar(server, server_dir / "server.jar")
 
             marker.unlink(missing_ok=True)
             self._install_progress.pop(server.id, None)
@@ -343,12 +363,7 @@ class MCDRManager:
             failed.unlink(missing_ok=True)
             marker.write_text("installing", encoding="utf-8")
             self._install_progress[server.id] = (0, 0)
-            jar_url = await get_server_jar_url(server.mc_version)
-            await download_file(
-                jar_url,
-                server_dir / "server.jar",
-                progress=lambda d, t: self._install_progress.__setitem__(server.id, (d, t)),
-            )
+            await self._fetch_jar(server, server_dir / "server.jar")
             marker.unlink(missing_ok=True)
             self._install_progress.pop(server.id, None)
         except Exception as exc:  # noqa: BLE001
@@ -413,8 +428,6 @@ class MCDRManager:
                 proc.terminate()
 
     async def delete_instance(self, server: Server) -> None:
-        import shutil
-
         await self.stop(server)
         self._procs.pop(server.id, None)
         inst = self.instance_dir(server)
