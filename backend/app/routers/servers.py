@@ -1,7 +1,17 @@
 """服务器实例:列表 / 新建(vanilla)/ 启停 / 删除 / 版本列表。"""
 from __future__ import annotations
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+import asyncio
+
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -9,6 +19,7 @@ from ..database import SessionLocal, get_db
 from ..deps import get_settings_row, require_auth
 from ..mcdr import manager, sanitize_dir_name
 from ..models import Server
+from ..security import decode_token
 from ..schemas import (
     CreateServerResponse,
     ServerCreate,
@@ -128,3 +139,55 @@ async def delete_server(
     db.delete(server)
     db.commit()
     return {"ok": True}
+
+
+@router.websocket("/{server_id}/console")
+async def console_ws(websocket: WebSocket, server_id: int, token: str = Query(default="")):
+    """实例控制台:连接后回放最近日志,随后实时推送新行;客户端发来的
+    ``{"command": "..."}`` 写入实例 stdin。
+
+    浏览器 WebSocket 无法自定义请求头,故 token 经 query 参数传入。
+    """
+    if not decode_token(token):
+        await websocket.close(code=4401)
+        return
+
+    db = SessionLocal()
+    try:
+        server = db.get(Server, server_id)
+    finally:
+        db.close()
+    if server is None:
+        await websocket.close(code=4404)
+        return
+
+    await websocket.accept()
+    queue = manager.subscribe(server_id)
+
+    async def pump_logs() -> None:
+        for line in manager.recent_lines(server_id):
+            await websocket.send_json({"type": "log", "line": line})
+        while True:
+            await websocket.send_json({"type": "log", "line": await queue.get()})
+
+    async def pump_commands() -> None:
+        while True:
+            data = await websocket.receive_json()
+            command = (data or {}).get("command")
+            if not command:
+                continue
+            try:
+                await manager.send_command(server, command)
+            except RuntimeError as exc:
+                await websocket.send_json({"type": "error", "message": str(exc)})
+
+    log_task = asyncio.create_task(pump_logs())
+    cmd_task = asyncio.create_task(pump_commands())
+    try:
+        await asyncio.wait({log_task, cmd_task}, return_when=asyncio.FIRST_COMPLETED)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        for task in (log_task, cmd_task):
+            task.cancel()
+        manager.unsubscribe(server_id, queue)

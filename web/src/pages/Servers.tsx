@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Loader2, Play, Plus, RefreshCw, Server, Square, Trash2 } from 'lucide-react'
+import { Loader2, Play, Plus, RefreshCw, Server, Square, Terminal, Trash2 } from 'lucide-react'
 
 import {
   type ServerSummary,
@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { ServerConsoleDialog } from '@/components/ServerConsoleDialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useGlobalToast } from '@/components/ui/use-global-toast'
@@ -41,6 +42,7 @@ export default function Servers() {
   const { showToast } = useGlobalToast()
   const [createOpen, setCreateOpen] = useState(false)
   const [busyId, setBusyId] = useState<number | null>(null)
+  const [consoleServer, setConsoleServer] = useState<ServerSummary | null>(null)
 
   useEffect(() => {
     const timer = window.setInterval(refresh, 4000)
@@ -141,6 +143,17 @@ export default function Servers() {
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center justify-end gap-1.5">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                              disabled={server.status === 'installing' || server.status === 'new_setup'}
+                              title="控制台"
+                              onClick={() => setConsoleServer(server)}
+                            >
+                              <Terminal className="h-4 w-4" />
+                            </Button>
                             {server.status === 'running' ? (
                               <Button
                                 type="button"
@@ -195,6 +208,13 @@ export default function Servers() {
           setCreateOpen(false)
           refresh()
         }}
+      />
+
+      <ServerConsoleDialog
+        server={
+          consoleServer ? data?.find((s) => s.id === consoleServer.id) ?? consoleServer : null
+        }
+        onClose={() => setConsoleServer(null)}
       />
     </PageShell>
   )

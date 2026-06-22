@@ -5,7 +5,7 @@
 - 后端:FastAPI · SQLAlchemy · SQLite · JWT(单管理员密码)
 - 前端:Vite 6 · React 19 · TypeScript · Tailwind · shadcn/ui(派生自 `frontend-template`)
 
-> 当前为 MVP:已实现 **仪表盘 / 服务器实例 / 系统设置** 三块。用户/角色体系、控制台、插件管理等留作后续扩展。
+> 当前已实现 **仪表盘 / 服务器实例(含一键新建 vanilla)/ 实例控制台 / 系统设置**。用户/角色体系、插件管理等留作后续扩展。
 
 ## 目录结构
 
@@ -67,6 +67,15 @@ python run.py
 4. 从 Mojang 官方源下载对应版本的 `server.jar` 到 `server/`(后台进行,期间状态为「安装中」)
 
 启动时以子进程运行 `<python> -m mcdreforged`(工作目录为实例目录),停止时向其 stdin 写入 `stop`。
+
+## 实例控制台
+
+在「服务器实例」列表点 ⌨ 图标打开控制台:
+
+- 实时日志:后端把子进程 stdout/stderr 捕获进内存环形缓冲(每实例最近 500 行),经 WebSocket `GET /api/servers/{id}/console` 推送;连接时先回放历史,再流式追加。
+- 发送命令:输入框回车 → `{"command": "..."}` 经同一 WebSocket 写入实例 stdin(实例运行中才可用)。
+- 鉴权:WebSocket 无法自定义请求头,token 经 query 参数 `?token=` 传递并校验。
+- 为保证 stdio 管道行为,实例 `config.yml` 关闭了 MCDR 的 `advanced_console`。
 
 ## 前置依赖
 

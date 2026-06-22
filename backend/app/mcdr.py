@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from collections import deque
 from pathlib import Path
 
 import yaml
@@ -28,6 +29,10 @@ STATUS_STOPPED = "stopped"
 
 _INSTALLING_MARKER = ".installing"
 _FAILED_MARKER = ".install_failed"
+
+# 控制台:每个实例在内存里保留的最近日志行数,以及订阅队列的上限。
+_CONSOLE_BUFFER_LINES = 500
+_SUBSCRIBER_QUEUE_MAXSIZE = 1000
 
 
 def sanitize_dir_name(name: str) -> str:
@@ -93,6 +98,12 @@ class MCDRManager:
     def __init__(self) -> None:
         # server_id -> asyncio subprocess
         self._procs: dict[int, asyncio.subprocess.Process] = {}
+        # server_id -> 最近日志行的环形缓冲(供控制台连接时回放历史)
+        self._buffers: dict[int, deque[str]] = {}
+        # server_id -> 订阅该实例输出的队列集合(每个 WebSocket 连接一个)
+        self._subscribers: dict[int, set[asyncio.Queue[str]]] = {}
+        # server_id -> 读取 stdout 的后台任务
+        self._reader_tasks: dict[int, asyncio.Task] = {}
 
     # ---------- 路径 ----------
     def instance_dir(self, server: Server) -> Path:
@@ -150,6 +161,40 @@ class MCDRManager:
             failed.write_text(str(exc), encoding="utf-8")
             raise
 
+    # ---------- 控制台:缓冲与订阅 ----------
+    def _append_line(self, server_id: int, line: str) -> None:
+        buf = self._buffers.setdefault(server_id, deque(maxlen=_CONSOLE_BUFFER_LINES))
+        buf.append(line)
+        for queue in list(self._subscribers.get(server_id, set())):
+            try:
+                queue.put_nowait(line)
+            except asyncio.QueueFull:
+                pass  # 慢消费者:丢弃该行而非阻塞读取
+
+    def recent_lines(self, server_id: int) -> list[str]:
+        return list(self._buffers.get(server_id, ()))
+
+    def subscribe(self, server_id: int) -> asyncio.Queue[str]:
+        queue: asyncio.Queue[str] = asyncio.Queue(maxsize=_SUBSCRIBER_QUEUE_MAXSIZE)
+        self._subscribers.setdefault(server_id, set()).add(queue)
+        return queue
+
+    def unsubscribe(self, server_id: int, queue: asyncio.Queue[str]) -> None:
+        subs = self._subscribers.get(server_id)
+        if subs:
+            subs.discard(queue)
+
+    async def _read_output(self, server_id: int, proc: asyncio.subprocess.Process) -> None:
+        """持续读取子进程输出,逐行写入缓冲并广播给订阅者。"""
+        assert proc.stdout is not None
+        while True:
+            raw = await proc.stdout.readline()
+            if not raw:
+                break
+            self._append_line(server_id, raw.decode("utf-8", errors="replace").rstrip("\r\n"))
+        rc = proc.returncode
+        self._append_line(server_id, f"[mc-panel] 进程已退出 (return code: {rc})")
+
     # ---------- 启停 ----------
     async def start(self, server: Server, python_executable: str) -> None:
         inst = self.instance_dir(server)
@@ -159,19 +204,30 @@ class MCDRManager:
         if existing is not None and existing.returncode is None:
             return  # 已在运行
 
-        log_dir = inst / "logs"
-        log_dir.mkdir(parents=True, exist_ok=True)
-        log_fp = open(log_dir / "panel-latest.log", "ab")
         proc = await asyncio.create_subprocess_exec(
             python_executable,
             "-m",
             "mcdreforged",
             cwd=str(inst),
             stdin=asyncio.subprocess.PIPE,
-            stdout=log_fp,
-            stderr=log_fp,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
         )
         self._procs[server.id] = proc
+        # 新一轮运行清空旧缓冲,并启动输出读取任务
+        self._buffers[server.id] = deque(maxlen=_CONSOLE_BUFFER_LINES)
+        self._append_line(server.id, "[mc-panel] 实例已启动")
+        self._reader_tasks[server.id] = asyncio.create_task(self._read_output(server.id, proc))
+
+    async def send_command(self, server: Server, command: str) -> None:
+        proc = self._procs.get(server.id)
+        if proc is None or proc.returncode is not None or proc.stdin is None:
+            raise RuntimeError("实例未在运行")
+        try:
+            proc.stdin.write((command.rstrip("\n") + "\n").encode("utf-8"))
+            await proc.stdin.drain()
+        except (BrokenPipeError, ConnectionResetError) as exc:
+            raise RuntimeError("无法写入实例标准输入") from exc
 
     async def stop(self, server: Server) -> None:
         proc = self._procs.get(server.id)
