@@ -22,7 +22,7 @@ import yaml
 from . import jar_cache
 from .config import SERVERS_ROOT
 from .models import Server
-from .versions import download_file, get_server_download
+from .versions import get_server_download
 
 # 状态常量
 STATUS_INSTALLING = "installing"
@@ -190,24 +190,16 @@ class MCDRManager:
         """获取服务端 jar:命中本地缓存则复用,否则下载、校验 sha1 并入缓存。
         进度总量用 meta 的 size。"""
         info = await get_server_download(server.mc_version)
-        sha1 = info.get("sha1", "")
         size = info.get("size", 0) or 0
         self._install_progress[server.id] = (0, size)
-
-        cached = jar_cache.lookup(sha1)
-        if cached is not None and (size == 0 or cached.stat().st_size == size):
-            shutil.copyfile(cached, dest)
-            self._install_progress[server.id] = (size, size)
-            return
-
-        await download_file(
+        await jar_cache.cached_download(
             info["url"],
             dest,
+            algo="sha1",
+            hexhash=info.get("sha1", ""),
+            size=size,
             progress=lambda d, t: self._install_progress.__setitem__(server.id, (d, size or t)),
         )
-        if sha1 and jar_cache.compute_sha1(dest) != sha1:
-            raise RuntimeError("下载校验失败:sha1 不匹配")
-        jar_cache.store(sha1, dest, server.mc_version, size or dest.stat().st_size)
 
     # ---------- 创建 ----------
     async def create_instance(self, server: Server, java_command: str) -> None:

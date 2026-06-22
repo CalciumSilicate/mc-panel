@@ -15,7 +15,7 @@ import time
 import zipfile
 from pathlib import Path
 
-from . import net
+from . import jar_cache, net
 
 CATALOGUE_URL = "https://api.mcdreforged.com/catalogue/everything_slim.json"
 _CATALOGUE_TTL = 3600
@@ -225,12 +225,13 @@ class PluginManager:
         pdir = self.plugins_dir(instance_dir)
         pdir.mkdir(parents=True, exist_ok=True)
         dest = pdir / Path(file_name).name
-        async with net.client(timeout=httpx_timeout(), follow_redirects=True) as client:
-            async with client.stream("GET", url) as resp:
-                resp.raise_for_status()
-                with open(dest, "wb") as fp:
-                    async for chunk in resp.aiter_bytes(1 << 16):
-                        fp.write(chunk)
+        await jar_cache.cached_download(
+            url,
+            dest,
+            algo="sha256",
+            hexhash=asset.get("hash_sha256", ""),
+            size=asset.get("size", 0) or 0,
+        )
 
         # 安装 Python 依赖(best-effort)
         requirements = (release.get("meta") or {}).get("requirements") or []
@@ -250,12 +251,6 @@ class PluginManager:
             return await proc.wait() == 0
         except (OSError, ValueError):
             return False
-
-
-def httpx_timeout():
-    import httpx
-
-    return httpx.Timeout(30.0, read=120.0)
 
 
 manager = PluginManager()

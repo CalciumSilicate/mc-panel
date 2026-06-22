@@ -10,7 +10,7 @@ import json
 import zipfile
 from pathlib import Path
 
-from . import net
+from . import jar_cache, net
 
 MODRINTH_API = "https://api.modrinth.com/v2"
 
@@ -187,19 +187,14 @@ class ModManager:
             raise ValueError("该版本没有可下载文件")
         url = chosen["url"]
         file_name = Path(chosen.get("filename") or f"{version_id}.jar").name
+        sha1 = (chosen.get("hashes") or {}).get("sha1", "")
 
         mdir = self.mods_dir(instance_dir)
         mdir.mkdir(parents=True, exist_ok=True)
         dest = mdir / file_name
-        import httpx
-
-        timeout = httpx.Timeout(30.0, read=120.0)
-        async with net.client(timeout=timeout, follow_redirects=True) as client:
-            async with client.stream("GET", url) as resp:
-                resp.raise_for_status()
-                with open(dest, "wb") as fp:
-                    async for chunk in resp.aiter_bytes(1 << 16):
-                        fp.write(chunk)
+        await jar_cache.cached_download(
+            url, dest, algo="sha1", hexhash=sha1, size=chosen.get("size", 0) or 0
+        )
         return dest.name
 
 
