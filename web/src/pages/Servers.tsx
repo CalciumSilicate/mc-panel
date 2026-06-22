@@ -548,7 +548,6 @@ function EditServerDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>编辑实例 —— {server?.name}</DialogTitle>
-          <DialogDescription>内存/端口改动在重启后生效;更换版本需先停止实例,并会重新下载对应核心。</DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-4 py-2">
