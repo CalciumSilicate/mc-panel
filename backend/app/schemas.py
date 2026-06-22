@@ -75,7 +75,9 @@ class UserUpdate(BaseModel):
 # ---------- 服务器 ----------
 class ServerCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
-    mc_version: str = Field(min_length=1)
+    server_type: str = "vanilla"  # vanilla / fabric / forge / velocity
+    mc_version: str = ""  # velocity 无需 MC 版本
+    loader_version: str = ""  # fabric/forge/velocity 的核心版本
     min_memory: str = "1G"
     max_memory: str = "2G"
     port: int = 25565
@@ -114,6 +116,7 @@ class ServerSummary(BaseModel):
     name: str
     server_type: str
     mc_version: str
+    loader_version: str = ""
     min_memory: str
     max_memory: str
     port: int

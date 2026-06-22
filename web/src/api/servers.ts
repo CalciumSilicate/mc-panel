@@ -24,6 +24,7 @@ export interface ServerSummary {
   name: string
   server_type: string
   mc_version: string
+  loader_version: string
   min_memory: string
   max_memory: string
   port: number
@@ -36,9 +37,13 @@ export interface ServerSummary {
   install?: InstallProgress | null
 }
 
+export type ServerType = 'vanilla' | 'fabric' | 'forge' | 'velocity'
+
 export interface CreateServerInput {
   name: string
+  server_type: ServerType
   mc_version: string
+  loader_version: string
   min_memory: string
   max_memory: string
   port: number
@@ -48,9 +53,17 @@ export function listServers(): Promise<ServerSummary[]> {
   return apiRequest<ServerSummary[]>('/servers')
 }
 
-export function getVanillaVersions(force = false): Promise<string[]> {
-  const query = force ? '?refresh=true' : ''
-  return apiRequest<{ versions: string[] }>(`/servers/versions${query}`).then((r) => r.versions)
+export function getServerVersions(type: ServerType, force = false): Promise<string[]> {
+  const params = new URLSearchParams({ type })
+  if (force) params.set('refresh', 'true')
+  return apiRequest<{ versions: string[] }>(`/servers/versions?${params}`).then((r) => r.versions)
+}
+
+export function getLoaderVersions(type: ServerType, mcVersion = '', force = false): Promise<string[]> {
+  const params = new URLSearchParams({ type })
+  if (mcVersion) params.set('mc_version', mcVersion)
+  if (force) params.set('refresh', 'true')
+  return apiRequest<{ versions: string[] }>(`/servers/loaders?${params}`).then((r) => r.versions)
 }
 
 export interface JavaInfo {

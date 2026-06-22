@@ -74,38 +74,77 @@ def _server_properties_text(port: int) -> str:
     )
 
 
+# 服务器类型 -> MCDR 输出解析 handler(均为 MCDR 内置)
+HANDLERS = {
+    "vanilla": "vanilla_handler",
+    "fabric": "vanilla_handler",
+    "forge": "forge_handler",
+    "velocity": "velocity_handler",
+}
+
+
+def _resolve_launch(inst: "Path", server_type: str) -> tuple[str, str]:
+    """根据已安装文件决定启动目标:('-jar', jar) 或 ('@', argsfile)。"""
+    sd = inst / "server"
+    if server_type == "forge":
+        # 现代 Forge(1.17+):@libraries/.../win_args.txt
+        args = sorted(sd.glob("libraries/net/minecraftforge/forge/*/win_args.txt"))
+        if args:
+            return ("@", str(args[0].relative_to(sd)).replace("\\", "/"))
+        # 旧版 Forge:forge-*.jar(排除 installer)
+        jars = [p for p in sd.glob("forge-*.jar") if "installer" not in p.name]
+        if jars:
+            return ("-jar", jars[0].name)
+    return ("-jar", "server.jar")
+
+
 def build_start_command(
-    java_command: str, min_memory: str, max_memory: str, extra_jvm_args: str = ""
+    java_command: str,
+    min_memory: str,
+    max_memory: str,
+    extra_jvm_args: str = "",
+    server_type: str = "vanilla",
+    launch: tuple[str, str] = ("-jar", "server.jar"),
 ) -> list[str]:
-    """组装 MC 服务端启动命令:java + 内存 + UTF-8 + 额外参数 + -jar。"""
+    """组装服务端启动命令:java + 内存 + UTF-8 + 额外参数 + 启动目标。"""
     try:
         extra = shlex.split(extra_jvm_args) if extra_jvm_args else []
     except ValueError:
         extra = extra_jvm_args.split()
-    return [
+    cmd = [
         java_command,
         f"-Xms{min_memory}",
         f"-Xmx{max_memory}",
         # 强制服务端以 UTF-8 输出,避免 Windows 下控制台用系统码页(GBK)导致乱码
         "-Dfile.encoding=UTF-8",
         *extra,
-        "-jar",
-        "server.jar",
-        "nogui",
     ]
+    mode, value = launch
+    if mode == "@":
+        cmd.append(f"@{value}")
+    else:
+        cmd += ["-jar", value]
+    if server_type != "velocity":  # 代理端无 GUI 概念
+        cmd.append("nogui")
+    return cmd
 
 
 def _mcdr_config(
-    java_command: str, min_memory: str, max_memory: str, extra_jvm_args: str = ""
+    java_command: str,
+    min_memory: str,
+    max_memory: str,
+    extra_jvm_args: str = "",
+    server_type: str = "vanilla",
+    launch: tuple[str, str] = ("-jar", "server.jar"),
 ) -> dict:
-    """构造 vanilla 服务器的 MCDR config.yml 内容。"""
+    """构造 MCDR config.yml 内容(handler 与启动命令按服务器类型)。"""
     return {
         "language": "zh_cn",
         "working_directory": "server",
         "start_command": build_start_command(
-            java_command, min_memory, max_memory, extra_jvm_args
+            java_command, min_memory, max_memory, extra_jvm_args, server_type, launch
         ),
-        "handler": "vanilla_handler",
+        "handler": HANDLERS.get(server_type, "vanilla_handler"),
         # 发送给服务端用 UTF-8;读取服务端输出先按 UTF-8,失败回退 GBK
         # (Windows 下 Java 启动器/旧服务端常用系统码页),避免解码报错。
         "encoding": "utf8",
@@ -115,6 +154,27 @@ def _mcdr_config(
         "advanced_console": False,
         "telemetry": False,
     }
+
+
+def _velocity_toml(port: int) -> str:
+    """最小可用的 Velocity 配置;首次启动会补全其余项并生成 forwarding.secret。"""
+    return "\n".join(
+        [
+            'config-version = "2.7"',
+            f'bind = "0.0.0.0:{port}"',
+            'motd = "A Velocity Server"',
+            "show-max-players = 500",
+            "online-mode = true",
+            'player-info-forwarding-mode = "NONE"',
+            'forwarding-secret-file = "forwarding.secret"',
+            "[servers]",
+            "[forced-hosts]",
+            "[advanced]",
+            "[query]",
+            "enabled = false",
+            "",
+        ]
+    )
 
 
 def _permission_text() -> str:
@@ -195,28 +255,63 @@ class MCDRManager:
         self._install_progress.pop(server.id, None)
         self._install_tasks.pop(server.id, None)
 
-    async def _fetch_jar(self, server: Server, dest: Path) -> None:
-        """获取服务端 jar:命中本地缓存则复用,否则下载、校验 sha1 并入缓存。
-        进度总量用 meta 的 size。"""
-        info = await get_server_download(server.mc_version)
-        size = info.get("size", 0) or 0
-        self._install_progress[server.id] = (0, size)
-        await jar_cache.cached_download(
-            info["url"],
-            dest,
-            algo="sha1",
-            hexhash=info.get("sha1", ""),
-            size=size,
-            progress=lambda d, t: self._install_progress.__setitem__(server.id, (d, size or t)),
-        )
+    async def _install_core(self, server: Server, java_command: str) -> None:
+        """按服务器类型下载/安装核心到 server/ 目录。耗时,放后台。"""
+        from . import versions as ver
+
+        server_dir = self.instance_dir(server) / "server"
+        dest = server_dir / "server.jar"
+        prog = lambda d, t: self._install_progress.__setitem__(server.id, (d, t))  # noqa: E731
+        st = server.server_type
+
+        if st == "vanilla":
+            info = await get_server_download(server.mc_version)
+            size = info.get("size", 0) or 0
+            self._install_progress[server.id] = (0, size)
+            await jar_cache.cached_download(
+                info["url"], dest, algo="sha1", hexhash=info.get("sha1", ""), size=size,
+                progress=lambda d, t: prog(d, size or t),
+            )
+        elif st == "fabric":
+            info = await ver.get_fabric_download(server.mc_version, server.loader_version)
+            self._install_progress[server.id] = (0, 0)
+            await ver.download_file(info["url"], dest, progress=prog)
+        elif st == "velocity":
+            info = await ver.get_velocity_download(server.loader_version)
+            size = info.get("size", 0) or 0
+            self._install_progress[server.id] = (0, size)
+            await jar_cache.cached_download(
+                info["url"], dest, algo="sha256", hexhash=info.get("sha256", ""), size=size,
+                progress=lambda d, t: prog(d, size or t),
+            )
+        elif st == "forge":
+            meta = await ver.get_forge_installer(server.mc_version, server.loader_version)
+            installer = server_dir / meta["name"]
+            self._install_progress[server.id] = (0, 0)
+            await ver.download_file(meta["url"], installer, progress=prog)
+            # 运行官方安装器生成服务端文件(需联网拉依赖)
+            self._install_progress[server.id] = (0, 0)
+            proc = await asyncio.create_subprocess_exec(
+                java_command or "java", "-jar", meta["name"], "--installServer",
+                cwd=str(server_dir),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+            )
+            out, _ = await proc.communicate()
+            if proc.returncode != 0:
+                tail = (out or b"").decode("utf-8", "replace")[-500:]
+                raise RuntimeError(f"Forge 安装器失败(code {proc.returncode}): {tail}")
+            installer.unlink(missing_ok=True)
+        else:
+            raise RuntimeError(f"不支持的服务器类型: {st}")
 
     # ---------- 创建 ----------
     async def create_instance(self, server: Server, java_command: str) -> None:
-        """生成实例目录并下载服务端 jar。耗时较长,应在后台任务中调用。"""
+        """生成实例目录并安装核心。耗时较长,应在后台任务中调用。"""
         inst = self.instance_dir(server)
         server_dir = inst / "server"
         marker = inst / _INSTALLING_MARKER
         failed = inst / _FAILED_MARKER
+        is_proxy = server.server_type == "velocity"
 
         try:
             for sub in (server_dir, inst / "plugins", inst / "config", inst / "logs"):
@@ -229,10 +324,8 @@ class MCDRManager:
             (inst / "config.yml").write_text(
                 yaml.safe_dump(
                     _mcdr_config(
-                        java_command,
-                        server.min_memory,
-                        server.max_memory,
-                        server.extra_jvm_args,
+                        java_command, server.min_memory, server.max_memory,
+                        server.extra_jvm_args, server.server_type,
                     ),
                     allow_unicode=True,
                     sort_keys=False,
@@ -240,12 +333,20 @@ class MCDRManager:
                 encoding="utf-8",
             )
             (inst / "permission.yml").write_text(_permission_text(), encoding="utf-8")
-            (server_dir / "eula.txt").write_text(_eula_text(), encoding="utf-8")
-            (server_dir / "server.properties").write_text(
-                _server_properties_text(server.port), encoding="utf-8"
-            )
+            if is_proxy:
+                (server_dir / "velocity.toml").write_text(
+                    _velocity_toml(server.port), encoding="utf-8"
+                )
+            else:
+                (server_dir / "eula.txt").write_text(_eula_text(), encoding="utf-8")
+                (server_dir / "server.properties").write_text(
+                    _server_properties_text(server.port), encoding="utf-8"
+                )
 
-            await self._fetch_jar(server, server_dir / "server.jar")
+            await self._install_core(server, java_command)
+
+            # 安装后按实际文件重建启动命令(Forge 需定位 args 文件 / jar)
+            self.apply_start_command(server, java=java_command)
 
             marker.unlink(missing_ok=True)
             self._install_progress.pop(server.id, None)
@@ -330,8 +431,10 @@ class MCDRManager:
         if java is None:
             cmd = data.get("start_command")
             java = cmd[0] if isinstance(cmd, list) and cmd else "java"
+        launch = _resolve_launch(self.instance_dir(server), server.server_type)
         data["start_command"] = build_start_command(
-            java, server.min_memory, server.max_memory, server.extra_jvm_args
+            java, server.min_memory, server.max_memory, server.extra_jvm_args,
+            server.server_type, launch,
         )
         config_path.write_text(
             yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8"
@@ -377,8 +480,8 @@ class MCDRManager:
     def apply_port(self, server: Server) -> None:
         self.write_properties(server, {"server-port": str(server.port)})
 
-    async def redownload_jar(self, server: Server) -> None:
-        """更换版本:仅重新下载 server.jar(保留世界/配置)。"""
+    async def redownload_jar(self, server: Server, java_command: str = "java") -> None:
+        """重装核心(换版本/重试):重跑类型对应安装,保留世界/配置。"""
         inst = self.instance_dir(server)
         server_dir = inst / "server"
         server_dir.mkdir(parents=True, exist_ok=True)
@@ -388,7 +491,8 @@ class MCDRManager:
             failed.unlink(missing_ok=True)
             marker.write_text("installing", encoding="utf-8")
             self._install_progress[server.id] = (0, 0)
-            await self._fetch_jar(server, server_dir / "server.jar")
+            await self._install_core(server, java_command)
+            self.apply_start_command(server, java=java_command)
             marker.unlink(missing_ok=True)
             self._install_progress.pop(server.id, None)
         except Exception as exc:  # noqa: BLE001

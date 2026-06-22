@@ -45,6 +45,8 @@ class Server(Base):
     dir_name: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
     server_type: Mapped[str] = mapped_column(String(32), default="vanilla")
     mc_version: Mapped[str] = mapped_column(String(64), default="")
+    # 加载器/核心版本:fabric=loader 版本,forge=forge 版本,velocity=velocity 版本
+    loader_version: Mapped[str] = mapped_column(String(64), default="")
     min_memory: Mapped[str] = mapped_column(String(16), default="1G")
     max_memory: Mapped[str] = mapped_column(String(16), default="2G")
     port: Mapped[int] = mapped_column(Integer, default=25565)

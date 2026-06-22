@@ -53,6 +53,7 @@ COMMON_PROPERTY_KEYS = [
     "online-mode",
     "level-seed",
 ]
+from .. import versions as versions_mod
 from ..versions import list_release_versions
 
 router = APIRouter(prefix="/servers", tags=["servers"])
@@ -82,12 +83,41 @@ def list_servers(
 
 @router.get("/versions", response_model=VersionList)
 async def get_versions(
-    refresh: bool = Query(default=False), _: str = Depends(require_admin)
+    type: str = Query(default="vanilla"),
+    refresh: bool = Query(default=False),
+    _: str = Depends(require_admin),
 ) -> VersionList:
+    """各类型可选的 MC/游戏版本(velocity 无 MC 版本,返回空)。"""
     try:
+        if type == "fabric":
+            return VersionList(versions=await versions_mod.list_fabric_games(force=refresh))
+        if type == "forge":
+            return VersionList(versions=await versions_mod.list_forge_games(force=refresh))
+        if type == "velocity":
+            return VersionList(versions=[])
         return VersionList(versions=await list_release_versions(force=refresh))
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"获取版本列表失败: {exc}")
+
+
+@router.get("/loaders", response_model=VersionList)
+async def get_loaders(
+    type: str = Query(...),
+    mc_version: str = Query(default=""),
+    refresh: bool = Query(default=False),
+    _: str = Depends(require_admin),
+) -> VersionList:
+    """加载器/核心版本:fabric/forge 依赖 mc_version;velocity 直接列版本。"""
+    try:
+        if type == "fabric":
+            return VersionList(versions=await versions_mod.list_fabric_loaders(mc_version, force=refresh))
+        if type == "forge":
+            return VersionList(versions=await versions_mod.list_forge_loaders(mc_version, force=refresh))
+        if type == "velocity":
+            return VersionList(versions=await versions_mod.list_velocity_versions(force=refresh))
+        return VersionList(versions=[])
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"获取加载器版本失败: {exc}")
 
 
 @router.get("/java-info", response_model=JavaInfo)
@@ -131,14 +161,15 @@ async def _install_in_background(server_id: int, java_command: str) -> None:
 
 
 async def _redownload_in_background(server_id: int) -> None:
-    """后台:更换版本/重试时重新下载 server.jar。"""
+    """后台:更换版本/重试时按类型重装核心。"""
     db = SessionLocal()
     try:
         server = db.get(Server, server_id)
         if server is None:
             return
+        java_command = get_settings_row(db).java_command
         try:
-            await manager.redownload_jar(server)
+            await manager.redownload_jar(server, java_command)
         except Exception:  # noqa: BLE001 - 失败已写入 .install_failed 标记
             pass
     finally:
@@ -160,6 +191,15 @@ async def create_server(
     if db.scalar(select(Server).where(Server.name == payload.name)):
         raise HTTPException(status_code=409, detail="同名服务器已存在")
 
+    st = payload.server_type
+    if st not in ("vanilla", "fabric", "forge", "velocity"):
+        raise HTTPException(status_code=400, detail="不支持的服务器类型")
+    if st != "velocity" and not payload.mc_version:
+        raise HTTPException(status_code=400, detail="请选择 MC 版本")
+    if st != "vanilla" and not payload.loader_version:
+        label = {"fabric": "Fabric Loader", "forge": "Forge", "velocity": "Velocity"}[st]
+        raise HTTPException(status_code=400, detail=f"请选择 {label} 版本")
+
     # 目录名用 UUID,与显示名解耦:之后改名只是改 DB,零风险
     dir_name = uuid.uuid4().hex
 
@@ -167,8 +207,9 @@ async def create_server(
     server = Server(
         name=payload.name,
         dir_name=dir_name,
-        server_type="vanilla",
+        server_type=st,
         mc_version=payload.mc_version,
+        loader_version=payload.loader_version,
         min_memory=payload.min_memory or settings.default_min_memory,
         max_memory=payload.max_memory or settings.default_max_memory,
         port=payload.port,

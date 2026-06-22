@@ -68,6 +68,138 @@ async def get_server_download(mc_version: str) -> dict:
     }
 
 
+# ---------------- 多加载器:版本列表 + 下载解析 ----------------
+# 通用 JSON 缓存(url -> (ts, data))
+_json_cache: dict[str, tuple[float, object]] = {}
+
+
+async def _cached_json(url: str, ttl: int = VERSIONS_CACHE_TTL, force: bool = False):
+    now = time.time()
+    hit = _json_cache.get(url)
+    if not force and hit and now - hit[0] < ttl:
+        return hit[1]
+    async with net.client(timeout=20) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        data = resp.json()
+    _json_cache[url] = (now, data)
+    return data
+
+
+# ---- Fabric ----
+async def list_fabric_games(force: bool = False) -> list[str]:
+    data = await _cached_json("https://meta.fabricmc.net/v2/versions/game", force=force)
+    return [x["version"] for x in data if x.get("stable")]
+
+
+async def list_fabric_loaders(mc_version: str, force: bool = False) -> list[str]:
+    data = await _cached_json(f"https://meta.fabricmc.net/v2/versions/loader/{mc_version}", force=force)
+    return [x["loader"]["version"] for x in data]
+
+
+async def _latest_fabric_installer() -> str:
+    data = await _cached_json("https://meta.fabricmc.net/v2/versions/installer")
+    stable = next((x for x in data if x.get("stable")), None)
+    return (stable or data[0])["version"]
+
+
+async def get_fabric_download(mc_version: str, loader_version: str) -> dict:
+    """Fabric 自举服务端 jar(首次启动时自动下载原版核心与依赖)。无预知 hash/size。"""
+    installer = await _latest_fabric_installer()
+    url = (
+        f"https://meta.fabricmc.net/v2/versions/loader/"
+        f"{mc_version}/{loader_version}/{installer}/server/jar"
+    )
+    return {"url": url, "sha1": "", "size": 0}
+
+
+# ---- Forge ----
+async def list_forge_games(force: bool = False) -> list[str]:
+    data = await _cached_json(
+        "https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json", force=force
+    )
+    games: list[str] = []
+    for key in data.get("promos", {}):
+        mc = key.rsplit("-", 1)[0]
+        if mc not in games:
+            games.append(mc)
+    games.reverse()  # 新到旧
+    return games
+
+
+async def list_forge_loaders(mc_version: str, force: bool = False) -> list[str]:
+    """该 MC 版本的全部 Forge 构建(新到旧),取自 maven-metadata;失败回退 promotions。"""
+    import re as _re
+
+    try:
+        async with net.client(timeout=20) as client:
+            resp = await client.get(
+                "https://maven.minecraftforge.net/net/minecraftforge/forge/maven-metadata.xml"
+            )
+            resp.raise_for_status()
+            text = resp.text
+        prefix = f"{mc_version}-"
+        out = [
+            v[len(prefix):]
+            for v in _re.findall(r"<version>([^<]+)</version>", text)
+            if v.startswith(prefix)
+        ]
+        out.reverse()
+        if out:
+            return out[:60]
+    except httpx.HTTPError:
+        pass
+    # 回退:promotions 的 recommended/latest
+    data = await _cached_json(
+        "https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json"
+    )
+    promos = data.get("promos", {})
+    out = []
+    for suffix in ("recommended", "latest"):
+        val = promos.get(f"{mc_version}-{suffix}")
+        if val and val not in out:
+            out.append(val)
+    return out
+
+
+async def get_forge_installer(mc_version: str, forge_version: str) -> dict:
+    base = f"https://maven.minecraftforge.net/net/minecraftforge/forge/{mc_version}-{forge_version}"
+    name = f"forge-{mc_version}-{forge_version}-installer.jar"
+    url = f"{base}/{name}"
+    sha1 = ""
+    try:
+        async with net.client(timeout=20) as client:
+            r = await client.get(url + ".sha1")
+            if r.status_code == 200:
+                sha1 = r.text.strip()
+    except httpx.HTTPError:
+        pass
+    return {"url": url, "sha1": sha1, "name": name}
+
+
+# ---- Velocity ----
+async def list_velocity_versions(force: bool = False) -> list[str]:
+    data = await _cached_json("https://fill.papermc.io/v3/projects/velocity/versions", force=force)
+    return [v["version"]["id"] for v in data.get("versions", [])]
+
+
+async def get_velocity_download(velocity_version: str) -> dict:
+    """选该 Velocity 版本最新构建(优先 STABLE)。"""
+    builds = await _cached_json(
+        f"https://fill.papermc.io/v3/projects/velocity/versions/{velocity_version}/builds"
+    )
+    if not builds:
+        raise ValueError(f"Velocity {velocity_version} 无可用构建")
+    stable = [b for b in builds if b.get("channel") == "STABLE"]
+    best = max(stable or builds, key=lambda b: b.get("id", 0))
+    dl = best.get("downloads", {}).get("server:default") or next(iter(best.get("downloads", {}).values()))
+    return {
+        "url": dl["url"],
+        "sha256": dl.get("checksums", {}).get("sha256", ""),
+        "size": int(dl.get("size", 0) or 0),
+    }
+
+
 async def download_file(url: str, dest, *, chunk_size: int = 1 << 16, progress=None) -> None:
     """流式下载到 dest(pathlib.Path)。
 
