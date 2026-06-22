@@ -1,9 +1,11 @@
 import { lazy, Suspense, useEffect, useMemo, useState, type ElementType } from 'react'
 import {
+  Archive,
   Boxes,
   ChevronLeft,
   ChevronRight,
   LayoutDashboard,
+  Layers,
   LogOut,
   Package,
   PanelLeft,
@@ -26,6 +28,8 @@ const Overview = lazy(() => import('@/pages/Overview'))
 const Servers = lazy(() => import('@/pages/Servers'))
 const Plugins = lazy(() => import('@/pages/Plugins'))
 const Mods = lazy(() => import('@/pages/Mods'))
+const Archives = lazy(() => import('@/pages/Archives'))
+const Superflat = lazy(() => import('@/pages/Superflat'))
 const SettingsPage = lazy(() => import('@/pages/Settings'))
 
 /**
@@ -36,7 +40,7 @@ const SettingsPage = lazy(() => import('@/pages/Settings'))
  * 真要做深链接/多级路由时,把 `currentPage` 状态换成 router 即可,其余结构不动。
  */
 
-type Page = 'overview' | 'servers' | 'plugins' | 'mods' | 'settings'
+type Page = 'overview' | 'servers' | 'plugins' | 'mods' | 'archives' | 'superflat' | 'settings'
 
 interface NavItem {
   key: Page
@@ -49,6 +53,8 @@ const navItems: NavItem[] = [
   { key: 'servers', label: '服务器实例', icon: Server },
   { key: 'plugins', label: '插件', icon: Puzzle },
   { key: 'mods', label: '模组', icon: Package },
+  { key: 'archives', label: '存档', icon: Archive },
+  { key: 'superflat', label: '超平坦', icon: Layers },
   { key: 'settings', label: '设置', icon: Settings },
 ]
 
@@ -261,6 +267,8 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                       {currentPage === 'servers' ? <Servers /> : null}
                       {currentPage === 'plugins' ? <Plugins /> : null}
                       {currentPage === 'mods' ? <Mods /> : null}
+                      {currentPage === 'archives' ? <Archives /> : null}
+                      {currentPage === 'superflat' ? <Superflat /> : null}
                       {currentPage === 'settings' ? <SettingsPage /> : null}
                     </motion.div>
                   </AnimatePresence>

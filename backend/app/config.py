@@ -25,6 +25,8 @@ SERVERS_ROOT = DATA_DIR / "servers"
 # 面板中央库:上传一次,可安装到任意实例。
 PLUGIN_LIBRARY = DATA_DIR / "library" / "plugins"
 MOD_LIBRARY = DATA_DIR / "library" / "mods"
+# 世界存档存放目录。
+ARCHIVES_DIR = DATA_DIR / "archives"
 DB_PATH = DATA_DIR / "panel.db"
 SECRET_KEY_PATH = DATA_DIR / "secret.key"
 

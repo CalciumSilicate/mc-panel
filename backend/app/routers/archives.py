@@ -1,0 +1,159 @@
+"""世界存档管理接口。"""
+from __future__ import annotations
+
+import asyncio
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from .. import archive_manager as am
+from .. import jobs as jobstore
+from ..database import SessionLocal, get_db
+from ..deps import require_auth
+from ..mcdr import manager as mcdr_manager
+from ..models import Archive, Server
+from ..schemas import ArchiveOut
+
+router = APIRouter(prefix="/archives", tags=["archives"])
+
+
+def _get_server(db: Session, server_id: int) -> Server:
+    server = db.get(Server, server_id)
+    if server is None:
+        raise HTTPException(status_code=404, detail="服务器不存在")
+    return server
+
+
+def _get_archive(db: Session, archive_id: int) -> Archive:
+    arc = db.get(Archive, archive_id)
+    if arc is None:
+        raise HTTPException(status_code=404, detail="存档不存在")
+    return arc
+
+
+@router.get("", response_model=list[ArchiveOut])
+def list_archives(_: str = Depends(require_auth), db: Session = Depends(get_db)) -> list[Archive]:
+    return list(db.scalars(select(Archive).order_by(Archive.id.desc())).all())
+
+
+async def _do_create(server_id: int, filename: str, job_id: str) -> None:
+    db = SessionLocal()
+    try:
+        server = db.get(Server, server_id)
+        if server is None:
+            jobstore.fail(job_id, "服务器不存在")
+            return
+        inst = mcdr_manager.instance_dir(server)
+        try:
+            size = await asyncio.to_thread(
+                am.create_zip, inst, am.archive_path(filename),
+                lambda d, t: jobstore.update(job_id, d, t),
+            )
+        except Exception as exc:  # noqa: BLE001
+            am.archive_path(filename).unlink(missing_ok=True)
+            jobstore.fail(job_id, str(exc))
+            return
+        db.add(Archive(
+            name=am.default_archive_name(server, inst),
+            filename=filename,
+            size=size,
+            source="server",
+            source_server_id=server_id,
+            mc_version=server.mc_version,
+        ))
+        db.commit()
+        jobstore.finish(job_id, filename)
+    finally:
+        db.close()
+
+
+@router.post("/from-server/{server_id}")
+def create_from_server(
+    server_id: int, _: str = Depends(require_auth), db: Session = Depends(get_db)
+) -> dict:
+    server = _get_server(db, server_id)
+    if mcdr_manager.get_status(server) in ("running", "installing"):
+        raise HTTPException(status_code=400, detail="请先停止实例再创建存档")
+    job_id = jobstore.create()
+    asyncio.create_task(_do_create(server_id, am.new_archive_filename(), job_id))
+    return {"job_id": job_id}
+
+
+@router.post("/upload", response_model=ArchiveOut)
+async def upload_archive(
+    file: UploadFile = File(...),
+    _: str = Depends(require_auth),
+    db: Session = Depends(get_db),
+) -> Archive:
+    name = file.filename or "archive.zip"
+    if not name.lower().endswith(".zip"):
+        raise HTTPException(status_code=400, detail="仅支持 .zip 存档")
+    filename = am.new_archive_filename()
+    dest = am.archive_path(filename)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    content = await file.read()
+    dest.write_bytes(content)
+    rec = Archive(name=name[:-4], filename=filename, size=len(content), source="uploaded")
+    db.add(rec)
+    db.commit()
+    db.refresh(rec)
+    return rec
+
+
+@router.get("/{archive_id}/download")
+def download_archive(
+    archive_id: int, _: str = Depends(require_auth), db: Session = Depends(get_db)
+) -> FileResponse:
+    arc = _get_archive(db, archive_id)
+    path = am.archive_path(arc.filename)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="存档文件丢失")
+    return FileResponse(path, media_type="application/zip", filename=f"{arc.name}.zip")
+
+
+@router.delete("/{archive_id}")
+def delete_archive(
+    archive_id: int, _: str = Depends(require_auth), db: Session = Depends(get_db)
+) -> dict:
+    arc = _get_archive(db, archive_id)
+    am.archive_path(arc.filename).unlink(missing_ok=True)
+    db.delete(arc)
+    db.commit()
+    return {"ok": True}
+
+
+async def _do_restore(archive_id: int, server_id: int, job_id: str) -> None:
+    db = SessionLocal()
+    try:
+        arc = db.get(Archive, archive_id)
+        server = db.get(Server, server_id)
+        if arc is None or server is None:
+            jobstore.fail(job_id, "存档或服务器不存在")
+            return
+        inst = mcdr_manager.instance_dir(server)
+        try:
+            await asyncio.to_thread(
+                am.restore_zip, am.archive_path(arc.filename), inst,
+                lambda d, t: jobstore.update(job_id, d, t),
+            )
+        except Exception as exc:  # noqa: BLE001
+            jobstore.fail(job_id, str(exc))
+            return
+        jobstore.finish(job_id)
+    finally:
+        db.close()
+
+
+@router.post("/{archive_id}/restore/{server_id}")
+def restore_archive(
+    archive_id: int, server_id: int, _: str = Depends(require_auth), db: Session = Depends(get_db)
+) -> dict:
+    _get_archive(db, archive_id)
+    server = _get_server(db, server_id)
+    if mcdr_manager.get_status(server) in ("running", "installing"):
+        raise HTTPException(status_code=400, detail="请先停止目标实例再恢复存档")
+    job_id = jobstore.create()
+    asyncio.create_task(_do_restore(archive_id, server_id, job_id))
+    return {"job_id": job_id}

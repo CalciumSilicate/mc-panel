@@ -112,6 +112,19 @@ class DashboardOverview(BaseModel):
 
 
 # ---------- 系统设置 ----------
+class ArchiveOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    filename: str
+    size: int
+    source: str
+    source_server_id: int | None
+    mc_version: str
+    created_at: datetime
+
+
 class SettingsResponse(BaseModel):
     python_executable: str
     java_command: str

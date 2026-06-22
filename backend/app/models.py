@@ -39,6 +39,21 @@ class Server(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
+class Archive(Base):
+    """一个世界存档(zip,存于 ARCHIVES_DIR)。"""
+
+    __tablename__ = "archives"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    filename: Mapped[str] = mapped_column(String(200), unique=True, nullable=False)
+    size: Mapped[int] = mapped_column(Integer, default=0)
+    source: Mapped[str] = mapped_column(String(16), default="server")  # server / uploaded
+    source_server_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    mc_version: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
 class SystemSettings(Base):
     """单行配置表(id 固定为 1)。"""
 
