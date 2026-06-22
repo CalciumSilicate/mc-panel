@@ -59,6 +59,21 @@ export function createServer(input: CreateServerInput): Promise<{ id: number }> 
   })
 }
 
+export interface ServerUpdateInput {
+  name?: string
+  min_memory?: string
+  max_memory?: string
+  port?: number
+  mc_version?: string
+}
+
+export function updateServer(id: number, patch: ServerUpdateInput): Promise<ServerSummary> {
+  return apiRequest<ServerSummary>(`/servers/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })
+}
+
 export function startServer(id: number): Promise<{ status: ServerStatus }> {
   return apiRequest<{ status: ServerStatus }>(`/servers/${id}/start`, {
     method: 'POST',

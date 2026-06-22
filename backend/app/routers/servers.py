@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 
 from fastapi import (
     APIRouter,
@@ -18,7 +19,7 @@ from sqlalchemy.orm import Session
 from ..database import SessionLocal, get_db
 from ..deps import get_settings_row, require_auth
 from ..java import choose_java, detect_installs, get_java_paths, required_java_major
-from ..mcdr import manager, sanitize_dir_name
+from ..mcdr import manager
 from ..models import Server
 from ..security import decode_token
 from ..schemas import (
@@ -26,6 +27,7 @@ from ..schemas import (
     JavaInfo,
     ServerCreate,
     ServerSummary,
+    ServerUpdate,
     VersionList,
 )
 from ..versions import list_release_versions
@@ -94,6 +96,21 @@ async def _install_in_background(server_id: int, java_command: str) -> None:
         db.close()
 
 
+async def _redownload_in_background(server_id: int) -> None:
+    """后台:更换版本后重新下载 server.jar。"""
+    db = SessionLocal()
+    try:
+        server = db.get(Server, server_id)
+        if server is None:
+            return
+        try:
+            await manager.redownload_jar(server)
+        except Exception:  # noqa: BLE001 - 失败已写入 .install_failed 标记
+            pass
+    finally:
+        db.close()
+
+
 @router.post("", response_model=CreateServerResponse)
 def create_server(
     payload: ServerCreate,
@@ -104,9 +121,8 @@ def create_server(
     if db.scalar(select(Server).where(Server.name == payload.name)):
         raise HTTPException(status_code=409, detail="同名服务器已存在")
 
-    dir_name = sanitize_dir_name(payload.name)
-    if db.scalar(select(Server).where(Server.dir_name == dir_name)):
-        raise HTTPException(status_code=409, detail="实例目录名冲突,请换个名字")
+    # 目录名用 UUID,与显示名解耦:之后改名只是改 DB,零风险
+    dir_name = uuid.uuid4().hex
 
     settings = get_settings_row(db)
     server = Server(
@@ -132,6 +148,57 @@ def _get_server_or_404(db: Session, server_id: int) -> Server:
     if server is None:
         raise HTTPException(status_code=404, detail="服务器不存在")
     return server
+
+
+@router.patch("/{server_id}", response_model=ServerSummary)
+def update_server(
+    server_id: int,
+    payload: ServerUpdate,
+    background: BackgroundTasks,
+    _: str = Depends(require_auth),
+    db: Session = Depends(get_db),
+) -> ServerSummary:
+    server = _get_server_or_404(db, server_id)
+    status = manager.get_status(server)
+
+    if payload.name and payload.name != server.name:
+        clash = db.scalar(
+            select(Server).where(Server.name == payload.name, Server.id != server_id)
+        )
+        if clash:
+            raise HTTPException(status_code=409, detail="同名服务器已存在")
+        server.name = payload.name
+
+    mem_changed = False
+    if payload.min_memory and payload.min_memory != server.min_memory:
+        server.min_memory = payload.min_memory
+        mem_changed = True
+    if payload.max_memory and payload.max_memory != server.max_memory:
+        server.max_memory = payload.max_memory
+        mem_changed = True
+
+    port_changed = payload.port is not None and payload.port != server.port
+    if port_changed:
+        server.port = payload.port
+
+    version_changed = bool(payload.mc_version) and payload.mc_version != server.mc_version
+    if version_changed:
+        if status in ("running", "installing"):
+            raise HTTPException(status_code=400, detail="更换版本需先停止实例")
+        server.mc_version = payload.mc_version
+
+    db.commit()
+    db.refresh(server)
+
+    # 落盘(内存/端口改动重启后生效)
+    if mem_changed:
+        manager.apply_memory(server)
+    if port_changed:
+        manager.apply_port(server)
+    if version_changed:
+        background.add_task(_redownload_in_background, server.id)
+
+    return _to_summary(server)
 
 
 @router.post("/{server_id}/start")

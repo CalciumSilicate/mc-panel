@@ -28,6 +28,14 @@ class ServerCreate(BaseModel):
     port: int = 25565
 
 
+class ServerUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    min_memory: str | None = None
+    max_memory: str | None = None
+    port: int | None = None
+    mc_version: str | None = None
+
+
 class ServerSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

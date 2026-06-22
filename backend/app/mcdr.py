@@ -235,6 +235,75 @@ class MCDRManager:
                 yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8"
             )
 
+    # ---------- 编辑:把改动落到实例文件 ----------
+    def apply_memory(self, server: Server) -> None:
+        """把 server 的 min/max 内存写入 config.yml 的 start_command(-Xms/-Xmx)。"""
+        config_path = self.instance_dir(server) / "config.yml"
+        if not config_path.exists():
+            return
+        try:
+            data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        except Exception:  # noqa: BLE001
+            return
+        cmd = data.get("start_command")
+        if not isinstance(cmd, list) or not cmd:
+            return
+        new_cmd: list = []
+        had_xms = had_xmx = False
+        for tok in cmd:
+            if isinstance(tok, str) and tok.startswith("-Xms"):
+                new_cmd.append(f"-Xms{server.min_memory}")
+                had_xms = True
+            elif isinstance(tok, str) and tok.startswith("-Xmx"):
+                new_cmd.append(f"-Xmx{server.max_memory}")
+                had_xmx = True
+            else:
+                new_cmd.append(tok)
+        # 缺失则补在 java 可执行文件(index 0)之后
+        if not had_xmx:
+            new_cmd.insert(1, f"-Xmx{server.max_memory}")
+        if not had_xms:
+            new_cmd.insert(1, f"-Xms{server.min_memory}")
+        data["start_command"] = new_cmd
+        config_path.write_text(
+            yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8"
+        )
+
+    def apply_port(self, server: Server) -> None:
+        """把 server.port 写入 server/server.properties 的 server-port。"""
+        props = self.instance_dir(server) / "server" / "server.properties"
+        if not props.exists():
+            return
+        out: list[str] = []
+        found = False
+        for line in props.read_text(encoding="utf-8").splitlines():
+            if line.startswith("server-port="):
+                out.append(f"server-port={server.port}")
+                found = True
+            else:
+                out.append(line)
+        if not found:
+            out.append(f"server-port={server.port}")
+        props.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+    async def redownload_jar(self, server: Server) -> None:
+        """更换版本:仅重新下载 server.jar(保留世界/配置)。"""
+        inst = self.instance_dir(server)
+        server_dir = inst / "server"
+        server_dir.mkdir(parents=True, exist_ok=True)
+        marker = inst / _INSTALLING_MARKER
+        failed = inst / _FAILED_MARKER
+        try:
+            failed.unlink(missing_ok=True)
+            marker.write_text("installing", encoding="utf-8")
+            jar_url = await get_server_jar_url(server.mc_version)
+            await download_file(jar_url, server_dir / "server.jar")
+            marker.unlink(missing_ok=True)
+        except Exception as exc:  # noqa: BLE001
+            marker.unlink(missing_ok=True)
+            failed.write_text(str(exc), encoding="utf-8")
+            raise
+
     # ---------- 启停 ----------
     async def start(
         self, server: Server, python_executable: str, java_path: str | None = None

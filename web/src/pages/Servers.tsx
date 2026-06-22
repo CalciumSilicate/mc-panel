@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Loader2, Play, Plus, RefreshCw, Server, Square, Terminal, Trash2 } from 'lucide-react'
+import { Loader2, Pencil, Play, Plus, RefreshCw, Server, Square, Terminal, Trash2 } from 'lucide-react'
 
 import {
   type JavaInfo,
@@ -11,6 +11,7 @@ import {
   listServers,
   startServer,
   stopServer,
+  updateServer,
 } from '@/api/servers'
 import { InlineLoader } from '@/components/PageLoader'
 import { PageShell, PageSurface } from '@/components/layout/PageScaffold'
@@ -45,6 +46,7 @@ export default function Servers() {
   const [createOpen, setCreateOpen] = useState(false)
   const [busyId, setBusyId] = useState<number | null>(null)
   const [consoleServer, setConsoleServer] = useState<ServerSummary | null>(null)
+  const [editServer, setEditServer] = useState<ServerSummary | null>(null)
 
   useEffect(() => {
     const timer = window.setInterval(refresh, 4000)
@@ -150,6 +152,17 @@ export default function Servers() {
                               variant="ghost"
                               size="icon"
                               className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                              disabled={server.status === 'installing'}
+                              title="编辑"
+                              onClick={() => setEditServer(server)}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground hover:text-foreground"
                               disabled={server.status === 'installing' || server.status === 'new_setup'}
                               title="控制台"
                               onClick={() => setConsoleServer(server)}
@@ -208,6 +221,15 @@ export default function Servers() {
         onOpenChange={setCreateOpen}
         onCreated={() => {
           setCreateOpen(false)
+          refresh()
+        }}
+      />
+
+      <EditServerDialog
+        server={editServer}
+        onClose={() => setEditServer(null)}
+        onSaved={() => {
+          setEditServer(null)
           refresh()
         }}
       />
@@ -356,6 +378,162 @@ function CreateServerDialog({
           <Button type="button" className="gap-2" onClick={submit} disabled={submitting}>
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
             创建
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function EditServerDialog({
+  server,
+  onClose,
+  onSaved,
+}: {
+  server: ServerSummary | null
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const { showToast } = useGlobalToast()
+  const [name, setName] = useState('')
+  const [version, setVersion] = useState('')
+  const [minMemory, setMinMemory] = useState('1G')
+  const [maxMemory, setMaxMemory] = useState('2G')
+  const [port, setPort] = useState('25565')
+  const [versions, setVersions] = useState<string[]>([])
+  const [versionsLoading, setVersionsLoading] = useState(false)
+  const [javaInfo, setJavaInfo] = useState<JavaInfo | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+
+  const open = server !== null
+  const running = server?.status === 'running'
+
+  useEffect(() => {
+    if (!server) return
+    setName(server.name)
+    setVersion(server.mc_version)
+    setMinMemory(server.min_memory)
+    setMaxMemory(server.max_memory)
+    setPort(String(server.port))
+    // 仅在打开/切换实例时初始化,避免列表刷新覆盖正在编辑的内容
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [server?.id])
+
+  useEffect(() => {
+    if (!open) return
+    setVersionsLoading(true)
+    getVanillaVersions()
+      .then(setVersions)
+      .catch(() => undefined)
+      .finally(() => setVersionsLoading(false))
+  }, [open])
+
+  useEffect(() => {
+    if (!open || !version) {
+      setJavaInfo(null)
+      return
+    }
+    let cancelled = false
+    getJavaInfo(version)
+      .then((info) => !cancelled && setJavaInfo(info))
+      .catch(() => !cancelled && setJavaInfo(null))
+    return () => {
+      cancelled = true
+    }
+  }, [open, version])
+
+  const submit = async () => {
+    if (!server) return
+    if (!name.trim()) {
+      showToast('error', '名称不能为空')
+      return
+    }
+    setSubmitting(true)
+    try {
+      await updateServer(server.id, {
+        name: name.trim(),
+        min_memory: minMemory.trim() || '1G',
+        max_memory: maxMemory.trim() || '2G',
+        port: Number(port) || 25565,
+        mc_version: version,
+      })
+      showToast('success', version !== server.mc_version ? '已保存,正在重新下载核心' : '已保存')
+      onSaved()
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : '保存失败')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => (!o ? onClose() : undefined)}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>编辑实例 —— {server?.name}</DialogTitle>
+          <DialogDescription>内存/端口改动在重启后生效;更换版本需先停止实例,并会重新下载对应核心。</DialogDescription>
+        </DialogHeader>
+
+        <div className="grid gap-4 py-2">
+          <div className="space-y-2">
+            <Label htmlFor="edit-name">名称</Label>
+            <Input id="edit-name" value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="edit-version">Minecraft 版本</Label>
+            <Select value={version} onValueChange={setVersion} disabled={versionsLoading || running}>
+              <SelectTrigger id="edit-version">
+                <SelectValue placeholder={versionsLoading ? '加载中…' : '选择版本'} />
+              </SelectTrigger>
+              <SelectContent className="max-h-72">
+                {version && !versions.includes(version) ? (
+                  <SelectItem value={version}>{version}(当前)</SelectItem>
+                ) : null}
+                {versions.map((v) => (
+                  <SelectItem key={v} value={v}>
+                    {v}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {running ? (
+              <p className="text-xs text-muted-foreground">运行中不可更换版本,请先停止。</p>
+            ) : javaInfo ? (
+              <p className={cn('text-xs', javaInfo.satisfied ? 'text-muted-foreground' : 'text-destructive')}>
+                {javaInfo.required_major
+                  ? `需要 Java ${javaInfo.required_major}+`
+                  : '所需 Java 版本未知(可能为快照)'}
+                {javaInfo.satisfied
+                  ? javaInfo.chosen_major
+                    ? ` · 将使用 Java ${javaInfo.chosen_major}`
+                    : ' · 将使用默认 Java'
+                  : ` · ${javaInfo.message ?? '没有满足要求的 Java,请先到设置添加'}`}
+              </p>
+            ) : null}
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="space-y-2">
+              <Label htmlFor="edit-min">最小内存</Label>
+              <Input id="edit-min" value={minMemory} onChange={(e) => setMinMemory(e.target.value)} placeholder="1G" />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-max">最大内存</Label>
+              <Input id="edit-max" value={maxMemory} onChange={(e) => setMaxMemory(e.target.value)} placeholder="2G" />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-port">端口</Label>
+              <Input id="edit-port" value={port} onChange={(e) => setPort(e.target.value)} inputMode="numeric" />
+            </div>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>
+            取消
+          </Button>
+          <Button type="button" className="gap-2" onClick={submit} disabled={submitting}>
+            {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pencil className="h-4 w-4" />}
+            保存
           </Button>
         </DialogFooter>
       </DialogContent>
