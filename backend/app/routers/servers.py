@@ -54,6 +54,7 @@ COMMON_PROPERTY_KEYS = [
     "online-mode",
     "level-seed",
 ]
+from .. import ports as port_utils
 from .. import versions as versions_mod
 
 router = APIRouter(prefix="/servers", tags=["servers"])
@@ -79,6 +80,21 @@ def _group_name(db: Session, group_id: int | None) -> str:
         return ""
     g = db.get(ServerGroup, group_id)
     return g.name if g else ""
+
+
+def _port_in_use(db: Session, port: int, exclude_id: int | None = None) -> bool:
+    """端口是否已被其它面板实例占用(DB 层去重)。"""
+    q = select(Server).where(Server.port == port)
+    if exclude_id is not None:
+        q = q.where(Server.id != exclude_id)
+    return db.scalar(q) is not None
+
+
+@router.get("/suggest-port")
+def suggest_port(_: str = Depends(require_admin), db: Session = Depends(get_db)) -> dict:
+    """给新建对话框推荐一个空闲端口(避开已有实例 + 系统未占用)。"""
+    taken = {p for (p,) in db.execute(select(Server.port)).all()}
+    return {"port": port_utils.find_free_port(taken) or 25565}
 
 
 @router.get("", response_model=list[ServerSummary])
@@ -216,6 +232,8 @@ async def create_server(
     settings = get_settings_row(db)
     if payload.group_id and not db.get(ServerGroup, payload.group_id):
         raise HTTPException(status_code=400, detail="互联组不存在")
+    if _port_in_use(db, payload.port):
+        raise HTTPException(status_code=409, detail=f"端口 {payload.port} 已被其它实例使用")
     server = Server(
         name=payload.name,
         dir_name=dir_name,
@@ -284,6 +302,8 @@ async def update_server(
 
     port_changed = payload.port is not None and payload.port != server.port
     if port_changed:
+        if _port_in_use(db, payload.port, exclude_id=server_id):
+            raise HTTPException(status_code=409, detail=f"端口 {payload.port} 已被其它实例使用")
         server.port = payload.port
 
     if payload.auto_start is not None:
@@ -413,6 +433,9 @@ async def start_server(
     server_id: int, _: object = Depends(require_operate), db: Session = Depends(get_db)
 ) -> dict:
     server = _get_server_or_404(db, server_id)
+    # 启动前实地探测端口是否被占用(自身已在运行则跳过)
+    if not manager.is_running(server.id) and not port_utils.is_port_free(server.port):
+        raise HTTPException(status_code=400, detail=f"端口 {server.port} 已被占用,无法启动")
     settings = get_settings_row(db)
     if server.java_path_override:
         java_path = server.java_path_override

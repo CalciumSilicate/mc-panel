@@ -14,6 +14,7 @@ import {
   getLoaderVersions,
   getProperties,
   getServerVersions,
+  getSuggestedPort,
   getVelocityConfig,
   listServers,
   reinstallServer,
@@ -389,6 +390,7 @@ function CreateServerDialog({
       setType('vanilla')
       setChannel('release')
       setGroupId(null)
+      getSuggestedPort().then((p) => setPort(String(p))).catch(() => undefined)
     }
   }, [open])
 

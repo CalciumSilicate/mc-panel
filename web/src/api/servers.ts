@@ -76,6 +76,10 @@ export function updateVelocityConfig(id: number, cfg: VelocityConfig): Promise<V
   })
 }
 
+export function getSuggestedPort(): Promise<number> {
+  return apiRequest<{ port: number }>('/servers/suggest-port').then((r) => r.port)
+}
+
 export function getServerVersions(
   type: ServerType,
   channel: VersionChannel = 'release',
