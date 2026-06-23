@@ -43,6 +43,16 @@ def list_presets() -> list[dict]:
     ]
 
 
+@router.get("/status/{server_id}")
+def status(server_id: int, _: str = Depends(require_helper), db: Session = Depends(get_db)) -> dict:
+    """一次返回该实例所有预设的安装状态(读缓存)。"""
+    server = _server(db, server_id)
+    ids = plugin_scan.get_installed_ids(db, server_id)
+    if ids is None:
+        ids = plugin_scan.scan_server(db, server)
+    return {key: (p.plugin_id in ids) for key, p in presets.PRESETS.items()}
+
+
 @router.get("/{key}/{server_id}")
 def get_config(key: str, server_id: int, _: str = Depends(require_helper), db: Session = Depends(get_db)) -> dict:
     preset = _preset(key)

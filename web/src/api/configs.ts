@@ -24,6 +24,10 @@ export function listPresets(): Promise<Preset[]> {
   return apiRequest<Preset[]>('/configs')
 }
 
+export function getPresetStatus(serverId: number): Promise<Record<string, boolean>> {
+  return apiRequest<Record<string, boolean>>(`/configs/status/${serverId}`)
+}
+
 export function getPresetConfig(key: string, serverId: number): Promise<PresetConfig> {
   return apiRequest<PresetConfig>(`/configs/${key}/${serverId}`)
 }

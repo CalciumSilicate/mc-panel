@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Check, ChevronDown, Copy, Download, Loader2, Save, Send } from 'lucide-react'
+import { Check, ChevronDown, Copy, Download, ExternalLink, Loader2, Save, Send } from 'lucide-react'
 
 import { ApiError } from '@/api/client'
 import {
@@ -8,6 +8,7 @@ import {
   type PresetField,
   copyConfigTo,
   getPresetConfig,
+  getPresetStatus,
   installPreset,
   installPresetTo,
   listPresets,
@@ -153,17 +154,26 @@ function FieldInput({ field, value, onChange }: { field: PresetField; value: unk
   }
 }
 
-function PresetCard({ preset, serverId, servers }: { preset: Preset; serverId: number; servers: ServerSummary[] }) {
+function PresetCard({ preset, serverId, servers, installed, onInstalled }: {
+  preset: Preset
+  serverId: number
+  servers: ServerSummary[]
+  installed: boolean
+  onInstalled: () => void
+}) {
   const { showToast } = useGlobalToast()
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [installed, setInstalled] = useState<boolean | null>(null)
+  const [loaded, setLoaded] = useState(false)
   const [values, setValues] = useState<Record<string, unknown>>({})
   const [busy, setBusy] = useState(false)
   const [picker, setPicker] = useState<'copy' | 'install' | null>(null)
   const [pickerBusy, setPickerBusy] = useState(false)
 
   const others = useMemo(() => servers.filter((s) => s.id !== serverId), [servers, serverId])
+
+  // 切换服务器/安装态变化时重置已加载的配置
+  useEffect(() => { setOpen(false); setLoaded(false); setValues({}) }, [serverId, installed])
 
   const reportBatch = (results: BatchResult[]) => {
     const bad = results.filter((r) => r.status !== 'ok')
@@ -184,12 +194,12 @@ function PresetCard({ preset, serverId, servers }: { preset: Preset; serverId: n
     }
   }
 
-  const load = async () => {
+  const loadValues = async () => {
     setLoading(true)
     try {
       const c = await getPresetConfig(preset.key, serverId)
-      setInstalled(c.installed)
       setValues(c.values)
+      setLoaded(true)
     } catch (err) {
       showToast('error', err instanceof ApiError ? err.message : '加载失败')
     } finally {
@@ -197,13 +207,10 @@ function PresetCard({ preset, serverId, servers }: { preset: Preset; serverId: n
     }
   }
 
-  // 切换服务器时重置
-  useEffect(() => { setOpen(false); setInstalled(null) }, [serverId])
-
   const toggle = () => {
     const next = !open
     setOpen(next)
-    if (next && installed === null) load()
+    if (next && installed && !loaded) loadValues()
   }
 
   const install = async () => {
@@ -211,7 +218,8 @@ function PresetCard({ preset, serverId, servers }: { preset: Preset; serverId: n
     try {
       await installPreset(preset.key, serverId)
       showToast('success', `已安装 ${preset.name}`)
-      await load()
+      onInstalled()
+      setOpen(true)
     } catch (err) {
       showToast('error', err instanceof ApiError ? err.message : '安装失败')
     } finally {
@@ -233,38 +241,54 @@ function PresetCard({ preset, serverId, servers }: { preset: Preset; serverId: n
 
   return (
     <div className="rounded-xl border border-border/70 bg-background/40">
-      <button type="button" className="flex w-full items-center gap-3 px-4 py-3 text-left" onClick={toggle}>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="font-medium">{preset.name}</span>
-            {installed === true ? <Badge variant="outline" className="text-[11px] text-emerald-600 dark:text-emerald-400">已安装</Badge> : null}
-            {installed === false ? <Badge variant="outline" className="text-[11px] text-muted-foreground">未安装</Badge> : null}
+      <div className="flex w-full items-center gap-3 px-4 py-3">
+        <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={toggle}>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className="font-medium">{preset.name}</span>
+              {installed
+                ? <Badge variant="outline" className="text-[11px] text-emerald-600 dark:text-emerald-400">已安装</Badge>
+                : <Badge variant="outline" className="text-[11px] text-muted-foreground">未安装</Badge>}
+            </div>
+            <div className="truncate text-xs text-muted-foreground">{preset.description}</div>
           </div>
-          <div className="truncate text-xs text-muted-foreground">{preset.description}</div>
-        </div>
-        <ChevronDown className={cn('h-4 w-4 shrink-0 text-muted-foreground transition-transform', open && 'rotate-180')} />
-      </button>
+        </button>
+        {!installed ? (
+          <Button type="button" size="sm" className="gap-1.5 shrink-0" onClick={install} disabled={busy}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+            一键安装
+          </Button>
+        ) : null}
+        <button type="button" onClick={toggle} className="shrink-0">
+          <ChevronDown className={cn('h-4 w-4 text-muted-foreground transition-transform', open && 'rotate-180')} />
+        </button>
+      </div>
 
       {open ? (
         <div className="border-t border-border/70 px-4 py-3">
-          {loading ? (
-            <div className="py-4"><InlineLoader /></div>
-          ) : installed === false ? (
+          {!installed ? (
             <div className="flex items-center justify-between gap-3">
-              <span className="text-sm text-muted-foreground">尚未安装,点击从 MCDR 仓库一键安装并写入默认配置。</span>
-              <div className="flex shrink-0 gap-2">
-                <Button type="button" variant="outline" className="gap-1.5" onClick={() => setPicker('install')}>
-                  <Send className="h-4 w-4" />
-                  安装到其他
-                </Button>
-                <Button type="button" className="gap-1.5" onClick={install} disabled={busy}>
-                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-                  一键安装
-                </Button>
-              </div>
+              <span className="text-sm text-muted-foreground">尚未安装。可一键安装,或装到其它服务器。</span>
+              <Button type="button" variant="outline" className="gap-1.5 shrink-0" onClick={() => setPicker('install')}>
+                <Send className="h-4 w-4" />
+                安装到其他
+              </Button>
             </div>
+          ) : loading ? (
+            <div className="py-4"><InlineLoader /></div>
           ) : (
             <div className="space-y-3">
+              {preset.key === 'bili_live_helper' ? (
+                <a
+                  href="https://nemo2011.github.io/bilibili-api/#/get-credential"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-primary/10 px-3 py-1.5 text-xs text-primary hover:bg-primary/15"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  如何获取 SESSDATA / bili_jct / buvid3 / ac_time_value?(教程)
+                </a>
+              ) : null}
               {preset.fields.map((f) => (
                 <div key={f.path} className={cn('gap-2', f.type === 'string_array' || f.type === 'json' ? 'space-y-1.5' : 'flex items-center justify-between')}>
                   <Label className="text-sm">{f.label}</Label>
@@ -307,12 +331,18 @@ export default function PluginConfig() {
   const { data: servers } = useResource(() => listServers(), [])
   const [serverId, setServerId] = useState<number | null>(null)
   const { data: presets, loading } = useResource(() => listPresets(), [])
+  const [status, setStatus] = useState<Record<string, boolean>>({})
 
   const mcServers = useMemo<ServerSummary[]>(() => (servers ?? []).filter((s) => MC_TYPES.includes(s.server_type)), [servers])
 
   useEffect(() => {
     if (serverId === null && mcServers.length > 0) setServerId(mcServers[0].id)
   }, [mcServers, serverId])
+
+  const refreshStatus = () => {
+    if (serverId !== null) getPresetStatus(serverId).then(setStatus).catch(() => undefined)
+  }
+  useEffect(() => { setStatus({}); refreshStatus() }, [serverId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <PageShell
@@ -336,7 +366,9 @@ export default function PluginConfig() {
         <div className="flex h-40 items-center justify-center"><InlineLoader /></div>
       ) : (
         <PageSurface bodyClassName="space-y-3">
-          {(presets ?? []).map((p) => (<PresetCard key={p.key} preset={p} serverId={serverId} servers={mcServers} />))}
+          {(presets ?? []).map((p) => (
+            <PresetCard key={p.key} preset={p} serverId={serverId} servers={mcServers} installed={Boolean(status[p.key])} onInstalled={refreshStatus} />
+          ))}
         </PageSurface>
       )}
     </PageShell>
