@@ -6,6 +6,7 @@ import {
   ChevronRight,
   KeyRound,
   LayoutDashboard,
+  Building2,
   DatabaseBackup,
   Layers,
   Loader2,
@@ -48,6 +49,7 @@ const ChatPage = lazy(() => import('@/pages/Chat'))
 const ProxyNetPage = lazy(() => import('@/pages/ProxyNet'))
 const PluginConfigPage = lazy(() => import('@/pages/PluginConfig'))
 const PrimeBackupPage = lazy(() => import('@/pages/PrimeBackup'))
+const LitematicaPage = lazy(() => import('@/pages/Litematica'))
 const UsersPage = lazy(() => import('@/pages/Users'))
 const SettingsPage = lazy(() => import('@/pages/Settings'))
 
@@ -59,7 +61,7 @@ const SettingsPage = lazy(() => import('@/pages/Settings'))
  * 真要做深链接/多级路由时,把 `currentPage` 状态换成 router 即可,其余结构不动。
  */
 
-type Page = 'overview' | 'servers' | 'proxy' | 'plugins' | 'pconfig' | 'mods' | 'archives' | 'primebackup' | 'superflat' | 'chat' | 'users' | 'settings'
+type Page = 'overview' | 'servers' | 'proxy' | 'plugins' | 'pconfig' | 'mods' | 'archives' | 'primebackup' | 'litematica' | 'superflat' | 'chat' | 'users' | 'settings'
 
 interface NavItem {
   key: Page
@@ -77,6 +79,7 @@ const navItems: NavItem[] = [
   { key: 'mods', label: '模组', icon: Package, minRole: 'helper' },
   { key: 'archives', label: '存档', icon: Archive, minRole: 'user' },
   { key: 'primebackup', label: 'Prime Backup', icon: DatabaseBackup, minRole: 'helper' },
+  { key: 'litematica', label: 'Litematica', icon: Building2, minRole: 'helper' },
   { key: 'chat', label: '聊天室', icon: MessagesSquare, minRole: 'user' },
   { key: 'superflat', label: '超平坦', icon: Layers, minRole: 'helper' },
   { key: 'users', label: '用户管理', icon: UsersIcon, minRole: 'admin' },
@@ -320,6 +323,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                       {currentPage === 'proxy' ? <ProxyNetPage /> : null}
                       {currentPage === 'pconfig' ? <PluginConfigPage /> : null}
                       {currentPage === 'primebackup' ? <PrimeBackupPage /> : null}
+                      {currentPage === 'litematica' ? <LitematicaPage /> : null}
                       {currentPage === 'plugins' ? <Plugins /> : null}
                       {currentPage === 'mods' ? <Mods /> : null}
                       {currentPage === 'archives' ? <Archives /> : null}
