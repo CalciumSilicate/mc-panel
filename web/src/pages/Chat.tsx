@@ -35,17 +35,47 @@ function Avatar({ src, name, className }: { src?: string; name: string; classNam
   )
 }
 
-function Segments({ segs, fallback }: { segs?: ChatSegment[]; fallback: string }) {
+function Segments({
+  segs,
+  fallback,
+  mine,
+  onAt,
+}: {
+  segs?: ChatSegment[]
+  fallback: string
+  mine: boolean
+  onAt: (name: string, qq?: string) => void
+}) {
   const list = segs && segs.length > 0 ? segs : [{ type: 'text' as const, text: fallback }]
   return (
     <>
       {list.map((s, i) => {
-        if (s.type === 'image') return <img key={i} src={s.url} alt="图片" className="my-1 max-h-52 max-w-full rounded-lg" loading="lazy" />
-        if (s.type === 'at') return <span key={i} className="rounded bg-sky-500/15 px-1 text-sky-600 dark:text-sky-400">@{s.name || s.qq}</span>
+        if (s.type === 'image')
+          return (
+            <a key={i} href={s.url} target="_blank" rel="noreferrer">
+              <img src={s.url} alt="图片" className="my-0.5 max-h-52 max-w-full rounded-lg" loading="lazy" />
+            </a>
+          )
+        if (s.type === 'at') {
+          const label = s.name || s.qq || ''
+          return (
+            <button
+              key={i}
+              type="button"
+              onClick={() => onAt(label, s.qq)}
+              className={cn(
+                'font-medium underline-offset-2 hover:underline',
+                mine ? 'text-primary-foreground' : 'text-sky-600 dark:text-sky-400',
+              )}
+            >
+              @{label}
+            </button>
+          )
+        }
         if (s.type === 'face') return <span key={i} className="opacity-70">[表情]</span>
         if (s.type === 'reply')
           return (
-            <span key={i} className="mb-1 block border-l-2 border-muted-foreground/40 pl-2 text-xs opacity-70">
+            <span key={i} className={cn('mb-1 block border-l-2 pl-2 text-xs opacity-70', mine ? 'border-primary-foreground/40' : 'border-muted-foreground/40')}>
               回复 {s.user}：{s.text}
             </span>
           )
@@ -62,7 +92,7 @@ const SOURCE_BADGE: Record<ChatMessage['source'], { label: string; tone: string 
   system: { label: '系统', tone: 'text-muted-foreground' },
 }
 
-function MessageRow({ msg, mine }: { msg: ChatMessage; mine: boolean }) {
+function MessageRow({ msg, mine, onAt }: { msg: ChatMessage; mine: boolean; onAt: (name: string, qq?: string) => void }) {
   if (msg.source === 'system') {
     return (
       <div className="my-1 text-center">
@@ -88,7 +118,7 @@ function MessageRow({ msg, mine }: { msg: ChatMessage; mine: boolean }) {
             mine ? 'rounded-tr-sm bg-primary text-primary-foreground' : 'rounded-tl-sm bg-muted',
           )}
         >
-          <Segments segs={msg.segments} fallback={msg.text} />
+          <Segments segs={msg.segments} fallback={msg.text} mine={mine} onAt={onAt} />
         </div>
       </div>
     </div>
@@ -193,6 +223,13 @@ export default function Chat() {
     }
   }
 
+  // 点击消息里的 @,把 @该人 填进输入框(QQ 成员带真实 ping)
+  const insertAt = (name: string, qq?: string) => {
+    setText((cur) => cur + (cur && !cur.endsWith(' ') ? ' ' : '') + `@${name} `)
+    if (qq) setMentions((cur) => ({ ...cur, [name]: qq }))
+    inputRef.current?.focus()
+  }
+
   const onInputKeyDown = (e: ReactKeyboardEvent) => {
     if (atOpen) {
       if (e.key === 'ArrowDown') { e.preventDefault(); setAtIndex((i) => Math.min(i + 1, atCandidates.length - 1)); return }
@@ -234,7 +271,7 @@ export default function Chat() {
                 <p className="py-10 text-center text-sm text-muted-foreground">暂无消息。</p>
               ) : (
                 messages.map((m, i) => (
-                  <MessageRow key={i} msg={m} mine={m.source === 'web' && m.sender === user.username} />
+                  <MessageRow key={i} msg={m} mine={m.source === 'web' && m.sender === user.username} onAt={insertAt} />
                 ))
               )}
             </div>
