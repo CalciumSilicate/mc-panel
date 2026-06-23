@@ -218,8 +218,14 @@ class ModManager:
         )
         return dest.name
 
-    async def install_from_modrinth(self, instance_dir: Path, version_id: str, progress=None) -> str:
-        """安装模组并递归(BFS)安装其 required 依赖(可选依赖跳过)。"""
+    async def install_from_modrinth(
+        self, instance_dir: Path, version_id: str, progress=None, mc_version: str | None = None
+    ) -> str:
+        """安装模组并递归(BFS)安装其 required 依赖(可选依赖跳过)。
+
+        依赖按目标 MC 版本解析:优先用传入的 mc_version(=服务器版本),避免装到相邻
+        版本的依赖(如 26.2 服务器误装 26.1.2 的 Fabric API)。
+        """
         primary_name: str | None = None
         visited_versions: set[str] = set()
         visited_projects: set[str] = set()
@@ -238,7 +244,7 @@ class ModManager:
             loaders = version.get("loaders") or []
             loader = loaders[0] if loaders else None
             game_versions = version.get("game_versions") or []
-            mc_version = game_versions[0] if game_versions else None
+            dep_mc = mc_version or (game_versions[0] if game_versions else None)
             for dep in version.get("dependencies") or []:
                 if dep.get("dependency_type") != "required":
                     continue
@@ -247,7 +253,7 @@ class ModManager:
                 if dep_vid and dep_vid not in visited_versions:
                     queue.append(dep_vid)
                 elif dep_pid and dep_pid not in visited_projects:
-                    dep_versions = await self.list_versions(dep_pid, mc_version, loader)
+                    dep_versions = await self.list_versions(dep_pid, dep_mc, loader)
                     if dep_versions:
                         queue.append(dep_versions[0]["id"])
         return primary_name or ""

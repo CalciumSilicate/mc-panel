@@ -104,7 +104,7 @@ async def _install_forward_mod(server: Server, slug: str, loader: str) -> bool:
     versions = await mods.list_versions(slug, server.mc_version, loader)
     if not versions:
         return False
-    await mods.install_from_modrinth(inst, versions[0]["id"])
+    await mods.install_from_modrinth(inst, versions[0]["id"], mc_version=server.mc_version)
     return True
 
 

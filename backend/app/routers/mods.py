@@ -200,7 +200,8 @@ async def install_mod(
     async def task() -> None:
         try:
             name = await mods.install_from_modrinth(
-                inst, body.version_id, progress=lambda d, t: jobstore.update(job_id, d, t)
+                inst, body.version_id, progress=lambda d, t: jobstore.update(job_id, d, t),
+                mc_version=server.mc_version,
             )
             jobstore.finish(job_id, name)
         except Exception as exc:  # noqa: BLE001
