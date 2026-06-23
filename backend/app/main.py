@@ -21,7 +21,7 @@ from .java import choose_java, detect_installs, get_java_paths
 from . import bridge, onebot, verification
 from .mcdr import manager
 from .models import Server
-from .routers import archives, auth, chat, configs, groups, jobs, litematica, modconfigs, mods, pb, pcrc, plugins, servers, settings, system, tools, users
+from .routers import archives, auth, chat, configs, groups, jobs, litematica, modconfigs, mods, pb, pcrc, plugins, servers, settings, stats as stats_router, system, tools, users
 
 # 在模块加载时就建表,确保无论以何种方式启动(uvicorn / TestClient / 直接 import)
 # 数据库都已就绪。
@@ -73,6 +73,7 @@ async def lifespan(_: FastAPI):
     from . import mod_presets
     from . import pb as pb_mod
     from . import plugin_scan
+    from . import stats as stats_mod
 
     await _autostart()
     # 启动 QQ 互通客户端(OneBot 正向 ws)
@@ -86,12 +87,14 @@ async def lifespan(_: FastAPI):
     scan_task = asyncio.create_task(plugin_scan.worker())
     pb_task = asyncio.create_task(pb_mod.worker())
     mod_task = asyncio.create_task(mod_presets.worker())
+    stats_task = asyncio.create_task(stats_mod.worker())
     try:
         yield
     finally:
         scan_task.cancel()
         pb_task.cancel()
         mod_task.cancel()
+        stats_task.cancel()
 
 
 app = FastAPI(title="mc-panel API", lifespan=lifespan)
@@ -139,6 +142,7 @@ for r in (
     litematica.router,
     pcrc.router,
     modconfigs.router,
+    stats_router.router,
 ):
     app.include_router(r, prefix="/api")
 

@@ -48,6 +48,20 @@ class ServerGroup(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
+class PlayerStat(Base):
+    """玩家统计快照(来自 vanilla world/stats/<uuid>.json 的精选指标)。仅在值变化时插入。"""
+
+    __tablename__ = "player_stats"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    server_id: Mapped[int] = mapped_column(Integer, index=True)
+    uuid: Mapped[str] = mapped_column(String(40), index=True)
+    name: Mapped[str] = mapped_column(String(64), default="")
+    metric: Mapped[str] = mapped_column(String(48), index=True)
+    value: Mapped[int] = mapped_column(Integer, default=0)
+    ts: Mapped[datetime] = mapped_column(DateTime, default=_now, index=True)
+
+
 class PluginScan(Base):
     """每个实例已安装 MCDR 插件 id 的缓存(由定时 worker 扫描更新),供「插件配置」秒读。"""
 
