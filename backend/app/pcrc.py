@@ -15,6 +15,11 @@ from pathlib import Path
 from .config import PCRC_ROOT
 from .models import PcrcInstance
 
+# PCRC 不在 PyPI,发布为 zipapp(PCRC.pyz);依赖单独 pip 安装
+PCRC_PYZ = PCRC_ROOT / "PCRC.pyz"
+PCRC_PYZ_URL = "https://github.com/Fallen-Breath/PCRC/releases/download/v1.4.1/PCRC.pyz"
+PCRC_DEPS = ["cryptography", "requests", "pynbt", "redbaron", "colorlog", "ruamel.yaml"]
+
 
 def instance_dir(inst: PcrcInstance) -> Path:
     return PCRC_ROOT / inst.dir_name
@@ -73,7 +78,7 @@ class PcrcManager:
             slot = _Proc()
             self._procs[inst.id] = slot
         proc = subprocess.Popen(
-            [sys.executable, "-m", "pcrc"],
+            [sys.executable, str(PCRC_PYZ)],
             cwd=str(d),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -124,9 +129,4 @@ manager = PcrcManager()
 
 
 def pcrc_available() -> bool:
-    try:
-        import importlib.util
-
-        return importlib.util.find_spec("pcrc") is not None
-    except Exception:  # noqa: BLE001
-        return False
+    return PCRC_PYZ.exists()

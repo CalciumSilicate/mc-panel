@@ -187,7 +187,7 @@ def _blocks_to_fill_cmds(blocks_by_state, limit=MAX_FILL_VOLUME):
             finals.extend(_split_cuboid(c, limit))
         finals.sort(key=lambda t: (t[2], t[4], t[0], t[3], t[5], t[1]))
         for (x1, x2, y1, y2, z1, z2) in finals:
-            out.append(f"fill ~{x1} ~{y1} ~{z1} ~{x2} ~{y2} ~{z2} {state_id} replace")
+            out.append(f"fill {x1} {y1} {z1} {x2} {y2} {z2} {state_id} replace")
     return out
 
 
@@ -288,7 +288,7 @@ def generate_commands(path: str | Path, offset=(0, 0, 0), place_air: bool = Fals
                     del nbt[k]
                 except Exception:  # noqa: BLE001
                     pass
-            summons.append(f"summon {ent.id} ~{dxf} ~{dyf} ~{dzf} {_to_snbt(nbt)}")
+            summons.append(f"summon {ent.id} {dxf} {dyf} {dzf} {_to_snbt(nbt)}")
             core_chunks.add((int(math.floor(dxf)) // 16, int(math.floor(dzf)) // 16))
         for te in getattr(reg, "tile_entities", []) or []:
             tx, ty, tz = te.position
@@ -301,7 +301,7 @@ def generate_commands(path: str | Path, offset=(0, 0, 0), place_air: bool = Fals
                     del tnbt[k]
                 except Exception:  # noqa: BLE001
                     pass
-            merges.append(f"data merge block ~{dx} ~{dy} ~{dz} {_to_snbt(tnbt)}")
+            merges.append(f"data merge block {dx} {dy} {dz} {_to_snbt(tnbt)}")
             core_chunks.add((dx // 16, dz // 16))
 
     blocks = _blocks_to_fill_cmds(blocks_by_state)
@@ -314,6 +314,6 @@ def generate_commands(path: str | Path, offset=(0, 0, 0), place_air: bool = Fals
     add_cmds, remove_cmds = [], []
     for (cx1, cz1, cx2, cz2) in rects:
         x1, z1, x2, z2 = cx1 * 16, cz1 * 16, cx2 * 16 + 15, cz2 * 16 + 15
-        add_cmds.append(f"forceload add ~{x1} ~{z1} ~{x2} ~{z2}")
-        remove_cmds.append(f"forceload remove ~{x1} ~{z1} ~{x2} ~{z2}")
+        add_cmds.append(f"forceload add {x1} {z1} {x2} {z2}")
+        remove_cmds.append(f"forceload remove {x1} {z1} {x2} {z2}")
     return add_cmds + blocks + summons + merges + remove_cmds

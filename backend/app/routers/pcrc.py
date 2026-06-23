@@ -43,14 +43,26 @@ def list_instances(_: str = Depends(require_helper), db: Session = Depends(get_d
 
 @router.post("/install")
 async def install(_: str = Depends(require_admin)) -> dict:
-    """pip 安装 PCRC 到后端环境。"""
+    """安装 PCRC:pip 装其依赖 + 下载 PCRC.pyz(PCRC 不在 PyPI)。"""
+    # 1) 依赖
     proc = await asyncio.create_subprocess_exec(
-        sys.executable, "-m", "pip", "install", "-U", "pcrc",
+        sys.executable, "-m", "pip", "install", "-U", *pcrc.PCRC_DEPS,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
     )
     out, _ = await proc.communicate()
     if proc.returncode != 0:
-        raise HTTPException(status_code=500, detail=(out or b"").decode("utf-8", "ignore")[-500:])
+        raise HTTPException(status_code=500, detail="依赖安装失败:" + (out or b"").decode("utf-8", "ignore")[-400:])
+    # 2) 下载 PCRC.pyz
+    from .. import net
+
+    pcrc.PCRC_PYZ.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        async with net.client(timeout=120, follow_redirects=True) as c:
+            r = await c.get(pcrc.PCRC_PYZ_URL)
+            r.raise_for_status()
+        pcrc.PCRC_PYZ.write_bytes(r.content)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"下载 PCRC.pyz 失败:{exc}")
     return {"ok": True, "available": pcrc.pcrc_available()}
 
 

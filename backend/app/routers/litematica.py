@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from pathlib import Path
 
@@ -109,6 +110,7 @@ async def build(body: BuildBody, _: str = Depends(require_helper), db: Session =
         try:
             cmds = await asyncio.to_thread(lm.generate_commands, str(p), (body.x, body.y, body.z), body.place_air)
         except Exception:  # noqa: BLE001
+            logging.getLogger("mcpanel.litematica").exception("生成投影指令失败: %s", body.name)
             return
         # 节流逐条下发,避免刷屏卡服
         for i, cmd in enumerate(cmds):
