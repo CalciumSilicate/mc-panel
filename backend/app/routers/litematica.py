@@ -116,9 +116,14 @@ async def build(body: BuildBody, _: str = Depends(require_helper), db: Session =
         for i, cmd in enumerate(cmds):
             if not manager.is_running(sid):
                 break
-            manager.send_raw(sid, cmd)
+            try:
+                await manager.send_raw(sid, cmd)
+            except Exception:  # noqa: BLE001
+                logging.getLogger("mcpanel.litematica").exception("下发指令失败")
+                break
             if i % 10 == 9:
                 await asyncio.sleep(0.2)
+        logging.getLogger("mcpanel.litematica").info("投影 %s 下发完成,共 %d 条", body.name, len(cmds))
 
     asyncio.create_task(run())
     return {"ok": True, "started": True}
