@@ -5,12 +5,14 @@ import asyncio
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .. import bridge, chat, cqcode
 from .. import onebot
+from ..config import CHAT_IMG_DIR
 from ..database import SessionLocal, get_db
 from ..deps import require_auth, require_operate
 from ..mcdr import manager
@@ -26,8 +28,18 @@ class SendBody(BaseModel):
     text: str
 
 
+@router.get("/img/{name}")
+def chat_image(name: str) -> FileResponse:
+    """缓存的 QQ 图片(无鉴权,供 <img> 直接加载)。带目录穿越防护。"""
+    base = CHAT_IMG_DIR.resolve()
+    path = (base / name).resolve()
+    if base not in path.parents or not path.is_file():
+        raise HTTPException(status_code=404, detail="图片不存在")
+    return FileResponse(path)
+
+
 @router.post("/{group_id}/send")
-def send_message(
+async def send_message(
     group_id: int,
     body: SendBody,
     user: User = Depends(require_operate),

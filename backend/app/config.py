@@ -27,6 +27,8 @@ PLUGIN_LIBRARY = DATA_DIR / "library" / "plugins"
 MOD_LIBRARY = DATA_DIR / "library" / "mods"
 # 世界存档存放目录。
 ARCHIVES_DIR = DATA_DIR / "archives"
+# 聊天室:从 QQ 下载缓存的图片
+CHAT_IMG_DIR = DATA_DIR / "chat_img"
 DB_PATH = DATA_DIR / "panel.db"
 SECRET_KEY_PATH = DATA_DIR / "secret.key"
 

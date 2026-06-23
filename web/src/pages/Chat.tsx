@@ -77,7 +77,7 @@ function MessageRow({ msg, mine }: { msg: ChatMessage; mine: boolean }) {
   return (
     <div className={cn('flex gap-2', mine && 'flex-row-reverse')}>
       <Avatar src={msg.avatar} name={name} className="h-9 w-9 shrink-0" />
-      <div className={cn('flex min-w-0 max-w-[78%] flex-col', mine && 'items-end')}>
+      <div className={cn('flex min-w-0 max-w-[78%] flex-col items-start', mine && 'items-end')}>
         <div className="mb-0.5 flex items-center gap-1.5 text-xs">
           <span className={cn('font-medium', badge.tone)}>{badge.label}</span>
           <span className="text-muted-foreground">{name}{msg.server ? `·${msg.server}` : ''}</span>
