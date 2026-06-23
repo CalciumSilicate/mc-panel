@@ -5,7 +5,10 @@ import { ApiError } from '@/api/client'
 import { type PBBackupItem, type PBOverview, getPbCached, pbExport, pbImport, pbRefresh, pbRestore } from '@/api/pb'
 import { type ServerSummary, listServers } from '@/api/servers'
 import { InlineLoader } from '@/components/PageLoader'
+import { Pagination } from '@/components/Pagination'
+import { usePaged } from '@/lib/use-paged'
 import { PageShell, PageStat, PageSurface } from '@/components/layout/PageScaffold'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -38,6 +41,7 @@ export default function PrimeBackup() {
   const [restoreTarget, setRestoreTarget] = useState<PBBackupItem | null>(null)
   const [restoreTo, setRestoreTo] = useState<number | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const paged = usePaged(list, 20)
 
   useEffect(() => {
     if (serverId === null && mcServers.length > 0) setServerId(mcServers[0].id)
@@ -161,21 +165,39 @@ export default function PrimeBackup() {
             ) : list.length === 0 ? (
               <p className="py-10 text-center text-sm text-muted-foreground">没有备份(或该实例未安装 Prime Backup)。</p>
             ) : (
-              <div className="divide-y divide-border/60">
-                {list.map((b) => (
-                  <div key={b.id} className="flex items-center gap-3 px-4 py-2.5 text-sm">
-                    <span className="w-10 shrink-0 font-mono text-muted-foreground">#{b.id}</span>
-                    <span className="w-40 shrink-0">{b.date}</span>
-                    <span className="min-w-0 flex-1 truncate text-muted-foreground">{b.comment || '—'}{b.creator ? ` · ${b.creator}` : ''}</span>
-                    <span className="w-20 shrink-0 text-right font-mono text-xs">{fmtBytes(b.stored_size)}</span>
-                    <Button type="button" variant="ghost" size="icon" className="h-8 w-8" title="导出" disabled={busy === b.id} onClick={() => onExport(b)}>
-                      {busy === b.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-                    </Button>
-                    <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={() => { setRestoreTarget(b); setRestoreTo(null) }}>
-                      <History className="h-3.5 w-3.5" />恢复
-                    </Button>
-                  </div>
-                ))}
+              <div className="px-2 pb-2">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-16">ID</TableHead>
+                      <TableHead className="w-44">时间</TableHead>
+                      <TableHead>备注 / 创建者</TableHead>
+                      <TableHead className="w-24 text-right">大小</TableHead>
+                      <TableHead className="text-right">操作</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {paged.pageItems.map((b) => (
+                      <TableRow key={b.id}>
+                        <TableCell className="font-mono text-muted-foreground">#{b.id}</TableCell>
+                        <TableCell>{b.date}</TableCell>
+                        <TableCell className="text-muted-foreground">{b.comment || '—'}{b.creator ? ` · ${b.creator}` : ''}</TableCell>
+                        <TableCell className="text-right font-mono text-xs">{fmtBytes(b.stored_size)}</TableCell>
+                        <TableCell>
+                          <div className="flex items-center justify-end gap-1.5">
+                            <Button type="button" variant="ghost" size="icon" className="h-8 w-8" title="导出" disabled={busy === b.id} onClick={() => onExport(b)}>
+                              {busy === b.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                            </Button>
+                            <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={() => { setRestoreTarget(b); setRestoreTo(null) }}>
+                              <History className="h-3.5 w-3.5" />恢复
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                <Pagination page={paged.page} pageCount={paged.pageCount} total={paged.total} onPage={paged.setPage} />
               </div>
             )}
           </PageSurface>

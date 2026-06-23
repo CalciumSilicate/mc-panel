@@ -22,6 +22,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useGlobalToast } from '@/components/ui/use-global-toast'
+import { Pagination } from '@/components/Pagination'
+import { usePaged } from '@/lib/use-paged'
 import { useResource } from '@/lib/use-resource'
 import { cn } from '@/lib/utils'
 
@@ -37,6 +39,7 @@ export default function Users() {
   const { user: me } = useAuth()
   const { showToast } = useGlobalToast()
   const { data, loading, error, refresh } = useResource(() => listUsers(), [])
+  const paged = usePaged(data ?? [], 20)
   const [createOpen, setCreateOpen] = useState(false)
   const [editUser, setEditUser] = useState<PanelUser | null>(null)
   const [busy, setBusy] = useState<number | null>(null)
@@ -94,7 +97,7 @@ export default function Users() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {(data ?? []).map((u) => (
+                {paged.pageItems.map((u) => (
                   <TableRow key={u.id}>
                     <TableCell className="font-medium">
                       {u.username}
@@ -152,6 +155,7 @@ export default function Users() {
                 ))}
               </TableBody>
             </Table>
+            <Pagination page={paged.page} pageCount={paged.pageCount} total={paged.total} onPage={paged.setPage} />
           </div>
         )}
 

@@ -22,6 +22,8 @@ import {
 import { pollJob } from '@/api/jobs'
 import { listServers } from '@/api/servers'
 import { InlineLoader } from '@/components/PageLoader'
+import { Pagination } from '@/components/Pagination'
+import { usePaged } from '@/lib/use-paged'
 import { ServerPickerDialog } from '@/components/ServerPickerDialog'
 import { PageShell, PageSurface } from '@/components/layout/PageScaffold'
 import { Button } from '@/components/ui/button'
@@ -72,6 +74,7 @@ export default function Mods() {
     () => new Set((installed.data ?? []).map((m) => stripDisabled(m.file_name))),
     [installed.data],
   )
+  const installedPaged = usePaged(installed.data ?? [], 20)
 
   const uninstall = async (match: { id?: string; file?: string }) => {
     if (serverId === null) return
@@ -208,7 +211,7 @@ export default function Mods() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {installed.data.map((m) => (
+                      {installedPaged.pageItems.map((m) => (
                         <TableRow key={m.file_name}>
                           <TableCell>
                             <div className="font-medium">{m.name}</div>
@@ -241,6 +244,7 @@ export default function Mods() {
                       ))}
                     </TableBody>
                   </Table>
+                  <Pagination page={installedPaged.page} pageCount={installedPaged.pageCount} total={installedPaged.total} onPage={installedPaged.setPage} />
                 </div>
               )}
             </PageSurface>
@@ -287,6 +291,7 @@ function LibraryTab({
   const confirm = useConfirm()
   const { showToast } = useGlobalToast()
   const { data, loading, refresh } = useResource(() => listLibrary(), [])
+  const libPaged = usePaged(data ?? [], 20)
   const [busy, setBusy] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -381,7 +386,7 @@ function LibraryTab({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {data.map((m) => (
+                {libPaged.pageItems.map((m) => (
                   <TableRow key={m.file_name}>
                     <TableCell>
                       <div className="font-medium">{m.name}</div>
@@ -455,6 +460,7 @@ function LibraryTab({
                 ))}
               </TableBody>
             </Table>
+            <Pagination page={libPaged.page} pageCount={libPaged.pageCount} total={libPaged.total} onPage={libPaged.setPage} />
           </div>
         )}
       </PageSurface>

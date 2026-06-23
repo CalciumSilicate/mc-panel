@@ -21,6 +21,8 @@ import {
 import { pollJob } from '@/api/jobs'
 import { listServers } from '@/api/servers'
 import { InlineLoader } from '@/components/PageLoader'
+import { Pagination } from '@/components/Pagination'
+import { usePaged } from '@/lib/use-paged'
 import { ServerPickerDialog } from '@/components/ServerPickerDialog'
 import { PageShell, PageSurface } from '@/components/layout/PageScaffold'
 import { Badge } from '@/components/ui/badge'
@@ -69,6 +71,7 @@ export default function Plugins() {
     () => new Set((installed.data ?? []).map((p) => stripDisabled(p.file_name))),
     [installed.data],
   )
+  const installedPaged = usePaged(installed.data ?? [], 20)
 
   const uninstall = async (match: { id?: string; file?: string }) => {
     if (serverId === null) return
@@ -207,7 +210,7 @@ export default function Plugins() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {installed.data.map((p) => (
+                      {installedPaged.pageItems.map((p) => (
                         <TableRow key={p.file_name}>
                           <TableCell>
                             <div className="font-medium">{p.name}</div>
@@ -241,6 +244,7 @@ export default function Plugins() {
                       ))}
                     </TableBody>
                   </Table>
+                  <Pagination page={installedPaged.page} pageCount={installedPaged.pageCount} total={installedPaged.total} onPage={installedPaged.setPage} />
                 </div>
               )}
             </PageSurface>
@@ -289,6 +293,7 @@ function LibraryTab({
   const { data, loading, refresh } = useResource(() => listLibrary(), [])
   const [busy, setBusy] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const libPaged = usePaged(data ?? [], 20)
 
   const onUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -380,7 +385,7 @@ function LibraryTab({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {data.map((p) => (
+                {libPaged.pageItems.map((p) => (
                   <TableRow key={p.file_name}>
                     <TableCell>
                       <div className="font-medium">{p.name}</div>
@@ -453,6 +458,7 @@ function LibraryTab({
                 ))}
               </TableBody>
             </Table>
+            <Pagination page={libPaged.page} pageCount={libPaged.pageCount} total={libPaged.total} onPage={libPaged.setPage} />
           </div>
         )}
       </PageSurface>
@@ -482,8 +488,9 @@ function CatalogueTab({
     const matched = q
       ? list.filter((p) => p.name.toLowerCase().includes(q) || p.id.toLowerCase().includes(q))
       : list
-    return matched.slice(0, 80)
+    return matched.slice(0, 500)
   }, [data, query])
+  const catPaged = usePaged(filtered, 20)
 
   const install = async (p: CataloguePlugin) => {
     setProgress((prev) => ({ ...prev, [p.id]: null }))
@@ -538,7 +545,7 @@ function CatalogueTab({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.map((p) => (
+              {catPaged.pageItems.map((p) => (
                 <TableRow key={p.id}>
                   <TableCell>
                     <div className="font-medium">{p.name}</div>
@@ -573,6 +580,7 @@ function CatalogueTab({
               ))}
             </TableBody>
           </Table>
+          <Pagination page={catPaged.page} pageCount={catPaged.pageCount} total={catPaged.total} onPage={catPaged.setPage} />
         </div>
       )}
     </PageSurface>

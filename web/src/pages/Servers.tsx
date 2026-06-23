@@ -28,6 +28,8 @@ import {
 import { type JavaInstall, getSettings } from '@/api/settings'
 import { type ServerGroup, createGroup, deleteGroup, listGroups, updateGroup } from '@/api/groups'
 import { useAuth } from '@/components/auth-context'
+import { Pagination } from '@/components/Pagination'
+import { usePaged } from '@/lib/use-paged'
 import { useConfirm, usePrompt } from '@/components/ui/dialog-context'
 import { InlineLoader } from '@/components/PageLoader'
 import { PageShell, PageSurface } from '@/components/layout/PageScaffold'
@@ -87,6 +89,7 @@ export default function Servers() {
   const [stoppingIds, setStoppingIds] = useState<Set<number>>(new Set())
   const [restartingIds, setRestartingIds] = useState<Set<number>>(new Set())
   const confirm = useConfirm()
+  const paged = usePaged(data ?? [], 20)
 
   useEffect(() => {
     const timer = window.setInterval(refresh, 2000)
@@ -219,7 +222,7 @@ export default function Servers() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {data.map((server) => {
+                  {paged.pageItems.map((server) => {
                     const meta = SERVER_STATUS_META[server.status]
                     const busy = busyId === server.id
                     const installing = server.status === 'installing'
@@ -347,6 +350,7 @@ export default function Servers() {
                   })}
                 </TableBody>
               </Table>
+              <Pagination page={paged.page} pageCount={paged.pageCount} total={paged.total} onPage={paged.setPage} />
             </div>
           )}
         </PageSurface>

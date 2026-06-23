@@ -14,7 +14,10 @@ import {
 } from '@/api/litematica'
 import { type ServerSummary, listServers } from '@/api/servers'
 import { InlineLoader } from '@/components/PageLoader'
+import { Pagination } from '@/components/Pagination'
+import { usePaged } from '@/lib/use-paged'
 import { PageShell, PageSurface } from '@/components/layout/PageScaffold'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useConfirm } from '@/components/ui/dialog-context'
@@ -48,6 +51,7 @@ export default function Litematica() {
   const [info, setInfo] = useState<{ name: string; data: LitematicaInfo } | null>(null)
   const [buildFor, setBuildFor] = useState<LitematicaFile | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const paged = usePaged(files ?? [], 20)
 
   const onUpload = async (file: File) => {
     setBusy('upload')
@@ -107,31 +111,47 @@ export default function Litematica() {
         ) : (files ?? []).length === 0 ? (
           <p className="py-10 text-center text-sm text-muted-foreground">还没有投影文件,点右上角上传 .litematic。</p>
         ) : (
-          <div className="divide-y divide-border/60">
-            {(files ?? []).map((f) => (
-              <div key={f.name} className="flex items-center gap-3 px-4 py-2.5 text-sm">
-                <Box className="h-4 w-4 shrink-0 text-muted-foreground" />
-                <span className="min-w-0 flex-1 truncate font-medium">{f.name}</span>
-                {f.info ? (
-                  <span className="shrink-0 text-xs text-muted-foreground">{f.info.size.join('×')} · {f.info.total_blocks.toLocaleString()} 方块</span>
-                ) : (
-                  <span className="shrink-0 text-xs text-muted-foreground">解析中…</span>
-                )}
-                <span className="shrink-0 font-mono text-xs text-muted-foreground">{fmtBytes(f.size_bytes)}</span>
-                <Button type="button" variant="ghost" size="icon" className="h-8 w-8" title="信息/材料" disabled={busy === f.name} onClick={() => showInfo(f)}>
-                  {busy === f.name ? <Loader2 className="h-4 w-4 animate-spin" /> : <Info className="h-4 w-4" />}
-                </Button>
-                <Button type="button" variant="ghost" size="icon" className="h-8 w-8" title="下载" onClick={() => downloadLitematica(f.name)}>
-                  <Download className="h-4 w-4" />
-                </Button>
-                <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={() => setBuildFor(f)}>
-                  <Hammer className="h-3.5 w-3.5" />建造
-                </Button>
-                <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" title="删除" onClick={() => onDelete(f)}>
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
-            ))}
+          <div className="px-2 pb-2">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>名称</TableHead>
+                  <TableHead className="w-48">尺寸 / 方块数</TableHead>
+                  <TableHead className="w-24 text-right">文件</TableHead>
+                  <TableHead className="text-right">操作</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {paged.pageItems.map((f) => (
+                  <TableRow key={f.name}>
+                    <TableCell className="font-medium">
+                      <span className="flex items-center gap-2"><Box className="h-4 w-4 shrink-0 text-muted-foreground" />{f.name}</span>
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {f.info ? `${f.info.size.join('×')} · ${f.info.total_blocks.toLocaleString()} 方块` : '解析中…'}
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-xs text-muted-foreground">{fmtBytes(f.size_bytes)}</TableCell>
+                    <TableCell>
+                      <div className="flex items-center justify-end gap-1.5">
+                        <Button type="button" variant="ghost" size="icon" className="h-8 w-8" title="信息/材料" disabled={busy === f.name} onClick={() => showInfo(f)}>
+                          {busy === f.name ? <Loader2 className="h-4 w-4 animate-spin" /> : <Info className="h-4 w-4" />}
+                        </Button>
+                        <Button type="button" variant="ghost" size="icon" className="h-8 w-8" title="下载" onClick={() => downloadLitematica(f.name)}>
+                          <Download className="h-4 w-4" />
+                        </Button>
+                        <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={() => setBuildFor(f)}>
+                          <Hammer className="h-3.5 w-3.5" />建造
+                        </Button>
+                        <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" title="删除" onClick={() => onDelete(f)}>
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            <Pagination page={paged.page} pageCount={paged.pageCount} total={paged.total} onPage={paged.setPage} />
           </div>
         )}
       </PageSurface>

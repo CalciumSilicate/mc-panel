@@ -116,23 +116,22 @@ export default function ProxyNet() {
                     </div>
                     <div className="text-xs text-muted-foreground">端口 {proxy.port} · {backends.length} 个子服</div>
                   </div>
-                  <Button type="button" className="gap-1.5" disabled={busy === proxy.id || backends.length === 0} onClick={() => wire(proxy.id)}>
+                  {/* forwarding secret(固定宽度,靠近接线按钮)*/}
+                  <div className="hidden shrink-0 items-center gap-2 lg:flex">
+                    <span className="shrink-0 text-xs text-muted-foreground">转发密钥</span>
+                    <Input
+                      value={secrets[proxy.id] ?? ''}
+                      placeholder="加载中…"
+                      className="h-8 w-56 font-mono text-xs"
+                      onChange={(e) => setSecrets((cur) => ({ ...cur, [proxy.id]: e.target.value }))}
+                    />
+                    <Button type="button" variant="outline" size="sm" onClick={() => setSecrets((cur) => ({ ...cur, [proxy.id]: randomSecret() }))}>
+                      随机
+                    </Button>
+                  </div>
+                  <Button type="button" className="gap-1.5 shrink-0" disabled={busy === proxy.id || backends.length === 0} onClick={() => wire(proxy.id)}>
                     {busy === proxy.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
                     一键接线
-                  </Button>
-                </div>
-
-                {/* forwarding secret */}
-                <div className="flex items-center gap-2 border-b border-border/70 px-4 py-2.5">
-                  <span className="shrink-0 text-xs text-muted-foreground">转发密钥</span>
-                  <Input
-                    value={secrets[proxy.id] ?? ''}
-                    placeholder="加载中…"
-                    className="h-8 flex-1 font-mono text-xs"
-                    onChange={(e) => setSecrets((cur) => ({ ...cur, [proxy.id]: e.target.value }))}
-                  />
-                  <Button type="button" variant="outline" size="sm" onClick={() => setSecrets((cur) => ({ ...cur, [proxy.id]: randomSecret() }))}>
-                    随机
                   </Button>
                 </div>
 
