@@ -15,6 +15,7 @@ import {
 import { pollJob } from '@/api/jobs'
 import { type ServerSummary, listServers } from '@/api/servers'
 import { useAuth } from '@/components/auth-context'
+import { useConfirm } from '@/components/ui/dialog-context'
 import { InlineLoader } from '@/components/PageLoader'
 import { PageShell, PageSurface } from '@/components/layout/PageScaffold'
 import { Badge } from '@/components/ui/badge'
@@ -42,6 +43,7 @@ function fmtSize(n: number): string {
 }
 
 export default function Archives() {
+  const confirm = useConfirm()
   const { user, roleAtLeast, canOperate } = useAuth()
   const canHelper = roleAtLeast('helper')
   const mine = (a: Archive) => canHelper || a.owner_user_id === user.id
@@ -85,7 +87,7 @@ export default function Archives() {
   }
 
   const onDelete = async (a: Archive) => {
-    if (!window.confirm(`删除存档「${a.name}」?`)) return
+    if (!(await confirm({ title: `删除存档「${a.name}」?`, confirmText: '删除', destructive: true }))) return
     setBusy(a.id)
     try {
       await deleteArchive(a.id)

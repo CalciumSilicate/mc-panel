@@ -27,6 +27,7 @@ import {
 import { type JavaInstall, getSettings } from '@/api/settings'
 import { type ServerGroup, createGroup, deleteGroup, listGroups, updateGroup } from '@/api/groups'
 import { useAuth } from '@/components/auth-context'
+import { useConfirm, usePrompt } from '@/components/ui/dialog-context'
 import { InlineLoader } from '@/components/PageLoader'
 import { PageShell, PageSurface } from '@/components/layout/PageScaffold'
 import { Badge } from '@/components/ui/badge'
@@ -658,6 +659,7 @@ function EditServerDialog({
   onSaved: () => void
   onDeleted: () => void
 }) {
+  const confirm = useConfirm()
   const { showToast } = useGlobalToast()
   const [tab, setTab] = useState('basic')
   const [name, setName] = useState('')
@@ -788,7 +790,7 @@ function EditServerDialog({
 
   const doDelete = async () => {
     if (!server) return
-    if (!window.confirm(`确定删除服务器「${server.name}」?该实例的所有文件将被移除,且不可恢复。`)) return
+    if (!(await confirm({ title: `删除服务器「${server.name}」?`, description: '该实例的所有文件将被移除,且不可恢复。', confirmText: '删除', destructive: true }))) return
     setDeleting(true)
     try {
       await deleteServer(server.id)
@@ -1134,6 +1136,8 @@ function EditServerDialog({
 }
 
 function ManageGroupsDialog({ open, onClose, onChanged }: { open: boolean; onClose: () => void; onChanged: () => void }) {
+  const confirm = useConfirm()
+  const prompt = usePrompt()
   const { showToast } = useGlobalToast()
   const [groups, setGroups] = useState<ServerGroup[]>([])
   const [newName, setNewName] = useState('')
@@ -1186,22 +1190,22 @@ function ManageGroupsDialog({ open, onClose, onChanged }: { open: boolean; onClo
                   <span className="text-xs text-muted-foreground">互联</span>
                   <Switch checked={g.bridge_enabled} disabled={busy} onCheckedChange={(v) => run(() => updateGroup(g.id, { bridge_enabled: v }))} />
                 </span>
-                <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" disabled={busy} title="绑定 QQ 群" onClick={() => {
-                  const n = window.prompt('绑定的 QQ 群号(多个用逗号分隔,留空清除)', g.qq_group_ids.join(', '))
+                <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" disabled={busy} title="绑定 QQ 群" onClick={async () => {
+                  const n = await prompt({ title: '绑定 QQ 群', label: '群号(多个用逗号分隔,留空清除)', defaultValue: g.qq_group_ids.join(', '), placeholder: '如 123456, 789012' })
                   if (n === null) return
                   const ids = Array.from(new Set(n.split(/[,，\s]+/).map((x) => parseInt(x, 10)).filter((x) => !Number.isNaN(x))))
                   run(() => updateGroup(g.id, { qq_group_ids: ids }), '已更新 QQ 群绑定')
                 }}>
                   <MessageSquare className="h-4 w-4" />
                 </Button>
-                <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" disabled={busy} title="重命名" onClick={() => {
-                  const n = window.prompt('新名称', g.name)
+                <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" disabled={busy} title="重命名" onClick={async () => {
+                  const n = await prompt({ title: '重命名互联组', label: '新名称', defaultValue: g.name })
                   if (n && n.trim() && n.trim() !== g.name) run(() => updateGroup(g.id, { name: n.trim() }), '已重命名')
                 }}>
                   <Pencil className="h-4 w-4" />
                 </Button>
-                <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" disabled={busy} title="删除" onClick={() => {
-                  if (window.confirm(`删除互联组「${g.name}」?组内服务器会被解绑(不删除服务器)。`)) run(() => deleteGroup(g.id), '已删除')
+                <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" disabled={busy} title="删除" onClick={async () => {
+                  if (await confirm({ title: `删除互联组「${g.name}」?`, description: '组内服务器会被解绑(不删除服务器)。', confirmText: '删除', destructive: true })) run(() => deleteGroup(g.id), '已删除')
                 }}>
                   <Trash2 className="h-4 w-4" />
                 </Button>

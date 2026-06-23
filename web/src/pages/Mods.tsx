@@ -28,6 +28,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useConfirm } from '@/components/ui/dialog-context'
 import { useGlobalToast } from '@/components/ui/use-global-toast'
 import { useResource } from '@/lib/use-resource'
 import { cn } from '@/lib/utils'
@@ -45,6 +46,7 @@ function InstalledChip() {
 }
 
 export default function Mods() {
+  const confirm = useConfirm()
   const { showToast } = useGlobalToast()
   const { data: servers } = useResource(() => listServers(), [])
   const [serverId, setServerId] = useState<number | null>(null)
@@ -203,8 +205,8 @@ export default function Mods() {
                               size="icon"
                               className="h-8 w-8 text-muted-foreground hover:text-destructive"
                               disabled={busy === m.file_name}
-                              onClick={() => {
-                                if (window.confirm(`删除模组「${m.name}」?`)) run(m.file_name, () => deleteMod(serverId, m.file_name), '已删除')
+                              onClick={async () => {
+                                if (await confirm({ title: `删除模组「${m.name}」?`, confirmText: '删除', destructive: true })) run(m.file_name, () => deleteMod(serverId, m.file_name), '已删除')
                               }}
                             >
                               <Trash2 className="h-4 w-4" />
@@ -246,6 +248,7 @@ function LibraryTab({
   onInstalled: () => void
   onUninstall: (match: { id?: string; file?: string }) => Promise<void>
 }) {
+  const confirm = useConfirm()
   const { showToast } = useGlobalToast()
   const { data, loading, refresh } = useResource(() => listLibrary(), [])
   const [busy, setBusy] = useState<string | null>(null)
@@ -404,8 +407,8 @@ function LibraryTab({
                           className="h-8 w-8 text-muted-foreground hover:text-destructive"
                           title="从库删除"
                           disabled={busy === m.file_name}
-                          onClick={() => {
-                            if (window.confirm(`从本地库删除「${m.name}」?`)) act(m, () => deleteFromLibrary(m.file_name), '已删除', refresh)
+                          onClick={async () => {
+                            if (await confirm({ title: `从本地库删除「${m.name}」?`, confirmText: '删除', destructive: true })) act(m, () => deleteFromLibrary(m.file_name), '已删除', refresh)
                           }}
                         >
                           <Trash2 className="h-4 w-4" />

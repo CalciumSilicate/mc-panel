@@ -4,6 +4,7 @@ import { Check, Crown, Loader2, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-r
 import { ApiError } from '@/api/client'
 import { type PanelUser, createUser, deleteUser, listUsers, transferOwner, updateUser } from '@/api/users'
 import { ROLE_LABELS, ROLE_ORDER, useAuth } from '@/components/auth-context'
+import { useConfirm } from '@/components/ui/dialog-context'
 import { InlineLoader } from '@/components/PageLoader'
 import { PageShell, PageSurface } from '@/components/layout/PageScaffold'
 import { Badge } from '@/components/ui/badge'
@@ -32,6 +33,7 @@ const ROLE_TONE: Record<string, string> = {
 }
 
 export default function Users() {
+  const confirm = useConfirm()
   const { user: me } = useAuth()
   const { showToast } = useGlobalToast()
   const { data, loading, error, refresh } = useResource(() => listUsers(), [])
@@ -129,8 +131,8 @@ export default function Users() {
                             className="h-8 w-8 text-muted-foreground hover:text-amber-600"
                             title="转让所有者"
                             disabled={busy === u.id}
-                            onClick={() => {
-                              if (window.confirm(`把「所有者」转让给 ${u.username}?你将降为管理员。`))
+                            onClick={async () => {
+                              if (await confirm({ title: `转让所有者给「${u.username}」?`, description: '你将降为管理员。', confirmText: '转让' }))
                                 run(u.id, () => transferOwner(u.id), '已转让所有者')
                             }}
                           >
@@ -138,8 +140,8 @@ export default function Users() {
                           </Button>
                         ) : null}
                         {canManage(u) ? (
-                          <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" title="删除" disabled={busy === u.id} onClick={() => {
-                            if (window.confirm(`删除用户「${u.username}」?`)) run(u.id, () => deleteUser(u.id), '已删除')
+                          <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" title="删除" disabled={busy === u.id} onClick={async () => {
+                            if (await confirm({ title: `删除用户「${u.username}」?`, confirmText: '删除', destructive: true })) run(u.id, () => deleteUser(u.id), '已删除')
                           }}>
                             <Trash2 className="h-4 w-4" />
                           </Button>

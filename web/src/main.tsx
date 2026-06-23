@@ -5,6 +5,7 @@ import { nsKey } from '@/config'
 import { FontLoadCoordinator } from '@/components/font-load-coordinator'
 import { ThemeProvider } from '@/components/theme'
 import { GlobalToastProvider } from '@/components/ui/global-toast'
+import { DialogProvider } from '@/components/ui/dialog-provider'
 import { I18nProvider } from '@/i18n'
 import { installBrowserErrorLogging, logError, logWarn } from '@/lib/logger'
 
@@ -47,8 +48,10 @@ createRoot(document.getElementById('root')!).render(
     <ThemeProvider>
       <I18nProvider>
         <GlobalToastProvider>
-          <FontLoadCoordinator />
-          <App />
+          <DialogProvider>
+            <FontLoadCoordinator />
+            <App />
+          </DialogProvider>
         </GlobalToastProvider>
       </I18nProvider>
     </ThemeProvider>
