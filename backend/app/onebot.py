@@ -24,6 +24,7 @@ _MC_TYPES = ("vanilla", "fabric", "forge")
 class OneBotClient:
     def __init__(self) -> None:
         self._task: asyncio.Task | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._ws = None
         self._stop = False
         self._connected = False
@@ -36,13 +37,24 @@ class OneBotClient:
     def start(self, enabled: bool, url: str, token: str) -> None:
         self.enabled, self.url, self.token = enabled, url.strip(), token.strip()
         self._stop = False
+        self._loop = asyncio.get_running_loop()
         if self._task is None or self._task.done():
             self._task = asyncio.create_task(self._run())
 
     def reconfigure(self, enabled: bool, url: str, token: str) -> None:
+        """可能从同步线程池(设置接口)调用,不能假设当前线程有事件循环。"""
         self.enabled, self.url, self.token = enabled, url.strip(), token.strip()
-        if self._ws is not None:
-            asyncio.create_task(self._close_ws())
+        if self._ws is None or self._loop is None:
+            return
+        try:
+            asyncio.get_running_loop()
+            self._loop.create_task(self._close_ws())
+        except RuntimeError:
+            # 在没有运行 loop 的线程里:跨线程调度到客户端所在 loop
+            try:
+                asyncio.run_coroutine_threadsafe(self._close_ws(), self._loop)
+            except Exception:  # noqa: BLE001
+                pass
 
     async def _close_ws(self) -> None:
         try:
