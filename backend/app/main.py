@@ -21,7 +21,7 @@ from .java import choose_java, detect_installs, get_java_paths
 from . import bridge, onebot, verification
 from .mcdr import manager
 from .models import Server
-from .routers import archives, auth, chat, configs, groups, jobs, litematica, modconfigs, mods, pb, pcrc, plugins, servers, settings, stats as stats_router, system, tools, users, worldmap as worldmap_router
+from .routers import archives, auth, chat, configs, groups, jobs, litematica, modconfigs, mods, pb, pcrc, players as players_router, plugins, servers, settings, stats as stats_router, system, tools, users, worldmap as worldmap_router
 
 # 在模块加载时就建表,确保无论以何种方式启动(uvicorn / TestClient / 直接 import)
 # 数据库都已就绪。
@@ -176,6 +176,7 @@ for r in (
     modconfigs.router,
     stats_router.router,
     worldmap_router.router,
+    players_router.router,
 ):
     app.include_router(r, prefix="/api")
 
