@@ -219,6 +219,8 @@ class SettingsResponse(BaseModel):
     token_expire_minutes: int
     download_proxy: str = ""
     allow_register: bool = False
+    port_min: int = 25565
+    port_max: int = 25999
     onebot_enabled: bool = False
     onebot_ws_url: str = ""
     onebot_token: str = ""
@@ -235,6 +237,8 @@ class SettingsUpdate(BaseModel):
     token_expire_minutes: int | None = Field(default=None, ge=5)
     download_proxy: str | None = None
     allow_register: bool | None = None
+    port_min: int | None = Field(default=None, ge=1, le=65535)
+    port_max: int | None = Field(default=None, ge=1, le=65535)
     onebot_enabled: bool | None = None
     onebot_ws_url: str | None = None
     onebot_token: str | None = None

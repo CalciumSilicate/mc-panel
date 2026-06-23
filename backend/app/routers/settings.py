@@ -23,6 +23,8 @@ def _to_response(row) -> SettingsResponse:
         token_expire_minutes=row.token_expire_minutes,
         download_proxy=row.download_proxy,
         allow_register=row.allow_register,
+        port_min=row.port_min,
+        port_max=row.port_max,
         onebot_enabled=row.onebot_enabled,
         onebot_ws_url=row.onebot_ws_url,
         onebot_token=row.onebot_token,
@@ -57,6 +59,10 @@ def update_settings(
         row.download_proxy = payload.download_proxy.strip()
     if payload.allow_register is not None:
         row.allow_register = payload.allow_register
+    if payload.port_min is not None:
+        row.port_min = payload.port_min
+    if payload.port_max is not None:
+        row.port_max = payload.port_max
     if payload.onebot_enabled is not None:
         row.onebot_enabled = payload.onebot_enabled
     if payload.onebot_ws_url is not None:

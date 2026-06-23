@@ -15,6 +15,8 @@ export interface PanelSettings {
   token_expire_minutes: number
   download_proxy: string
   allow_register: boolean
+  port_min: number
+  port_max: number
   onebot_enabled: boolean
   onebot_ws_url: string
   onebot_token: string
@@ -30,6 +32,8 @@ export interface SettingsPatch {
   token_expire_minutes?: number
   download_proxy?: string
   allow_register?: boolean
+  port_min?: number
+  port_max?: number
   onebot_enabled?: boolean
   onebot_ws_url?: string
   onebot_token?: string

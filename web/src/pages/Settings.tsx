@@ -38,6 +38,8 @@ export default function Settings() {
   const [maxMem, setMaxMem] = useState('')
   const [tokenExpire, setTokenExpire] = useState('')
   const [downloadProxy, setDownloadProxy] = useState('')
+  const [portMin, setPortMin] = useState('')
+  const [portMax, setPortMax] = useState('')
   const [allowRegister, setAllowRegister] = useState(false)
   const [onebotEnabled, setOnebotEnabled] = useState(false)
   const [onebotWsUrl, setOnebotWsUrl] = useState('')
@@ -53,6 +55,8 @@ export default function Settings() {
     setMaxMem(data.default_max_memory)
     setTokenExpire(String(data.token_expire_minutes))
     setDownloadProxy(data.download_proxy)
+    setPortMin(String(data.port_min))
+    setPortMax(String(data.port_max))
     setAllowRegister(data.allow_register)
     setOnebotEnabled(data.onebot_enabled)
     setOnebotWsUrl(data.onebot_ws_url)
@@ -76,6 +80,8 @@ export default function Settings() {
       default_max_memory: maxMem.trim(),
       token_expire_minutes: Number(tokenExpire) || undefined,
       download_proxy: downloadProxy.trim(),
+      port_min: Number(portMin) || undefined,
+      port_max: Number(portMax) || undefined,
       allow_register: allowRegister,
       onebot_enabled: onebotEnabled,
       onebot_ws_url: onebotWsUrl.trim(),
@@ -159,6 +165,16 @@ export default function Settings() {
             <div className="space-y-2">
               <Label htmlFor="download-proxy">下载代理</Label>
               <Input id="download-proxy" value={downloadProxy} onChange={(e) => setDownloadProxy(e.target.value)} placeholder="http://127.0.0.1:7890" className="font-mono" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="port-min">自动分配端口·起</Label>
+                <Input id="port-min" value={portMin} onChange={(e) => setPortMin(e.target.value)} inputMode="numeric" placeholder="25565" />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="port-max">自动分配端口·止</Label>
+                <Input id="port-max" value={portMax} onChange={(e) => setPortMax(e.target.value)} inputMode="numeric" placeholder="25999" />
+              </div>
             </div>
           </div>
 

@@ -92,9 +92,11 @@ def _port_in_use(db: Session, port: int, exclude_id: int | None = None) -> bool:
 
 @router.get("/suggest-port")
 def suggest_port(_: str = Depends(require_admin), db: Session = Depends(get_db)) -> dict:
-    """给新建对话框推荐一个空闲端口(避开已有实例 + 系统未占用)。"""
+    """给新建对话框推荐一个空闲端口(在设置的范围内,避开已有实例 + 系统未占用)。"""
+    row = get_settings_row(db)
+    lo, hi = sorted((row.port_min or 25565, row.port_max or 25999))
     taken = {p for (p,) in db.execute(select(Server.port)).all()}
-    return {"port": port_utils.find_free_port(taken) or 25565}
+    return {"port": port_utils.find_free_port(taken, lo, hi) or lo}
 
 
 @router.get("", response_model=list[ServerSummary])
