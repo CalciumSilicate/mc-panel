@@ -85,6 +85,7 @@ export default function Servers() {
   const [consoleServer, setConsoleServer] = useState<ServerSummary | null>(null)
   const [editServer, setEditServer] = useState<ServerSummary | null>(null)
   const [stoppingIds, setStoppingIds] = useState<Set<number>>(new Set())
+  const [restartingIds, setRestartingIds] = useState<Set<number>>(new Set())
   const confirm = useConfirm()
 
   useEffect(() => {
@@ -113,6 +114,28 @@ export default function Servers() {
     if (!(await confirm({ title: `强制停止「${server.name}」?`, description: '将直接杀死进程,未保存的世界改动可能丢失。', confirmText: '强制停止', destructive: true }))) return
     runAction(server.id, () => forceStopServer(server.id), '已强制停止')
   }
+
+  // 重启:先停,待其停止后自动再启;等待期间按钮变「强制重启」
+  const onRestart = (id: number) => {
+    setRestartingIds((p) => new Set(p).add(id))
+    runAction(id, () => stopServer(id), '重启中:正在停止…')
+  }
+  const onForceRestart = async (server: ServerSummary) => {
+    if (!(await confirm({ title: `强制重启「${server.name}」?`, description: '将直接杀死进程后重新启动,未保存的世界改动可能丢失。', confirmText: '强制重启', destructive: true }))) return
+    runAction(server.id, () => forceStopServer(server.id), '正在强杀,稍后自动启动…')
+  }
+
+  // 重启流程中的实例一旦停止,自动再启动
+  useEffect(() => {
+    const stopped = (data ?? []).filter((s) => restartingIds.has(s.id) && s.status === 'stopped')
+    if (stopped.length === 0) return
+    setRestartingIds((prev) => {
+      const next = new Set(prev)
+      for (const s of stopped) next.delete(s.id)
+      return next
+    })
+    for (const s of stopped) startServer(s.id).catch(() => undefined)
+  }, [data, restartingIds])
 
   const runAction = async (id: number, action: () => Promise<unknown>, okText: string) => {
     setBusyId(id)
@@ -216,11 +239,16 @@ export default function Servers() {
                         </TableCell>
                         <TableCell className="font-mono text-muted-foreground">{server.port}</TableCell>
                         <TableCell>
-                          <Badge variant="outline" className={cn('gap-1 text-[11px]', meta.tone)}>
-                            {installing || starting ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                            {meta.label}
-                            {installing && server.install ? ` ${server.install.percent}%` : ''}
-                          </Badge>
+                          <div className="flex flex-wrap items-center gap-1">
+                            <Badge variant="outline" className={cn('gap-1 text-[11px]', meta.tone)}>
+                              {installing || starting ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                              {meta.label}
+                              {installing && server.install ? ` ${server.install.percent}%` : ''}
+                            </Badge>
+                            {server.needs_restart ? (
+                              <Badge variant="outline" className="gap-1 text-[11px] text-amber-600 dark:text-amber-400 border-amber-500/50">需要重启</Badge>
+                            ) : null}
+                          </div>
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center justify-end gap-1.5">
@@ -251,27 +279,23 @@ export default function Servers() {
                               </Button>
                             ) : null}
                             {active && (server.protected ? canAdmin : canOperate) ? (
-                              stoppingIds.has(server.id) ? (
-                                <Button
-                                  type="button"
-                                  variant="destructive"
-                                  size="sm"
-                                  className="gap-1.5"
-                                  disabled={busy}
-                                  onClick={() => onForceStop(server)}
-                                >
+                              restartingIds.has(server.id) ? (
+                                <Button type="button" variant="destructive" size="sm" className="gap-1.5" disabled={busy} onClick={() => onForceRestart(server)}>
+                                  {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+                                  强制重启
+                                </Button>
+                              ) : stoppingIds.has(server.id) ? (
+                                <Button type="button" variant="destructive" size="sm" className="gap-1.5" disabled={busy} onClick={() => onForceStop(server)}>
                                   {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
                                   强制停止
                                 </Button>
+                              ) : server.needs_restart ? (
+                                <Button type="button" variant="outline" size="sm" className="gap-1.5 border-amber-500/50 text-amber-600 dark:text-amber-400" disabled={busy} onClick={() => onRestart(server.id)}>
+                                  {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                                  重启
+                                </Button>
                               ) : (
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  className="gap-1.5"
-                                  disabled={busy}
-                                  onClick={() => onStop(server.id)}
-                                >
+                                <Button type="button" variant="outline" size="sm" className="gap-1.5" disabled={busy} onClick={() => onStop(server.id)}>
                                   {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Square className="h-3.5 w-3.5" />}
                                   停止
                                 </Button>

@@ -156,6 +156,7 @@ class ServerSummary(BaseModel):
     created_at: datetime
     # 运行时派生字段
     status: str = "stopped"
+    needs_restart: bool = False
     install: InstallProgress | None = None
 
 

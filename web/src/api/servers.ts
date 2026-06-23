@@ -37,6 +37,7 @@ export interface ServerSummary {
   proxy_id: number | null
   created_at: string
   status: ServerStatus
+  needs_restart?: boolean
   install?: InstallProgress | null
 }
 

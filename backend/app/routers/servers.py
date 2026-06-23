@@ -65,6 +65,7 @@ def _to_summary(server: Server, group_name: str = "") -> ServerSummary:
     summary = ServerSummary.model_validate(server)
     summary.status = manager.get_status(server)
     summary.group_name = group_name
+    summary.needs_restart = manager.needs_restart(server.id)
     if summary.status == "installing":
         prog = manager.install_progress(server.id)
         if prog is not None:
@@ -366,6 +367,9 @@ async def update_server(
     if version_changed:
         _launch_install(server.id, _redownload_in_background(server.id))
 
+    # 运行中改了配置 → 标记需要重启
+    manager.mark_needs_restart(server.id)
+
     return _to_summary(server, _group_name(db, server.group_id))
 
 
@@ -391,6 +395,7 @@ def update_properties(
     }
     if updates:
         manager.write_properties(server, updates)
+        manager.mark_needs_restart(server.id)
     current = manager.read_properties(server)
     return PropertiesResponse(properties={k: current.get(k, "") for k in COMMON_PROPERTY_KEYS})
 

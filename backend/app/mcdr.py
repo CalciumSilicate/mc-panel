@@ -232,6 +232,8 @@ class MCDRManager:
         self._install_tasks: dict[int, asyncio.Task] = {}
         # 已完成启动(出现 Done 行)的实例 id 集合;用于区分「启动中 / 运行中」
         self._ready: set[int] = set()
+        # 运行中被改了配置/模组、需要重启才生效的实例 id 集合
+        self._needs_restart: set[int] = set()
         # 逐行钩子(如玩家绑定验证):每条输出行都会调用,异常被吞掉
         self.line_hook: "Callable[[int, str], None] | None" = None
 
@@ -255,6 +257,14 @@ class MCDRManager:
     def is_running(self, server_id: int) -> bool:
         p = self._procs.get(server_id)
         return p is not None and p.returncode is None
+
+    def mark_needs_restart(self, server_id: int) -> None:
+        """运行中的实例被改了配置/模组时调用,标记为需要重启。"""
+        if self.is_running(server_id):
+            self._needs_restart.add(server_id)
+
+    def needs_restart(self, server_id: int) -> bool:
+        return server_id in self._needs_restart and self.is_running(server_id)
 
     def _core_installed(self, server: Server) -> bool:
         """核心是否已就绪。Forge 现代版无 server.jar,改判 args 文件 / forge jar。"""
@@ -638,6 +648,7 @@ class MCDRManager:
         existing = self._procs.get(server.id)
         if existing is not None and existing.returncode is None:
             return  # 已在运行
+        self._needs_restart.discard(server.id)
 
         # 强制 MCDR(Python)以 UTF-8 读写其 stdio,否则 Windows 下会用系统码页(GBK)
         # 写日志,我们按 UTF-8 解码就会乱码。这样无论宿主机区域设置如何都统一为 UTF-8。
@@ -673,6 +684,7 @@ class MCDRManager:
             raise RuntimeError("无法写入实例标准输入") from exc
 
     async def stop(self, server: Server) -> None:
+        self._needs_restart.discard(server.id)
         proc = self._procs.get(server.id)
         if proc is None or proc.returncode is not None:
             self._procs.pop(server.id, None)
@@ -686,6 +698,7 @@ class MCDRManager:
 
     async def force_stop(self, server: Server) -> None:
         """强杀:连同子进程(MCDR 派生的 Java 服务端)一起 kill。"""
+        self._needs_restart.discard(server.id)
         proc = self._procs.get(server.id)
         if proc is None:
             return

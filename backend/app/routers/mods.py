@@ -78,6 +78,7 @@ def copy_to(server_id: int, body: CopyToBody, _: str = Depends(require_helper), 
             continue
         try:
             n = _copy_all(src_dir, mods.mods_dir(mcdr_manager.instance_dir(t)))
+            mcdr_manager.mark_needs_restart(t.id)
             results.append({"name": t.name, "status": "ok", "detail": f"已复制 {n} 个模组"})
         except Exception as exc:  # noqa: BLE001
             results.append({"name": t.name, "status": "error", "detail": str(exc)})
@@ -97,6 +98,7 @@ def switch_mod(
         new_name = mods.switch_mod(mcdr_manager.instance_dir(server), file_name, enable)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    mcdr_manager.mark_needs_restart(server.id)
     return {"file_name": new_name, "enabled": enable}
 
 
@@ -106,6 +108,7 @@ def delete_mod(
 ) -> dict:
     server = _get_server(db, server_id); ensure_not_protected(server)
     mods.delete_mod(mcdr_manager.instance_dir(server), file_name)
+    mcdr_manager.mark_needs_restart(server.id)
     return {"ok": True}
 
 
@@ -122,6 +125,7 @@ async def upload_mod(
         name = mods.save_upload(mcdr_manager.instance_dir(server), file.filename or "mod.jar", content)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    mcdr_manager.mark_needs_restart(server.id)
     return {"file_name": name}
 
 
@@ -158,6 +162,7 @@ def install_from_library(
         name = mods.install_from_library(MOD_LIBRARY, mcdr_manager.instance_dir(server), body.file_name)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    mcdr_manager.mark_needs_restart(server.id)
     return {"file_name": name}
 
 
@@ -246,6 +251,7 @@ async def install_mod(
                 mc_version=server.mc_version,
             )
             jobstore.finish(job_id, name)
+            mcdr_manager.mark_needs_restart(server.id)
         except Exception as exc:  # noqa: BLE001
             jobstore.fail(job_id, str(exc))
 
