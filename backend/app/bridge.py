@@ -40,6 +40,28 @@ def online_players(server_id: int) -> set[str]:
     return _ONLINE.get(server_id, set())
 
 
+def _group_online_count(server_id: int) -> int:
+    """该实例所属互联组的在线真人总数(跨组内 MC 实例去重)。"""
+    db = SessionLocal()
+    try:
+        src = db.get(Server, server_id)
+        if src is None:
+            return 0
+        if not src.group_id:
+            return len(_ONLINE.get(server_id, set()))
+        sids = [
+            s.id
+            for s in db.scalars(select(Server).where(Server.group_id == src.group_id)).all()
+            if s.server_type in _MC_TYPES
+        ]
+    finally:
+        db.close()
+    names: set[str] = set()
+    for sid in sids:
+        names |= _ONLINE.get(sid, set())
+    return len(names)
+
+
 # ---------- 版本兼容的组件构造 ----------
 def _modern(mc_version: str) -> bool:
     """MC 1.21.5+ 改了文本组件的 clickEvent 字段(value→command/url)。
@@ -135,27 +157,30 @@ def handle_line(server_id: int, line: str) -> None:
         _ONLINE.setdefault(server_id, set())
         if is_bot:
             _BOTS[server_id].add(name)
-        else:
-            _BOTS[server_id].discard(name)
-            _ONLINE[server_id].add(name)
-        tag = "(假人)" if is_bot else ""
+            return  # 假人进服不广播
+        _BOTS[server_id].discard(name)
+        before = _group_online_count(server_id)
+        _ONLINE[server_id].add(name)
+        after = _group_online_count(server_id)
         _broadcast(
             server_id,
-            lambda src, modern: _join_components(src, name, is_bot, modern),
-            f"+{name}{tag}",
+            lambda src, modern: _join_components(src, name, False, modern),
+            f"+{name} ({before}→{after})",
         )
         return
     ml = _LEFT_RE.search(line)
     if ml:
         name = ml.group(1)
-        is_bot = name in _BOTS.get(server_id, set())
-        _BOTS.get(server_id, set()).discard(name)
+        if name in _BOTS.get(server_id, set()):
+            _BOTS[server_id].discard(name)
+            return  # 假人退服不广播
+        before = _group_online_count(server_id)
         _ONLINE.get(server_id, set()).discard(name)
-        tag = "(假人)" if is_bot else ""
+        after = _group_online_count(server_id)
         _broadcast(
             server_id,
-            lambda src, modern: _leave_components(src, name, is_bot, modern),
-            f"-{name}{tag}",
+            lambda src, modern: _leave_components(src, name, False, modern),
+            f"-{name} ({before}→{after})",
         )
 
 
