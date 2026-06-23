@@ -178,6 +178,13 @@ export function stopServer(id: number): Promise<{ status: ServerStatus }> {
   })
 }
 
+export function forceStopServer(id: number): Promise<{ status: ServerStatus }> {
+  return apiRequest<{ status: ServerStatus }>(`/servers/${id}/force-stop`, {
+    method: 'POST',
+    body: '{}',
+  })
+}
+
 export function deleteServer(id: number): Promise<{ ok: boolean }> {
   return apiRequest<{ ok: boolean }>(`/servers/${id}`, { method: 'DELETE' })
 }

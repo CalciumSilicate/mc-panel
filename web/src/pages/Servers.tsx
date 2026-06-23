@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Ban, Download, Loader2, MessageSquare, Network, Pencil, Play, Plus, RefreshCw, Server, Square, Terminal, Trash2 } from 'lucide-react'
+import { Ban, Download, Loader2, MessageSquare, Network, Pencil, Play, Plus, RefreshCw, Server, Square, Terminal, Trash2, Zap } from 'lucide-react'
 
 import {
   type JavaInfo,
@@ -17,6 +17,7 @@ import {
   getSuggestedPort,
   getVelocityConfig,
   listServers,
+  forceStopServer,
   reinstallServer,
   startServer,
   stopServer,
@@ -83,11 +84,35 @@ export default function Servers() {
   const [busyId, setBusyId] = useState<number | null>(null)
   const [consoleServer, setConsoleServer] = useState<ServerSummary | null>(null)
   const [editServer, setEditServer] = useState<ServerSummary | null>(null)
+  const [stoppingIds, setStoppingIds] = useState<Set<number>>(new Set())
+  const confirm = useConfirm()
 
   useEffect(() => {
     const timer = window.setInterval(refresh, 2000)
     return () => window.clearInterval(timer)
   }, [refresh])
+
+  // 服务器已停/出错后,清掉「停止中」标记
+  useEffect(() => {
+    setStoppingIds((prev) => {
+      if (prev.size === 0) return prev
+      const next = new Set(prev)
+      for (const s of data ?? []) {
+        if (s.status === 'stopped' || s.status === 'error') next.delete(s.id)
+      }
+      return next.size === prev.size ? prev : next
+    })
+  }, [data])
+
+  const onStop = (id: number) => {
+    setStoppingIds((p) => new Set(p).add(id))
+    runAction(id, () => stopServer(id), '已发送停止命令')
+  }
+
+  const onForceStop = async (server: ServerSummary) => {
+    if (!(await confirm({ title: `强制停止「${server.name}」?`, description: '将直接杀死进程,未保存的世界改动可能丢失。', confirmText: '强制停止', destructive: true }))) return
+    runAction(server.id, () => forceStopServer(server.id), '已强制停止')
+  }
 
   const runAction = async (id: number, action: () => Promise<unknown>, okText: string) => {
     setBusyId(id)
@@ -226,17 +251,31 @@ export default function Servers() {
                               </Button>
                             ) : null}
                             {active && (server.protected ? canAdmin : canOperate) ? (
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                className="gap-1.5"
-                                disabled={busy}
-                                onClick={() => runAction(server.id, () => stopServer(server.id), '已发送停止命令')}
-                              >
-                                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Square className="h-3.5 w-3.5" />}
-                                停止
-                              </Button>
+                              stoppingIds.has(server.id) ? (
+                                <Button
+                                  type="button"
+                                  variant="destructive"
+                                  size="sm"
+                                  className="gap-1.5"
+                                  disabled={busy}
+                                  onClick={() => onForceStop(server)}
+                                >
+                                  {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+                                  强制停止
+                                </Button>
+                              ) : (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="gap-1.5"
+                                  disabled={busy}
+                                  onClick={() => onStop(server.id)}
+                                >
+                                  {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Square className="h-3.5 w-3.5" />}
+                                  停止
+                                </Button>
+                              )
                             ) : null}
                             {canOperate && !active ? (
                               <Button

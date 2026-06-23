@@ -684,6 +684,28 @@ class MCDRManager:
             except (BrokenPipeError, ConnectionResetError):
                 proc.terminate()
 
+    async def force_stop(self, server: Server) -> None:
+        """强杀:连同子进程(MCDR 派生的 Java 服务端)一起 kill。"""
+        proc = self._procs.get(server.id)
+        if proc is None:
+            return
+        try:
+            import psutil
+
+            parent = psutil.Process(proc.pid)
+            for child in parent.children(recursive=True):
+                try:
+                    child.kill()
+                except Exception:  # noqa: BLE001
+                    pass
+            parent.kill()
+        except Exception:  # noqa: BLE001
+            try:
+                proc.kill()
+            except Exception:  # noqa: BLE001
+                pass
+        self._procs.pop(server.id, None)
+
     async def delete_instance(self, server: Server) -> None:
         await self.stop(server)
         self._procs.pop(server.id, None)

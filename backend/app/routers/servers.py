@@ -490,6 +490,17 @@ async def stop_server(
     return {"status": manager.get_status(server)}
 
 
+@router.post("/{server_id}/force-stop")
+async def force_stop_server(
+    server_id: int, user: User = Depends(require_operate), db: Session = Depends(get_db)
+) -> dict:
+    server = _get_server_or_404(db, server_id)
+    if server.protected and not role_at_least(user, "admin"):
+        raise HTTPException(status_code=403, detail="实例受保护,仅管理员可停止")
+    await manager.force_stop(server)
+    return {"status": manager.get_status(server)}
+
+
 @router.delete("/{server_id}")
 async def delete_server(
     server_id: int, _: str = Depends(require_admin), db: Session = Depends(get_db)
