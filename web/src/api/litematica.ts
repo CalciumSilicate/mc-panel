@@ -3,6 +3,7 @@ import { ApiError, apiRequest, apiUpload, getAuthToken } from '@/api/client'
 export interface LitematicaFile {
   name: string
   size_bytes: number
+  info?: LitematicaInfo | null
 }
 
 export interface Material {
@@ -21,7 +22,7 @@ export function listLitematica(): Promise<LitematicaFile[]> {
   return apiRequest<LitematicaFile[]>('/litematica')
 }
 
-export function uploadLitematica(file: File): Promise<{ name: string; info: LitematicaInfo }> {
+export function uploadLitematica(file: File): Promise<{ name: string }> {
   const fd = new FormData()
   fd.append('file', file)
   return apiUpload('/litematica/upload', fd)

@@ -43,7 +43,7 @@ def list_files(_: str = Depends(require_helper)) -> list[dict]:
     lm.LIBRARY.mkdir(parents=True, exist_ok=True)
     out = []
     for p in sorted(lm.LIBRARY.glob("*.litematic")):
-        out.append({"name": p.name, "size_bytes": p.stat().st_size})
+        out.append({"name": p.name, "size_bytes": p.stat().st_size, "info": lm.cached_info(p)})
     return out
 
 
@@ -53,21 +53,23 @@ async def upload(file: UploadFile = File(...), _: str = Depends(require_helper))
     lm.LIBRARY.mkdir(parents=True, exist_ok=True)
     dest = lm.LIBRARY / name
     dest.write_bytes(await file.read())
-    try:
-        info = lm.parse_info(dest)
-    except Exception as exc:  # noqa: BLE001
-        dest.unlink(missing_ok=True)
-        raise HTTPException(status_code=400, detail=f"解析失败:{exc}")
-    return {"name": name, "info": info}
+    # 大投影解析很慢(litemapy 解码),后台预热缓存,上传立即返回
+    task = asyncio.create_task(asyncio.to_thread(lm.parse_and_cache, dest))
+    _BUILD_TASKS.add(task)
+    task.add_done_callback(_BUILD_TASKS.discard)
+    return {"name": name}
 
 
 @router.get("/{name}/info")
-def info(name: str, _: str = Depends(require_helper)) -> dict:
+async def info(name: str, _: str = Depends(require_helper)) -> dict:
     p = _path(name)
     if not p.exists():
         raise HTTPException(status_code=404, detail="文件不存在")
+    cached = lm.cached_info(p)
+    if cached is not None:
+        return cached
     try:
-        return lm.parse_info(p)
+        return await asyncio.to_thread(lm.parse_and_cache, p)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"解析失败:{exc}")
 
@@ -82,7 +84,9 @@ def download(name: str, _: str = Depends(require_helper)) -> FileResponse:
 
 @router.delete("/{name}")
 def delete(name: str, _: str = Depends(require_helper)) -> dict:
-    _path(name).unlink(missing_ok=True)
+    p = _path(name)
+    p.unlink(missing_ok=True)
+    lm._cache_file(p).unlink(missing_ok=True)
     return {"ok": True}
 
 
@@ -129,8 +133,8 @@ async def build(body: BuildBody, _: str = Depends(require_helper), db: Session =
                 import traceback
                 print("[litematica] 下发失败:\n" + traceback.format_exc(), flush=True)
                 return
-            if i % 10 == 9:
-                await asyncio.sleep(0.2)
+            if i % 50 == 49:
+                await asyncio.sleep(0.05)
         print(f"[litematica] 下发完成,共 {sent} 条", flush=True)
 
     task = asyncio.create_task(run())

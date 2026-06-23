@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import json
 import math
 from collections import defaultdict
 from pathlib import Path
@@ -238,31 +239,69 @@ def _global_min(schem):
     return (gmx or 0, gmy or 0, gmz or 0)
 
 
+def _region_block_array(reg):
+    """litemapy 内部的方块索引 numpy 数组(palette 下标),取不到则 None。"""
+    return getattr(reg, "_Region__blocks", None)
+
+
 def parse_info(path: str | Path) -> dict:
-    """尺寸 / 方块总数 / 材料清单(方块 id → 数量)。"""
+    """尺寸 / 方块总数 / 材料清单(方块 id → 数量)。用 numpy bincount,避免逐方块循环。"""
+    import numpy as np
+
     schem = load_schematic(path)
     materials: dict[str, int] = defaultdict(int)
     total = 0
-    gmx = gmy = gmz = None
-    Mx = My = Mz = None
+    size = [0, 0, 0]
     for reg in schem.regions.values():
-        for x, y, z in reg.allblockpos():
-            bs = reg[x, y, z]
-            if bs.id == "minecraft:air":
-                continue
-            total += 1
-            materials[bs.id] += 1
-            sx, sy, sz = reg.x + x, reg.y + y, reg.z + z
-            gmx = sx if gmx is None else min(gmx, sx); Mx = sx if Mx is None else max(Mx, sx)
-            gmy = sy if gmy is None else min(gmy, sy); My = sy if My is None else max(My, sy)
-            gmz = sz if gmz is None else min(gmz, sz); Mz = sz if Mz is None else max(Mz, sz)
-    size = [(Mx - gmx + 1) if Mx is not None else 0, (My - gmy + 1) if My is not None else 0, (Mz - gmz + 1) if Mz is not None else 0]
+        arr = _region_block_array(reg)
+        palette = list(reg.palette)
+        size = [max(size[0], abs(reg.width)), max(size[1], abs(reg.height)), max(size[2], abs(reg.length))]
+        if arr is not None:
+            counts = np.bincount(arr.ravel(), minlength=len(palette))
+            for idx, bs in enumerate(palette):
+                c = int(counts[idx]) if idx < len(counts) else 0
+                if c and bs.id != "minecraft:air":
+                    materials[bs.id] += c
+                    total += c
+        else:  # 兜底:逐方块
+            for x, y, z in reg.allblockpos():
+                bs = reg[x, y, z]
+                if bs.id != "minecraft:air":
+                    materials[bs.id] += 1
+                    total += 1
     mats = sorted(({"id": k, "count": v} for k, v in materials.items()), key=lambda m: -m["count"])
     return {"regions": len(schem.regions), "size": size, "total_blocks": total, "materials": mats}
 
 
+def _cache_file(path: Path) -> Path:
+    return path.with_name(path.name + ".info.json")
+
+
+def cached_info(path: Path) -> dict | None:
+    c = _cache_file(path)
+    if c.exists():
+        try:
+            return json.loads(c.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            return None
+    return None
+
+
+def parse_and_cache(path: str | Path) -> dict:
+    """解析并把结果缓存到 sidecar(<file>.info.json),下次秒回。"""
+    path = Path(path)
+    info = parse_info(path)
+    try:
+        _cache_file(path).write_text(json.dumps(info, ensure_ascii=False), encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
+    return info
+
+
 def generate_commands(path: str | Path, offset=(0, 0, 0), place_air: bool = False) -> list[str]:
     """生成有序指令:forceload add → fill → summon → data merge → forceload remove(相对坐标)。"""
+    import numpy as np
+
     schem = load_schematic(path)
     ox, oy, oz = offset
     gmx, gmy, gmz = _global_min(schem)
@@ -270,6 +309,25 @@ def generate_commands(path: str | Path, offset=(0, 0, 0), place_air: bool = Fals
     summons, merges = [], []
     core_chunks = set()
     for reg in schem.regions.values():
+        arr = _region_block_array(reg)
+        palette = list(reg.palette)
+        if arr is not None:
+            if place_air:
+                mask = np.ones(arr.shape, dtype=bool)
+            else:
+                air = [i for i, bs in enumerate(palette) if bs.id == "minecraft:air"]
+                mask = ~np.isin(arr, air) if air else np.ones(arr.shape, dtype=bool)
+            xs, ys, zs = np.nonzero(mask)  # 轴序 = (x, y, z)
+            pidx = arr[xs, ys, zs]
+            dxs = (xs.astype(np.int64) + (reg.x - gmx + ox))
+            dys = (ys.astype(np.int64) + (reg.y - gmy + oy))
+            dzs = (zs.astype(np.int64) + (reg.z - gmz + oz))
+            for idx in np.unique(pidx):
+                sel = pidx == idx
+                sid = palette[int(idx)].to_block_state_identifier()
+                blocks_by_state[sid].update(zip(dxs[sel].tolist(), dys[sel].tolist(), dzs[sel].tolist()))
+            core_chunks.update(zip((dxs // 16).tolist(), (dzs // 16).tolist()))
+            continue
         for x, y, z in reg.allblockpos():
             bs = reg[x, y, z]
             if not place_air and bs.id == "minecraft:air":

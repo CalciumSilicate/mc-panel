@@ -53,7 +53,7 @@ export default function Litematica() {
     setBusy('upload')
     try {
       await uploadLitematica(file)
-      showToast('success', '已上传并解析')
+      showToast('success', '已上传,大投影正在后台解析…')
       refresh()
     } catch (err) {
       showToast('error', err instanceof ApiError ? err.message : '上传失败')
