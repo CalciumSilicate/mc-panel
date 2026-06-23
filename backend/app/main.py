@@ -21,7 +21,7 @@ from .java import choose_java, detect_installs, get_java_paths
 from . import bridge, onebot, verification
 from .mcdr import manager
 from .models import Server
-from .routers import archives, auth, groups, jobs, mods, plugins, servers, settings, system, tools, users
+from .routers import archives, auth, chat, groups, jobs, mods, plugins, servers, settings, system, tools, users
 
 # 在模块加载时就建表,确保无论以何种方式启动(uvicorn / TestClient / 直接 import)
 # 数据库都已就绪。
@@ -118,6 +118,7 @@ for r in (
     tools.router,
     users.router,
     groups.router,
+    chat.router,
 ):
     app.include_router(r, prefix="/api")
 

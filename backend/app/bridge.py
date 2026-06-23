@@ -19,6 +19,7 @@ import re
 
 from sqlalchemy import select
 
+from . import chat
 from .database import SessionLocal
 from .models import Server, ServerGroup
 
@@ -147,6 +148,7 @@ def handle_line(server_id: int, line: str) -> None:
                     server_id,
                     lambda src, modern: _chat_components(src, player, content, modern),
                     qq_text,
+                    {"source": "mc", "player": player, "text": content},
                 )
             return
     mj = _JOIN_RE.search(line)
@@ -166,6 +168,7 @@ def handle_line(server_id: int, line: str) -> None:
             server_id,
             lambda src, modern: _join_components(src, name, False, modern),
             f"+{name} ({before}→{after})",
+            {"source": "system", "text": f"{name} 加入了服务器"},
         )
         return
     ml = _LEFT_RE.search(line)
@@ -181,12 +184,13 @@ def handle_line(server_id: int, line: str) -> None:
             server_id,
             lambda src, modern: _leave_components(src, name, False, modern),
             f"-{name} ({before}→{after})",
+            {"source": "system", "text": f"{name} 离开了服务器"},
         )
 
 
-def _broadcast(server_id: int, builder, qq_text: str = "") -> None:
+def _broadcast(server_id: int, builder, qq_text: str = "", feed: dict | None = None) -> None:
     """builder(src_name, modern) -> tellraw 组件;转给同组其它运行中的 MC 实例,
-    并把 qq_text 发到该组绑定的 QQ 群。"""
+    把 qq_text 发到该组绑定的 QQ 群,并把 feed 推到聊天室。"""
     db = SessionLocal()
     try:
         src = db.get(Server, server_id)
@@ -196,6 +200,7 @@ def _broadcast(server_id: int, builder, qq_text: str = "") -> None:
         if grp is None or not grp.bridge_enabled:
             return
         src_name = src.name
+        group_id = src.group_id
         try:
             qq_ids = [int(x) for x in json.loads(grp.qq_group_ids or "[]")]
         except Exception:  # noqa: BLE001
@@ -209,6 +214,11 @@ def _broadcast(server_id: int, builder, qq_text: str = "") -> None:
         ]
     finally:
         db.close()
+
+    # 推到聊天室(网页实时可见)
+    if feed is not None:
+        feed["server"] = src_name
+        chat.publish(group_id, feed)
 
     try:
         loop = asyncio.get_running_loop()

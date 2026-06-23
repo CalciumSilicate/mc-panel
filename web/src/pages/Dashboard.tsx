@@ -9,6 +9,7 @@ import {
   Layers,
   Loader2,
   LogOut,
+  MessagesSquare,
   Package,
   PanelLeft,
   Puzzle,
@@ -40,6 +41,7 @@ const Plugins = lazy(() => import('@/pages/Plugins'))
 const Mods = lazy(() => import('@/pages/Mods'))
 const Archives = lazy(() => import('@/pages/Archives'))
 const Superflat = lazy(() => import('@/pages/Superflat'))
+const ChatPage = lazy(() => import('@/pages/Chat'))
 const UsersPage = lazy(() => import('@/pages/Users'))
 const SettingsPage = lazy(() => import('@/pages/Settings'))
 
@@ -51,7 +53,7 @@ const SettingsPage = lazy(() => import('@/pages/Settings'))
  * 真要做深链接/多级路由时,把 `currentPage` 状态换成 router 即可,其余结构不动。
  */
 
-type Page = 'overview' | 'servers' | 'plugins' | 'mods' | 'archives' | 'superflat' | 'users' | 'settings'
+type Page = 'overview' | 'servers' | 'plugins' | 'mods' | 'archives' | 'superflat' | 'chat' | 'users' | 'settings'
 
 interface NavItem {
   key: Page
@@ -66,6 +68,7 @@ const navItems: NavItem[] = [
   { key: 'plugins', label: '插件', icon: Puzzle, minRole: 'helper' },
   { key: 'mods', label: '模组', icon: Package, minRole: 'helper' },
   { key: 'archives', label: '存档', icon: Archive, minRole: 'user' },
+  { key: 'chat', label: '聊天室', icon: MessagesSquare, minRole: 'user' },
   { key: 'superflat', label: '超平坦', icon: Layers, minRole: 'helper' },
   { key: 'users', label: '用户管理', icon: UsersIcon, minRole: 'admin' },
   { key: 'settings', label: '设置', icon: Settings, minRole: 'admin' },
@@ -309,6 +312,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                       {currentPage === 'mods' ? <Mods /> : null}
                       {currentPage === 'archives' ? <Archives /> : null}
                       {currentPage === 'superflat' ? <Superflat /> : null}
+                      {currentPage === 'chat' ? <ChatPage /> : null}
                       {currentPage === 'users' ? <UsersPage /> : null}
                       {currentPage === 'settings' ? <SettingsPage /> : null}
                     </motion.div>

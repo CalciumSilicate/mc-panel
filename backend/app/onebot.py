@@ -246,6 +246,7 @@ async def _process_group_message(payload: dict) -> None:
     db = SessionLocal()
     try:
         targets: list[tuple[int, str]] = []
+        feed_groups: list[int] = []
         for g in db.scalars(select(ServerGroup)).all():
             try:
                 ids = [int(x) for x in json.loads(g.qq_group_ids or "[]")]
@@ -253,11 +254,18 @@ async def _process_group_message(payload: dict) -> None:
                 ids = []
             if qq_group not in ids:
                 continue
+            feed_groups.append(g.id)
             for s in db.scalars(select(Server).where(Server.group_id == g.id)).all():
                 if s.server_type in _MC_TYPES:
                     targets.append((s.id, s.mc_version))
     finally:
         db.close()
+
+    # 推到聊天室(即使组内没有运行中的 MC 实例,网页也能看到 QQ 消息)
+    from . import chat
+
+    for gid in feed_groups:
+        chat.publish(gid, {"source": "qq", "user": user, "text": _plain(message)})
     if not targets:
         return
 
