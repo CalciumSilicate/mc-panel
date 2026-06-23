@@ -48,6 +48,21 @@ class ServerGroup(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
+class PcrcInstance(Base):
+    """一个 PCRC 录像机实例(模拟客户端,连进服务器录制 .mcpr)。"""
+
+    __tablename__ = "pcrc_instances"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+    dir_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    address: Mapped[str] = mapped_column(String(255), default="127.0.0.1")
+    port: Mapped[int] = mapped_column(Integer, default=25565)
+    authenticate_type: Mapped[str] = mapped_column(String(16), default="offline")  # offline / microsoft
+    username: Mapped[str] = mapped_column(String(120), default="PCRC")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
 class Server(Base):
     """一个被本面板管理的 MCDR 实例(对应 SERVERS_ROOT 下的一个目录)。"""
 

@@ -29,6 +29,8 @@ MOD_LIBRARY = DATA_DIR / "library" / "mods"
 ARCHIVES_DIR = DATA_DIR / "archives"
 # 聊天室:从 QQ 下载缓存的图片
 CHAT_IMG_DIR = DATA_DIR / "chat_img"
+# PCRC 录像机实例根目录
+PCRC_ROOT = DATA_DIR / "pcrc"
 DB_PATH = DATA_DIR / "panel.db"
 SECRET_KEY_PATH = DATA_DIR / "secret.key"
 
