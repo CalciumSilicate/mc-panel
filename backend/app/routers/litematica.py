@@ -19,6 +19,9 @@ from ..models import Server
 
 router = APIRouter(prefix="/litematica", tags=["litematica"])
 
+# 持有后台建造任务的强引用,避免被 GC 回收(asyncio 已知坑)
+_BUILD_TASKS: set = set()
+
 
 def _safe_name(name: str) -> str:
     base = Path(name).name
@@ -106,24 +109,31 @@ async def build(body: BuildBody, _: str = Depends(require_helper), db: Session =
     sid = server.id
 
     async def run() -> None:
-        # 解析(CPU 密集)放线程池,避免阻塞事件循环导致全站卡顿
+        print(f"[litematica] build 开始: name={body.name} server={sid} offset=({body.x},{body.y},{body.z})", flush=True)
         try:
             cmds = await asyncio.to_thread(lm.generate_commands, str(p), (body.x, body.y, body.z), body.place_air)
         except Exception:  # noqa: BLE001
-            logging.getLogger("mcpanel.litematica").exception("生成投影指令失败: %s", body.name)
+            import traceback
+            print("[litematica] 生成指令失败:\n" + traceback.format_exc(), flush=True)
             return
-        # 节流逐条下发,避免刷屏卡服
+        print(f"[litematica] 生成 {len(cmds)} 条指令,开始下发", flush=True)
+        sent = 0
         for i, cmd in enumerate(cmds):
             if not manager.is_running(sid):
-                break
+                print(f"[litematica] 服务器已停止,已发 {sent} 条后中止", flush=True)
+                return
             try:
                 await manager.send_raw(sid, cmd)
+                sent += 1
             except Exception:  # noqa: BLE001
-                logging.getLogger("mcpanel.litematica").exception("下发指令失败")
-                break
+                import traceback
+                print("[litematica] 下发失败:\n" + traceback.format_exc(), flush=True)
+                return
             if i % 10 == 9:
                 await asyncio.sleep(0.2)
-        logging.getLogger("mcpanel.litematica").info("投影 %s 下发完成,共 %d 条", body.name, len(cmds))
+        print(f"[litematica] 下发完成,共 {sent} 条", flush=True)
 
-    asyncio.create_task(run())
+    task = asyncio.create_task(run())
+    _BUILD_TASKS.add(task)
+    task.add_done_callback(_BUILD_TASKS.discard)
     return {"ok": True, "started": True}
