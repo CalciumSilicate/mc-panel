@@ -19,7 +19,7 @@ import re
 
 from sqlalchemy import select
 
-from . import chat
+from . import chat, cqcode
 from .database import SessionLocal
 from .models import Server, ServerGroup
 
@@ -148,7 +148,13 @@ def handle_line(server_id: int, line: str) -> None:
                     server_id,
                     lambda src, modern: _chat_components(src, player, content, modern),
                     qq_text,
-                    {"source": "mc", "player": player, "text": content},
+                    {
+                        "source": "mc",
+                        "sender": player,
+                        "avatar": f"https://mc-heads.net/avatar/{player}/64",
+                        "text": content,
+                        "segments": cqcode.parse(content),
+                    },
                 )
             return
     mj = _JOIN_RE.search(line)

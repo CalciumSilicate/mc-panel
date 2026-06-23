@@ -138,6 +138,30 @@ def _seg_list(message) -> list[dict]:
     return []
 
 
+def _web_segments(message, reply_user: str | None, reply_plain: str | None) -> list[dict]:
+    """OneBot 消息 → 聊天室前端用的结构化段(回复内容已预先解析)。"""
+    out: list[dict] = []
+    if reply_user is not None:
+        out.append({"type": "reply", "user": reply_user, "text": (reply_plain or "")[:80]})
+    for seg in _seg_list(message):
+        t, d = seg.get("type"), seg.get("data") or {}
+        if t == "text":
+            out.append({"type": "text", "text": str(d.get("text") or "")})
+        elif t == "at":
+            out.append({"type": "at", "qq": str(d.get("qq") or ""), "name": str(d.get("name") or d.get("text") or "")})
+        elif t == "image":
+            out.append({"type": "image", "url": str(d.get("url") or d.get("file") or "")})
+        elif t == "face":
+            out.append({"type": "face", "id": str(d.get("id") or "")})
+        elif t == "record":
+            out.append({"type": "text", "text": "[语音]"})
+        elif t == "video":
+            out.append({"type": "text", "text": "[视频]"})
+        elif t == "file":
+            out.append({"type": "text", "text": "[文件]"})
+    return out
+
+
 def _plain(message) -> str:
     out = []
     for seg in _seg_list(message):
@@ -261,14 +285,6 @@ async def _process_group_message(payload: dict) -> None:
     finally:
         db.close()
 
-    # 推到聊天室(即使组内没有运行中的 MC 实例,网页也能看到 QQ 消息)
-    from . import chat
-
-    for gid in feed_groups:
-        chat.publish(gid, {"source": "qq", "user": user, "text": _plain(message)})
-    if not targets:
-        return
-
     # 回复:取被回复消息内容(get_msg)
     reply_user = reply_plain = None
     for seg in _seg_list(message):
@@ -281,6 +297,22 @@ async def _process_group_message(payload: dict) -> None:
                 reply_user = str(rs.get("card") or rs.get("nickname") or d.get("user_id") or "")
                 reply_plain = _plain(d.get("message"))
             break
+
+    # 推到聊天室(结构化段:文本/图片/@/表情/回复 + 头像)
+    from . import chat
+
+    feed = {
+        "source": "qq",
+        "sender": user,
+        "sender_id": sender_qq,
+        "avatar": f"https://q1.qlogo.cn/g?b=qq&nk={sender_qq}&s=100" if sender_qq else "",
+        "text": _plain(message),
+        "segments": _web_segments(message, reply_user, reply_plain),
+    }
+    for gid in feed_groups:
+        chat.publish(gid, feed)
+    if not targets:
+        return
 
     loop = asyncio.get_running_loop()
     at_names = [s for s in _plain(message).replace("@", " @").split() if s.startswith("@")]
