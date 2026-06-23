@@ -112,6 +112,11 @@ export default function Litematica() {
               <div key={f.name} className="flex items-center gap-3 px-4 py-2.5 text-sm">
                 <Box className="h-4 w-4 shrink-0 text-muted-foreground" />
                 <span className="min-w-0 flex-1 truncate font-medium">{f.name}</span>
+                {f.info ? (
+                  <span className="shrink-0 text-xs text-muted-foreground">{f.info.size.join('×')} · {f.info.total_blocks.toLocaleString()} 方块</span>
+                ) : (
+                  <span className="shrink-0 text-xs text-muted-foreground">解析中…</span>
+                )}
                 <span className="shrink-0 font-mono text-xs text-muted-foreground">{fmtBytes(f.size_bytes)}</span>
                 <Button type="button" variant="ghost" size="icon" className="h-8 w-8" title="信息/材料" disabled={busy === f.name} onClick={() => showInfo(f)}>
                   {busy === f.name ? <Loader2 className="h-4 w-4 animate-spin" /> : <Info className="h-4 w-4" />}
@@ -167,6 +172,9 @@ function BuildDialog({ file, servers, onClose }: { file: LitematicaFile; servers
 
   useEffect(() => { if (serverId === null && servers.length > 0) setServerId(servers[0].id) }, [servers, serverId])
 
+  const blocks = file.info?.total_blocks ?? 0
+  const tooBig = blocks > 500000
+
   const submit = async () => {
     if (serverId === null) return
     setBusy(true)
@@ -207,10 +215,15 @@ function BuildDialog({ file, servers, onClose }: { file: LitematicaFile; servers
             <Label>放置空气(覆盖原有方块)</Label>
             <Switch checked={placeAir} onCheckedChange={setPlaceAir} />
           </div>
+          {tooBig ? (
+            <p className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              该投影 {blocks.toLocaleString()} 方块,超过控制台建造上限(50 万)。逐条建造会导致服务器卡死,已禁用。
+            </p>
+          ) : null}
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={onClose} disabled={busy}>取消</Button>
-          <Button type="button" className="gap-1.5" disabled={busy || serverId === null} onClick={submit}>
+          <Button type="button" className="gap-1.5" disabled={busy || serverId === null || tooBig} onClick={submit}>
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Hammer className="h-4 w-4" />}开始建造
           </Button>
         </DialogFooter>

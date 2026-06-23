@@ -21,6 +21,8 @@ router = APIRouter(prefix="/litematica", tags=["litematica"])
 
 # 持有后台建造任务的强引用,避免被 GC 回收(asyncio 已知坑)
 _BUILD_TASKS: set = set()
+# 控制台建造的方块上限(超过则拒绝:再大会内存暴涨且服务器卡死)
+_MAX_BUILD_BLOCKS = 500_000
 
 
 def _safe_name(name: str) -> str:
@@ -110,6 +112,14 @@ async def build(body: BuildBody, _: str = Depends(require_helper), db: Session =
     p = _path(body.name)
     if not p.exists():
         raise HTTPException(status_code=404, detail="投影文件不存在")
+    # 体量护栏:百万级方块用控制台逐条建造不可行(内存暴涨+服务器卡死),直接拒绝
+    cached = lm.cached_info(p)
+    if cached and cached.get("total_blocks", 0) > _MAX_BUILD_BLOCKS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"投影过大({cached['total_blocks']:,} 方块,上限 {_MAX_BUILD_BLOCKS:,})。"
+            "控制台逐条建造仅适用于中小投影;超大投影请用 WorldEdit/分区等方式。",
+        )
     sid = server.id
 
     async def run() -> None:
