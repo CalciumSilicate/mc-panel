@@ -54,6 +54,7 @@ _COLUMN_MIGRATIONS = {
         "onebot_token": "VARCHAR(255) DEFAULT ''",
         "port_min": "INTEGER DEFAULT 25565",
         "port_max": "INTEGER DEFAULT 25999",
+        "base_url": "VARCHAR(255) DEFAULT ''",
     },
     "server_groups": {
         "qq_group_ids": "TEXT DEFAULT '[]'",

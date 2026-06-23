@@ -18,7 +18,7 @@ import websockets
 from sqlalchemy import select
 
 from . import net
-from .config import CHAT_IMG_DIR
+from .config import API_PORT, CHAT_IMG_DIR
 from .database import SessionLocal
 from .models import Server, ServerGroup
 
@@ -41,6 +41,21 @@ async def _cache_image(url: str) -> str:
         return f"/api/chat/img/{name}"
     except Exception:  # noqa: BLE001
         return url
+
+
+# qq 号 -> 群名片/昵称 缓存(由成员列表接口填充,用于 @ 显示名字)
+_member_names: dict[str, str] = {}
+
+
+def remember_members(members: list[dict]) -> None:
+    for m in members:
+        uid = str(m.get("user_id") or "")
+        if uid:
+            _member_names[uid] = str(m.get("card") or m.get("nickname") or uid)
+
+
+def member_name(qq: str) -> str:
+    return _member_names.get(str(qq), str(qq))
 
 _MC_TYPES = ("vanilla", "fabric", "forge")
 
@@ -162,8 +177,9 @@ def _seg_list(message) -> list[dict]:
     return []
 
 
-def _web_segments(message, reply_user: str | None, reply_plain: str | None) -> list[dict]:
-    """OneBot 消息 → 聊天室前端用的结构化段(回复内容已预先解析)。"""
+def _web_segments(message, reply_user: str | None, reply_plain: str | None, img_map: dict | None = None) -> list[dict]:
+    """OneBot 消息 → 聊天室前端用的结构化段(回复内容已预先解析;图片用本地缓存路径)。"""
+    img_map = img_map or {}
     out: list[dict] = []
     if reply_user is not None:
         out.append({"type": "reply", "user": reply_user, "text": (reply_plain or "")[:80]})
@@ -172,9 +188,11 @@ def _web_segments(message, reply_user: str | None, reply_plain: str | None) -> l
         if t == "text":
             out.append({"type": "text", "text": str(d.get("text") or "")})
         elif t == "at":
-            out.append({"type": "at", "qq": str(d.get("qq") or ""), "name": str(d.get("name") or d.get("text") or "")})
+            qq = str(d.get("qq") or "")
+            out.append({"type": "at", "qq": qq, "name": str(d.get("name") or d.get("text") or "") or member_name(qq)})
         elif t == "image":
-            out.append({"type": "image", "url": str(d.get("url") or d.get("file") or "")})
+            u = str(d.get("url") or d.get("file") or "")
+            out.append({"type": "image", "url": img_map.get(u, u)})
         elif t == "face":
             out.append({"type": "face", "id": str(d.get("id") or "")})
         elif t == "record":
@@ -197,7 +215,7 @@ def _plain(message) -> str:
     return "".join(out)
 
 
-def _seg_comp(seg: dict, modern: bool) -> dict | None:
+def _seg_comp(seg: dict, modern: bool, img_map: dict, base_url: str) -> dict | None:
     from . import bridge
 
     t, d = seg.get("type"), seg.get("data") or {}
@@ -209,7 +227,7 @@ def _seg_comp(seg: dict, modern: bool) -> dict | None:
         return comp
     if t == "at":
         qq = str(d.get("qq") or "")
-        name = str(d.get("name") or d.get("text") or qq)
+        name = str(d.get("name") or d.get("text") or "") or member_name(qq)
         disp = "@全体成员" if qq.lower() == "all" else f"@{name}"
         comp = {"text": disp, "color": "aqua"}
         if qq and qq.lower() != "all":
@@ -217,9 +235,10 @@ def _seg_comp(seg: dict, modern: bool) -> dict | None:
         return comp
     if t == "image":
         url = str(d.get("url") or d.get("file") or "")
+        local = img_map.get(url, "")
         comp = {"text": "[图片]", "color": "aqua"}
-        if url:
-            comp.update(bridge.click_event("suggest_command", url, modern))
+        if local:
+            comp.update(bridge.click_event("open_url", base_url + local, modern))
         return comp
     if t == "record":
         url = str(d.get("url") or d.get("file") or "")
@@ -246,7 +265,7 @@ def _seg_comp(seg: dict, modern: bool) -> dict | None:
     return None  # reply 单独处理
 
 
-def _main_line(user: str, sender_qq: str, message, message_id, modern: bool) -> list:
+def _main_line(user: str, sender_qq: str, message, message_id, modern: bool, img_map: dict, base_url: str) -> list:
     from . import bridge
 
     parts: list = ["", {"text": "[QQ] ", "color": "gray"}]
@@ -255,7 +274,7 @@ def _main_line(user: str, sender_qq: str, message, message_id, modern: bool) -> 
         up.update(bridge.click_event("suggest_command", f".[CQ:at,qq={sender_qq}] ", modern))
     parts.append(up)
     for seg in _seg_list(message):
-        c = _seg_comp(seg, modern)
+        c = _seg_comp(seg, modern, img_map, base_url)
         if c:
             parts.append(c)
     if message_id is not None:
@@ -290,9 +309,12 @@ async def _process_group_message(payload: dict) -> None:
     message = payload.get("message")
     message_id = payload.get("message_id")
 
-    # 目标:所有绑定了该 QQ 群的互联组内的 MC 实例
+    # 目标:所有绑定了该 QQ 群的互联组内的 MC 实例 + 面板基址
     db = SessionLocal()
     try:
+        from .deps import get_settings_row
+
+        base_url = (get_settings_row(db).base_url or "").rstrip("/")
         targets: list[tuple[int, str]] = []
         feed_groups: list[int] = []
         for g in db.scalars(select(ServerGroup)).all():
@@ -308,6 +330,16 @@ async def _process_group_message(payload: dict) -> None:
                     targets.append((s.id, s.mc_version))
     finally:
         db.close()
+    if not base_url:
+        base_url = f"http://localhost:{API_PORT}"
+
+    # 先把图片下载到本地缓存(原始 url -> /api/chat/img/<name>),feed 与游戏内共用
+    img_map: dict[str, str] = {}
+    for seg in _seg_list(message):
+        if seg.get("type") == "image":
+            u = str((seg.get("data") or {}).get("url") or (seg.get("data") or {}).get("file") or "")
+            if u and u not in img_map:
+                img_map[u] = await _cache_image(u)
 
     # 回复:取被回复消息内容(get_msg)
     reply_user = reply_plain = None
@@ -325,10 +357,7 @@ async def _process_group_message(payload: dict) -> None:
     # 推到聊天室(结构化段:文本/图片/@/表情/回复 + 头像);图片下载到本地缓存
     from . import chat
 
-    segments = _web_segments(message, reply_user, reply_plain)
-    for s in segments:
-        if s.get("type") == "image" and s.get("url"):
-            s["url"] = await _cache_image(s["url"])
+    segments = _web_segments(message, reply_user, reply_plain, img_map)
     feed = {
         "source": "qq",
         "sender": user,
@@ -350,7 +379,7 @@ async def _process_group_message(payload: dict) -> None:
         modern = bridge._modern(mc_version)
         if reply_user is not None:
             loop.create_task(bridge._safe_send(sid, "tellraw @a " + json.dumps(_reply_line(reply_user, reply_plain or "", modern), ensure_ascii=False)))
-        cmd = "tellraw @a " + json.dumps(_main_line(user, sender_qq, message, message_id, modern), ensure_ascii=False)
+        cmd = "tellraw @a " + json.dumps(_main_line(user, sender_qq, message, message_id, modern, img_map, base_url), ensure_ascii=False)
         loop.create_task(bridge._safe_send(sid, cmd))
         # @ 在线真人 → 提示音
         plain_low = _plain(message).lower()

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { Crown, Loader2, Send, Shield } from 'lucide-react'
 
 import { ApiError } from '@/api/client'
@@ -111,6 +111,8 @@ export default function Chat() {
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
   const [atOpen, setAtOpen] = useState(false)
+  const [atIndex, setAtIndex] = useState(0)
+  const [mentions, setMentions] = useState<Record<string, string>>({}) // 名字 -> QQ号(真实 @)
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -161,10 +163,12 @@ export default function Chat() {
 
   useEffect(() => {
     setAtOpen(atQuery !== null && atCandidates.length > 0)
+    setAtIndex(0)
   }, [atQuery, atCandidates])
 
   const pickAt = (m: ChatMember) => {
     setText((cur) => cur.replace(/@([^\s@]*)$/, `@${m.name} `))
+    if (m.user_id) setMentions((cur) => ({ ...cur, [m.name]: m.user_id! }))
     setAtOpen(false)
     inputRef.current?.focus()
   }
@@ -172,15 +176,31 @@ export default function Chat() {
   const send = async () => {
     const t = text.trim()
     if (!t || groupId === null) return
+    // 把 @名字 转成真实 CQ at(仅 QQ 成员);游戏玩家保持 @名字 文本
+    let payload = t
+    for (const [name, qq] of Object.entries(mentions)) {
+      payload = payload.split(`@${name}`).join(`[CQ:at,qq=${qq}]`)
+    }
     setSending(true)
     try {
-      await sendChat(groupId, t)
+      await sendChat(groupId, payload)
       setText('')
+      setMentions({})
     } catch (err) {
       showToast('error', err instanceof ApiError ? err.message : '发送失败')
     } finally {
       setSending(false)
     }
+  }
+
+  const onInputKeyDown = (e: ReactKeyboardEvent) => {
+    if (atOpen) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); setAtIndex((i) => Math.min(i + 1, atCandidates.length - 1)); return }
+      if (e.key === 'ArrowUp') { e.preventDefault(); setAtIndex((i) => Math.max(i - 1, 0)); return }
+      if (e.key === 'Enter') { e.preventDefault(); pickAt(atCandidates[atIndex]); return }
+      if (e.key === 'Escape') { e.preventDefault(); setAtOpen(false); return }
+    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() }
   }
 
   const hasGroups = (groups?.length ?? 0) > 0
@@ -225,8 +245,12 @@ export default function Chat() {
                     <button
                       key={i}
                       type="button"
-                      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-muted"
-                      onClick={() => pickAt(m)}
+                      className={cn(
+                        'flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm',
+                        i === atIndex ? 'bg-muted' : 'hover:bg-muted',
+                      )}
+                      onMouseEnter={() => setAtIndex(i)}
+                      onMouseDown={(e) => { e.preventDefault(); pickAt(m) }}
                     >
                       <Avatar src={m.user_id ? qqAvatar(m.user_id) : mcAvatar(m.name)} name={m.name} className="h-5 w-5" />
                       <span className="min-w-0 flex-1 truncate">{m.name}</span>
@@ -240,10 +264,7 @@ export default function Chat() {
                   ref={inputRef}
                   value={text}
                   onChange={(e) => setText(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey && !atOpen) { e.preventDefault(); send() }
-                    if (e.key === 'Escape') setAtOpen(false)
-                  }}
+                  onKeyDown={onInputKeyDown}
                   placeholder={canOperate ? '说点什么…(@ 可提及成员,发到游戏与 QQ)' : '账号未验证,只读'}
                   disabled={!canOperate || sending}
                 />

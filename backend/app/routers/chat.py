@@ -62,18 +62,31 @@ async def send_message(
     except Exception:  # noqa: BLE001
         qq_ids = []
 
+    # 解析消息里的 CQ(@ 等);@ 名字用群名片缓存补全
+    segs = cqcode.parse(text)
+    for s in segs:
+        if s.get("type") == "at" and not s.get("name"):
+            s["name"] = onebot.member_name(s.get("qq", ""))
+    # 游戏内纯文本展示(@名字、图片占位)
+    mc_text = "".join(
+        s.get("text", "") if s["type"] == "text"
+        else f"@{s.get('name') or s.get('qq')}" if s["type"] == "at"
+        else "[图片]" if s["type"] == "image"
+        else ""
+        for s in segs
+    ) or text
+
     # 注入组内运行中的 MC 实例
     for sid, mc_version in targets:
         if manager.is_running(sid):
-            modern = bridge._modern(mc_version)
             comps = [
                 "",
                 {"text": "[网页] ", "color": "gray"},
                 {"text": f"<{user.username}> ", "color": "gray"},
-                {"text": text, "color": "gray"},
+                {"text": mc_text, "color": "gray"},
             ]
             asyncio.create_task(bridge._safe_send(sid, "tellraw @a " + json.dumps(comps, ensure_ascii=False)))
-    # 发到绑定的 QQ 群
+    # 发到绑定的 QQ 群(原文含 CQ,QQ 端会解析为真实 @)
     if onebot.client.connected:
         for gid in qq_ids:
             onebot.client.send_group(gid, f"<{user.username}> {text}")
@@ -82,8 +95,8 @@ async def send_message(
         "source": "web",
         "sender": user.username,
         "avatar": "",
-        "text": text,
-        "segments": cqcode.parse(text),
+        "text": mc_text,
+        "segments": segs,
     })
     return {"ok": True}
 
@@ -112,7 +125,9 @@ async def members(
     qq_members: list[dict] = []
     for gid in qq_ids:
         resp = await onebot.client.call_action("get_group_member_list", {"group_id": gid})
-        for m in (resp or {}).get("data") or []:
+        raw = (resp or {}).get("data") or []
+        onebot.remember_members(raw)  # 填充 @ 名字缓存
+        for m in raw:
             uid = str(m.get("user_id") or "")
             if not uid or uid in seen:
                 continue

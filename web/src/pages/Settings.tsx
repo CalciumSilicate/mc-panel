@@ -40,6 +40,7 @@ export default function Settings() {
   const [downloadProxy, setDownloadProxy] = useState('')
   const [portMin, setPortMin] = useState('')
   const [portMax, setPortMax] = useState('')
+  const [baseUrl, setBaseUrl] = useState('')
   const [allowRegister, setAllowRegister] = useState(false)
   const [onebotEnabled, setOnebotEnabled] = useState(false)
   const [onebotWsUrl, setOnebotWsUrl] = useState('')
@@ -57,6 +58,7 @@ export default function Settings() {
     setDownloadProxy(data.download_proxy)
     setPortMin(String(data.port_min))
     setPortMax(String(data.port_max))
+    setBaseUrl(data.base_url)
     setAllowRegister(data.allow_register)
     setOnebotEnabled(data.onebot_enabled)
     setOnebotWsUrl(data.onebot_ws_url)
@@ -82,6 +84,7 @@ export default function Settings() {
       download_proxy: downloadProxy.trim(),
       port_min: Number(portMin) || undefined,
       port_max: Number(portMax) || undefined,
+      base_url: baseUrl.trim(),
       allow_register: allowRegister,
       onebot_enabled: onebotEnabled,
       onebot_ws_url: onebotWsUrl.trim(),
@@ -165,6 +168,10 @@ export default function Settings() {
             <div className="space-y-2">
               <Label htmlFor="download-proxy">下载代理</Label>
               <Input id="download-proxy" value={downloadProxy} onChange={(e) => setDownloadProxy(e.target.value)} placeholder="http://127.0.0.1:7890" className="font-mono" />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="base-url">面板对外基址</Label>
+              <Input id="base-url" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="http://your-host:16824(用于游戏内图片等绝对链接)" className="font-mono" />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">

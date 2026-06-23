@@ -109,6 +109,8 @@ class SystemSettings(Base):
     # 自动分配端口的范围
     port_min: Mapped[int] = mapped_column(Integer, default=25565)
     port_max: Mapped[int] = mapped_column(Integer, default=25999)
+    # 面板对外可达的基址(用于游戏内图片等绝对链接),如 http://your-host:16824
+    base_url: Mapped[str] = mapped_column(String(255), default="")
     # 出站下载代理(http/https 共用),空 = 直连
     download_proxy: Mapped[str] = mapped_column(String(255), default="")
     # 是否允许自助注册(默认关闭)

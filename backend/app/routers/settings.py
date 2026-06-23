@@ -25,6 +25,7 @@ def _to_response(row) -> SettingsResponse:
         allow_register=row.allow_register,
         port_min=row.port_min,
         port_max=row.port_max,
+        base_url=row.base_url,
         onebot_enabled=row.onebot_enabled,
         onebot_ws_url=row.onebot_ws_url,
         onebot_token=row.onebot_token,
@@ -63,6 +64,8 @@ def update_settings(
         row.port_min = payload.port_min
     if payload.port_max is not None:
         row.port_max = payload.port_max
+    if payload.base_url is not None:
+        row.base_url = payload.base_url.strip().rstrip("/")
     if payload.onebot_enabled is not None:
         row.onebot_enabled = payload.onebot_enabled
     if payload.onebot_ws_url is not None:

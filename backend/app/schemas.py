@@ -221,6 +221,7 @@ class SettingsResponse(BaseModel):
     allow_register: bool = False
     port_min: int = 25565
     port_max: int = 25999
+    base_url: str = ""
     onebot_enabled: bool = False
     onebot_ws_url: str = ""
     onebot_token: str = ""
@@ -239,6 +240,7 @@ class SettingsUpdate(BaseModel):
     allow_register: bool | None = None
     port_min: int | None = Field(default=None, ge=1, le=65535)
     port_max: int | None = Field(default=None, ge=1, le=65535)
+    base_url: str | None = None
     onebot_enabled: bool | None = None
     onebot_ws_url: str | None = None
     onebot_token: str | None = None

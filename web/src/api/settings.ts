@@ -17,6 +17,7 @@ export interface PanelSettings {
   allow_register: boolean
   port_min: number
   port_max: number
+  base_url: string
   onebot_enabled: boolean
   onebot_ws_url: string
   onebot_token: string
@@ -34,6 +35,7 @@ export interface SettingsPatch {
   allow_register?: boolean
   port_min?: number
   port_max?: number
+  base_url?: string
   onebot_enabled?: boolean
   onebot_ws_url?: string
   onebot_token?: string
