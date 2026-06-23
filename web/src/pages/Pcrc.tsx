@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Circle, Download, Loader2, Play, Plus, Square, Trash2, Video } from 'lucide-react'
 
 import { ApiError } from '@/api/client'
@@ -30,6 +30,35 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useGlobalToast } from '@/components/ui/use-global-toast'
 import { useResource } from '@/lib/use-resource'
 import { cn } from '@/lib/utils'
+
+const ANSI_COLORS: Record<number, string> = {
+  30: 'text-neutral-500', 31: 'text-red-400', 32: 'text-emerald-400', 33: 'text-amber-400',
+  34: 'text-blue-400', 35: 'text-fuchsia-400', 36: 'text-cyan-400', 37: 'text-neutral-300',
+  90: 'text-neutral-500', 91: 'text-red-300', 92: 'text-emerald-300', 93: 'text-amber-300',
+  94: 'text-blue-300', 95: 'text-fuchsia-300', 96: 'text-cyan-300', 97: 'text-white',
+}
+
+function AnsiLine({ text }: { text: string }) {
+  // eslint-disable-next-line no-control-regex
+  const re = /\[([0-9;]*)m/g
+  const parts: ReactNode[] = []
+  let last = 0
+  let cls = ''
+  let key = 0
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) parts.push(<span key={key++} className={cls || undefined}>{text.slice(last, m.index)}</span>)
+    const codes = m[1].split(';').filter(Boolean).map(Number)
+    if (codes.length === 0 || codes.includes(0)) cls = ''
+    for (const c of codes) {
+      if (ANSI_COLORS[c]) cls = ANSI_COLORS[c]
+      else if (c === 1) cls = `${cls} font-semibold`.trim()
+    }
+    last = re.lastIndex
+  }
+  if (last < text.length) parts.push(<span key={key++} className={cls || undefined}>{text.slice(last)}</span>)
+  return <>{parts}</>
+}
 
 function fmtBytes(n: number): string {
   if (!n) return '0 B'
@@ -210,7 +239,7 @@ function Detail({ inst, isAdmin, onChanged, onDelete }: { inst: PcrcInstance; is
 
       <PageSurface title="控制台" bodyClassName="p-0">
         <div ref={consoleRef} className="scrollbar-none h-56 overflow-y-auto bg-background/60 px-3 py-2 font-mono text-xs leading-relaxed">
-          {lines.length === 0 ? <p className="text-muted-foreground">(无输出)</p> : lines.map((l, i) => <div key={i} className="whitespace-pre-wrap break-all">{l}</div>)}
+          {lines.length === 0 ? <p className="text-muted-foreground">(无输出)</p> : lines.map((l, i) => <div key={i} className="whitespace-pre-wrap break-all"><AnsiLine text={l} /></div>)}
         </div>
         <div className="flex items-center gap-2 border-t border-border/70 px-3 py-2">
           <Button type="button" size="sm" variant="outline" disabled={!running} onClick={() => send('start')}>● 开始录制</Button>
