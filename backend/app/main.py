@@ -70,8 +70,10 @@ async def _autostart() -> None:
                 return
             await asyncio.sleep(2)
 
+    print("[autostart] groups: " + ", ".join(f"prio{p}={[s.name for s in groups[p]]}" for p in sorted(groups)), flush=True)
     try:
         for prio in sorted(groups):
+            print(f"[autostart] starting prio {prio}: {[s.name for s in groups[prio]]}", flush=True)
             started = []
             for s in groups[prio]:
                 manager._queued.discard(s.id)
@@ -89,6 +91,7 @@ async def _autostart() -> None:
                 except Exception:  # noqa: BLE001 - 单实例失败不影响其它
                     pass
             await _wait_ready(started)
+            print(f"[autostart] prio {prio} all ready", flush=True)
     finally:
         for s in servers_to_start:
             manager._queued.discard(s.id)
