@@ -432,6 +432,18 @@ class MCDRManager:
                     asyncio.get_running_loop().create_task(self._send_startup(server_id, cmds))
                 except RuntimeError:
                     pass
+        # 广播给订阅者(实时控制台)
+        for queue in list(self._subscribers.get(server_id, set())):
+            try:
+                queue.put_nowait(line)
+            except asyncio.QueueFull:
+                pass  # 慢消费者:丢弃该行而非阻塞读取
+        # 逐行钩子(玩家绑定验证 + 聊天互转)
+        if self.line_hook is not None:
+            try:
+                self.line_hook(server_id, line)
+            except Exception:  # noqa: BLE001 - 钩子异常不能影响日志读取
+                pass
 
     async def _send_startup(self, server_id: int, cmds: list[str]) -> None:
         for c in cmds:
@@ -440,16 +452,6 @@ class MCDRManager:
                 await self.send_raw(server_id, c)
             except Exception:  # noqa: BLE001
                 break
-        for queue in list(self._subscribers.get(server_id, set())):
-            try:
-                queue.put_nowait(line)
-            except asyncio.QueueFull:
-                pass  # 慢消费者:丢弃该行而非阻塞读取
-        if self.line_hook is not None:
-            try:
-                self.line_hook(server_id, line)
-            except Exception:  # noqa: BLE001 - 钩子异常不能影响日志读取
-                pass
 
     def recent_lines(self, server_id: int) -> list[str]:
         return list(self._buffers.get(server_id, ()))
