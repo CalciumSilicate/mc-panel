@@ -39,31 +39,59 @@ manager.line_hook = _line_hook
 
 
 async def _autostart() -> None:
-    """面板启动时拉起标记了 auto_start 的实例。"""
+    """面板启动时按优先级分组拉起 auto_start 实例:同级并行,全部就绪后再下一级。"""
+    import asyncio
+    from collections import defaultdict
+
     db = SessionLocal()
     try:
-        servers_to_start = db.scalars(
-            select(Server).where(Server.auto_start.is_(True))
-        ).all()
+        servers_to_start = list(db.scalars(select(Server).where(Server.auto_start.is_(True))).all())
         if not servers_to_start:
             return
         sys_settings = get_settings_row(db)
         installs = detect_installs(get_java_paths(sys_settings))
-        for s in servers_to_start:
-            if manager.get_status(s) != "stopped":
-                continue
-            if s.java_path_override:
-                java_path = s.java_path_override
-            else:
-                java_path, err = choose_java(s.mc_version, installs, sys_settings.java_command)
-                if err:
-                    continue
-            try:
-                await manager.start(s, sys_settings.python_executable, java_path)
-            except Exception:  # noqa: BLE001 - 单个实例自启失败不影响其它
-                pass
+        python = sys_settings.python_executable
+        java_cmd = sys_settings.java_command
     finally:
         db.close()
+
+    groups: dict[int, list] = defaultdict(list)
+    for s in servers_to_start:
+        groups[getattr(s, "autostart_priority", 0) or 0].append(s)
+    # 全部先标记为「队列中」
+    for s in servers_to_start:
+        manager._queued.add(s.id)
+
+    async def _wait_ready(started: list, timeout: float = 300.0) -> None:
+        deadline = asyncio.get_event_loop().time() + timeout
+        while asyncio.get_event_loop().time() < deadline:
+            pending = [s for s in started if manager.is_running(s.id) and s.id not in manager._ready]
+            if not pending:
+                return
+            await asyncio.sleep(2)
+
+    try:
+        for prio in sorted(groups):
+            started = []
+            for s in groups[prio]:
+                manager._queued.discard(s.id)
+                if manager.get_status(s) != "stopped":
+                    continue
+                if s.java_path_override:
+                    java_path = s.java_path_override
+                else:
+                    java_path, err = choose_java(s.mc_version, installs, java_cmd)
+                    if err:
+                        continue
+                try:
+                    await manager.start(s, python, java_path)
+                    started.append(s)
+                except Exception:  # noqa: BLE001 - 单实例失败不影响其它
+                    pass
+            await _wait_ready(started)
+    finally:
+        for s in servers_to_start:
+            manager._queued.discard(s.id)
 
 
 @asynccontextmanager
@@ -76,7 +104,7 @@ async def lifespan(_: FastAPI):
     from . import stats as stats_mod
     from . import worldmap as worldmap_mod
 
-    await _autostart()
+    autostart_task = asyncio.create_task(_autostart())
     # 启动 QQ 互通客户端(OneBot 正向 ws)
     db = SessionLocal()
     try:
@@ -93,6 +121,7 @@ async def lifespan(_: FastAPI):
     try:
         yield
     finally:
+        autostart_task.cancel()
         scan_task.cancel()
         pb_task.cancel()
         mod_task.cancel()

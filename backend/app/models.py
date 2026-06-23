@@ -131,6 +131,14 @@ class Server(Base):
     group_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # 子服指向的代理(velocity 实例 id);空 = 不挂在任何代理下
     proxy_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 高级:自定义启动命令(空=按内存/java 自动生成)
+    start_command_override: Mapped[str] = mapped_column(Text, default="")
+    # 高级:MCDR 语言(zh_cn / en_us;空=不修改)
+    mcdr_language: Mapped[str] = mapped_column(String(16), default="")
+    # 高级:开服(Done)后自动执行的指令(JSON 数组)
+    startup_commands: Mapped[str] = mapped_column(Text, default="[]")
+    # 高级:开机自启优先级(越小越先;同级并行,全部就绪后再下一级)
+    autostart_priority: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 

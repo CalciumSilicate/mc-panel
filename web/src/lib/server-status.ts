@@ -14,6 +14,10 @@ export const SERVER_STATUS_META: Record<ServerStatus, { label: string; tone: str
     label: '已停止',
     tone: 'border-border/70 bg-muted text-muted-foreground',
   },
+  queued: {
+    label: '队列中',
+    tone: 'border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300',
+  },
   installing: {
     label: '安装中',
     tone: 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300',

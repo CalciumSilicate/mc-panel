@@ -11,6 +11,7 @@ export type ServerStatus =
   | 'starting'
   | 'running'
   | 'stopped'
+  | 'queued'
   | 'error'
 
 export interface InstallProgress {
@@ -35,6 +36,10 @@ export interface ServerSummary {
   group_id: number | null
   group_name: string
   proxy_id: number | null
+  start_command_override?: string
+  mcdr_language?: string
+  startup_commands?: string[]
+  autostart_priority?: number
   created_at: string
   status: ServerStatus
   needs_restart?: boolean
@@ -145,6 +150,10 @@ export interface ServerUpdateInput {
   auto_start?: boolean
   java_path_override?: string
   protected?: boolean
+  start_command_override?: string
+  mcdr_language?: string
+  startup_commands?: string[]
+  autostart_priority?: number
 }
 
 export function updateServer(id: number, patch: ServerUpdateInput): Promise<ServerSummary> {

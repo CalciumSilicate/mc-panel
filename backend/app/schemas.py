@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 # ---------- 鉴权 ----------
@@ -119,6 +119,10 @@ class ServerUpdate(BaseModel):
     protected: bool | None = None
     group_id: int | None = None
     proxy_id: int | None = None
+    start_command_override: str | None = None
+    mcdr_language: str | None = None
+    startup_commands: list[str] | None = None
+    autostart_priority: int | None = None
 
 
 class PropertiesResponse(BaseModel):
@@ -153,10 +157,26 @@ class ServerSummary(BaseModel):
     group_id: int | None = None
     group_name: str = ""
     proxy_id: int | None = None
+    start_command_override: str = ""
+    mcdr_language: str = ""
+    startup_commands: list[str] = []
+    autostart_priority: int = 0
     created_at: datetime
     # 运行时派生字段
     status: str = "stopped"
     needs_restart: bool = False
+
+    @field_validator("startup_commands", mode="before")
+    @classmethod
+    def _parse_cmds(cls, v: object) -> object:
+        if isinstance(v, str):
+            try:
+                import json as _json
+
+                return _json.loads(v or "[]")
+            except Exception:  # noqa: BLE001
+                return []
+        return v
     install: InstallProgress | None = None
 
 

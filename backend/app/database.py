@@ -46,6 +46,10 @@ _COLUMN_MIGRATIONS = {
         "loader_version": "VARCHAR(64) DEFAULT ''",
         "group_id": "INTEGER",
         "proxy_id": "INTEGER",
+        "start_command_override": "TEXT DEFAULT ''",
+        "mcdr_language": "VARCHAR(16) DEFAULT ''",
+        "startup_commands": "TEXT DEFAULT '[]'",
+        "autostart_priority": "INTEGER DEFAULT 0",
     },
     "system_settings": {
         "download_proxy": "VARCHAR(255) DEFAULT ''",

@@ -310,7 +310,7 @@ export default function Servers() {
                                 variant="outline"
                                 size="sm"
                                 className="gap-1.5"
-                                disabled={busy || server.status !== 'stopped'}
+                                disabled={busy || (server.status !== 'stopped' && server.status !== 'queued')}
                                 onClick={() => runAction(server.id, () => startServer(server.id), '已启动')}
                               >
                                 {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
@@ -739,6 +739,10 @@ function EditServerDialog({
   const [protectedFlag, setProtectedFlag] = useState(false)
   const [groupId, setGroupId] = useState<number | null>(null)
   const [javaOverride, setJavaOverride] = useState('')
+  const [startCmd, setStartCmd] = useState('')
+  const [mcdrLang, setMcdrLang] = useState('')
+  const [startupCmds, setStartupCmds] = useState('')
+  const [autostartPriority, setAutostartPriority] = useState('0')
   const [props, setProps] = useState<Record<string, string>>({})
   const [velCfg, setVelCfg] = useState<VelocityConfig>({ motd: '', show_max_players: 500, online_mode: true, forwarding_mode: 'NONE' })
   const [versions, setVersions] = useState<string[]>([])
@@ -774,6 +778,10 @@ function EditServerDialog({
     setProtectedFlag(server.protected)
     setGroupId(server.group_id)
     setJavaOverride(server.java_path_override)
+    setStartCmd(server.start_command_override ?? '')
+    setMcdrLang(server.mcdr_language ?? '')
+    setStartupCmds((server.startup_commands ?? []).join('\n'))
+    setAutostartPriority(String(server.autostart_priority ?? 0))
     // 仅在打开/切换实例时初始化,避免列表刷新覆盖正在编辑的内容
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [server?.id])
@@ -905,6 +913,10 @@ function EditServerDialog({
         java_path_override: javaOverride,
         protected: protectedFlag,
         group_id: groupId,
+        start_command_override: startCmd,
+        mcdr_language: mcdrLang,
+        startup_commands: startupCmds.split('\n').map((c) => c.trim()).filter(Boolean),
+        autostart_priority: Number(autostartPriority) || 0,
       })
       if (isVelocity) {
         await updateVelocityConfig(server.id, velCfg)
@@ -1155,6 +1167,25 @@ function EditServerDialog({
                 </SelectContent>
               </Select>
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-startcmd">自定义启动命令</Label>
+              <Input id="edit-startcmd" value={startCmd} onChange={(e) => setStartCmd(e.target.value)} placeholder="留空=按内存/Java 自动生成" className="font-mono" />
+            </div>
+            <div className="space-y-2">
+              <Label>MCDR 语言</Label>
+              <Select value={mcdrLang || 'auto'} onValueChange={(v) => setMcdrLang(v === 'auto' ? '' : v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">不修改</SelectItem>
+                  <SelectItem value="zh_cn">简体中文 (zh_cn)</SelectItem>
+                  <SelectItem value="en_us">English (en_us)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-startup">开服自动执行指令</Label>
+              <Textarea id="edit-startup" value={startupCmds} onChange={(e) => setStartupCmds(e.target.value)} rows={3} placeholder="每行一条,服务器加载完成(Done)后依次发送" className="font-mono" />
+            </div>
             <label className="flex items-center justify-between gap-4 rounded-md border border-border/70 px-3 py-2.5">
               <span>
                 <span className="block text-sm font-medium">开机自启</span>
@@ -1162,6 +1193,10 @@ function EditServerDialog({
               </span>
               <Switch checked={autoStart} onCheckedChange={setAutoStart} />
             </label>
+            <div className="space-y-2">
+              <Label htmlFor="edit-priority">自启优先级</Label>
+              <Input id="edit-priority" type="number" value={autostartPriority} onChange={(e) => setAutostartPriority(e.target.value)} placeholder="0" />
+            </div>
             <label className="flex items-center justify-between gap-4 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2.5">
               <span>
                 <span className="block text-sm font-medium">保护实例</span>

@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 import shlex
@@ -234,6 +235,10 @@ class MCDRManager:
         self._ready: set[int] = set()
         # 运行中被改了配置/模组、需要重启才生效的实例 id 集合
         self._needs_restart: set[int] = set()
+        # 开机自启队列中(等待前序优先级就绪)的实例 id 集合
+        self._queued: set[int] = set()
+        # server_id -> 开服(Done)后要自动执行的指令
+        self._startup_cmds: dict[int, list[str]] = {}
         # 逐行钩子(如玩家绑定验证):每条输出行都会调用,异常被吞掉
         self.line_hook: "Callable[[int, str], None] | None" = None
 
@@ -287,6 +292,8 @@ class MCDRManager:
         proc = self._procs.get(server.id)
         if proc is not None and proc.returncode is None:
             return STATUS_RUNNING if server.id in self._ready else STATUS_STARTING
+        if server.id in self._queued:
+            return "queued"
         return STATUS_STOPPED
 
     # ---------- 安装进度 / 任务 ----------
@@ -419,6 +426,20 @@ class MCDRManager:
         # 检测服务端加载完成,把状态从「启动中」翻成「运行中」
         if server_id not in self._ready and "Done (" in line and _DONE_RE.search(line):
             self._ready.add(server_id)
+            cmds = self._startup_cmds.get(server_id) or []
+            if cmds:
+                try:
+                    asyncio.get_running_loop().create_task(self._send_startup(server_id, cmds))
+                except RuntimeError:
+                    pass
+
+    async def _send_startup(self, server_id: int, cmds: list[str]) -> None:
+        for c in cmds:
+            await asyncio.sleep(1)
+            try:
+                await self.send_raw(server_id, c)
+            except Exception:  # noqa: BLE001
+                break
         for queue in list(self._subscribers.get(server_id, set())):
             try:
                 queue.put_nowait(line)
@@ -484,14 +505,21 @@ class MCDRManager:
             data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
         except Exception:  # noqa: BLE001
             return
-        if java is None:
-            cmd = data.get("start_command")
-            java = cmd[0] if isinstance(cmd, list) and cmd else "java"
-        launch = _resolve_launch(self.instance_dir(server), server.server_type)
-        data["start_command"] = build_start_command(
-            java, server.min_memory, server.max_memory, server.extra_jvm_args,
-            server.server_type, launch,
-        )
+        override = (getattr(server, "start_command_override", "") or "").strip()
+        if override:
+            data["start_command"] = override
+        else:
+            if java is None:
+                cmd = data.get("start_command")
+                java = cmd[0] if isinstance(cmd, list) and cmd else "java"
+            launch = _resolve_launch(self.instance_dir(server), server.server_type)
+            data["start_command"] = build_start_command(
+                java, server.min_memory, server.max_memory, server.extra_jvm_args,
+                server.server_type, launch,
+            )
+        lang = (getattr(server, "mcdr_language", "") or "").strip()
+        if lang:
+            data["language"] = lang
         config_path.write_text(
             yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8"
         )
@@ -649,6 +677,11 @@ class MCDRManager:
         if existing is not None and existing.returncode is None:
             return  # 已在运行
         self._needs_restart.discard(server.id)
+        self._queued.discard(server.id)
+        try:
+            self._startup_cmds[server.id] = json.loads(server.startup_commands or "[]")
+        except Exception:  # noqa: BLE001
+            self._startup_cmds[server.id] = []
 
         # 强制 MCDR(Python)以 UTF-8 读写其 stdio,否则 Windows 下会用系统码页(GBK)
         # 写日志,我们按 UTF-8 解码就会乱码。这样无论宿主机区域设置如何都统一为 UTF-8。

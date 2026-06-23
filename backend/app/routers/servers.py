@@ -357,6 +357,20 @@ async def update_server(
                 raise HTTPException(status_code=400, detail="代理必须是 Velocity 实例")
         server.proxy_id = payload.proxy_id
 
+    # 高级:自定义启动命令 / MCDR 语言 / 自启指令 / 自启优先级
+    if "start_command_override" in payload.model_fields_set:
+        server.start_command_override = payload.start_command_override or ""
+        start_cmd_changed = True
+    if "mcdr_language" in payload.model_fields_set:
+        server.mcdr_language = payload.mcdr_language or ""
+        start_cmd_changed = True
+    if payload.startup_commands is not None:
+        import json as _json
+
+        server.startup_commands = _json.dumps([c for c in payload.startup_commands if c.strip()], ensure_ascii=False)
+    if payload.autostart_priority is not None:
+        server.autostart_priority = payload.autostart_priority
+
     mc_changed = bool(payload.mc_version) and payload.mc_version != server.mc_version
     loader_changed = payload.loader_version is not None and payload.loader_version != server.loader_version
     version_changed = mc_changed or loader_changed
