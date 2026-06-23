@@ -32,6 +32,20 @@ export function updatePresetConfig(key: string, serverId: number, values: Record
   return apiRequest(`/configs/${key}/${serverId}`, { method: 'PATCH', body: JSON.stringify({ values }) })
 }
 
-export function installPreset(key: string, serverId: number): Promise<{ ok: boolean; file_name: string }> {
+export function installPreset(key: string, serverId: number): Promise<{ ok: boolean }> {
   return apiRequest(`/configs/${key}/${serverId}/install`, { method: 'POST', body: '{}' })
+}
+
+export interface BatchResult {
+  name: string
+  status: 'ok' | 'unsupported' | 'error'
+  detail: string
+}
+
+export function copyConfigTo(key: string, sourceId: number, targets: number[]): Promise<{ results: BatchResult[] }> {
+  return apiRequest(`/configs/${key}/${sourceId}/copy-to`, { method: 'POST', body: JSON.stringify({ targets }) })
+}
+
+export function installPresetTo(key: string, targets: number[]): Promise<{ results: BatchResult[] }> {
+  return apiRequest(`/configs/${key}/install-to`, { method: 'POST', body: JSON.stringify({ targets }) })
 }

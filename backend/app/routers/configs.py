@@ -1,6 +1,7 @@
 """插件配置:推荐插件的一键安装 + 默认配置 + 表单化编辑。"""
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -66,6 +67,12 @@ def update_config(key: str, server_id: int, body: ValuesBody, _: str = Depends(r
     return {"ok": True}
 
 
+async def _install_one(preset: presets.Preset, server: Server, python: str) -> None:
+    inst = manager.instance_dir(server)
+    await plugins.install_from_catalogue(inst, preset.plugin_id, None, python)
+    presets.ensure_default(inst, preset)
+
+
 @router.post("/{key}/{server_id}/install")
 async def install_preset(key: str, server_id: int, _: str = Depends(require_helper), db: Session = Depends(get_db)) -> dict:
     preset = _preset(key)
@@ -73,8 +80,57 @@ async def install_preset(key: str, server_id: int, _: str = Depends(require_help
     ensure_not_protected(server)
     if server.server_type not in _MC_TYPES:
         raise HTTPException(status_code=400, detail="该插件仅适用于 MC 服务器实例")
-    inst = manager.instance_dir(server)
-    settings = get_settings_row(db)
-    result = await plugins.install_from_catalogue(inst, preset.plugin_id, None, settings.python_executable)
-    presets.ensure_default(inst, preset)
-    return {"ok": True, "file_name": result.get("file_name", "")}
+    await _install_one(preset, server, get_settings_row(db).python_executable)
+    return {"ok": True}
+
+
+class TargetsBody(BaseModel):
+    targets: list[int]
+
+
+@router.post("/{key}/{server_id}/copy-to")
+def copy_config_to(key: str, server_id: int, body: TargetsBody, _: str = Depends(require_helper), db: Session = Depends(get_db)) -> dict:
+    """把源实例该插件的整份配置复制到目标实例。"""
+    preset = _preset(key)
+    src = _server(db, server_id)
+    src_file = manager.instance_dir(src) / preset.target
+    content = src_file.read_text(encoding="utf-8") if src_file.exists() else json.dumps(
+        presets.read_default(preset), ensure_ascii=False, indent=4
+    )
+    results: list[dict] = []
+    for tid in body.targets:
+        t = db.get(Server, tid)
+        if t is None or tid == server_id:
+            continue
+        if t.protected:
+            results.append({"name": t.name if t else str(tid), "status": "error", "detail": "实例受保护"})
+            continue
+        dest = manager.instance_dir(t) / preset.target
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(content, encoding="utf-8")
+        results.append({"name": t.name, "status": "ok", "detail": "已复制配置"})
+    return {"results": results}
+
+
+@router.post("/{key}/install-to")
+async def install_preset_to(key: str, body: TargetsBody, _: str = Depends(require_helper), db: Session = Depends(get_db)) -> dict:
+    """把该插件安装到多个目标实例。"""
+    preset = _preset(key)
+    python = get_settings_row(db).python_executable
+    results: list[dict] = []
+    for tid in body.targets:
+        t = db.get(Server, tid)
+        if t is None:
+            continue
+        if t.protected:
+            results.append({"name": t.name, "status": "error", "detail": "实例受保护"})
+            continue
+        if t.server_type not in _MC_TYPES:
+            results.append({"name": t.name, "status": "unsupported", "detail": "非 MC 实例"})
+            continue
+        try:
+            await _install_one(preset, t, python)
+            results.append({"name": t.name, "status": "ok", "detail": "已安装"})
+        except Exception as exc:  # noqa: BLE001
+            results.append({"name": t.name, "status": "error", "detail": str(exc)})
+    return {"results": results}

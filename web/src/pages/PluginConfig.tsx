@@ -1,13 +1,24 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ChevronDown, Download, Loader2, Save } from 'lucide-react'
+import { Check, ChevronDown, Copy, Download, Loader2, Save, Send } from 'lucide-react'
 
 import { ApiError } from '@/api/client'
-import { type Preset, type PresetField, getPresetConfig, installPreset, listPresets, updatePresetConfig } from '@/api/configs'
+import {
+  type BatchResult,
+  type Preset,
+  type PresetField,
+  copyConfigTo,
+  getPresetConfig,
+  installPreset,
+  installPresetTo,
+  listPresets,
+  updatePresetConfig,
+} from '@/api/configs'
 import { type ServerSummary, listServers } from '@/api/servers'
 import { InlineLoader } from '@/components/PageLoader'
 import { PageShell, PageSurface } from '@/components/layout/PageScaffold'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -16,6 +27,72 @@ import { Textarea } from '@/components/ui/textarea'
 import { useGlobalToast } from '@/components/ui/use-global-toast'
 import { useResource } from '@/lib/use-resource'
 import { cn } from '@/lib/utils'
+
+const TYPE_LABEL: Record<string, string> = { vanilla: '原版', fabric: 'Fabric', forge: 'Forge', velocity: 'Velocity' }
+
+function ServerPickerDialog({
+  open,
+  title,
+  description,
+  servers,
+  busy,
+  onClose,
+  onConfirm,
+}: {
+  open: boolean
+  title: string
+  description: string
+  servers: ServerSummary[]
+  busy: boolean
+  onClose: () => void
+  onConfirm: (ids: number[]) => void
+}) {
+  const [sel, setSel] = useState<Set<number>>(new Set())
+  useEffect(() => { if (open) setSel(new Set()) }, [open])
+  const toggle = (id: number) => setSel((cur) => {
+    const n = new Set(cur)
+    if (n.has(id)) n.delete(id)
+    else n.add(id)
+    return n
+  })
+  return (
+    <Dialog open={open} onOpenChange={(o) => (!o ? onClose() : undefined)}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+        </DialogHeader>
+        <p className="text-sm text-muted-foreground">{description}</p>
+        <div className="max-h-72 space-y-1 overflow-y-auto">
+          {servers.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">没有其他可选服务器。</p>
+          ) : (
+            servers.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                className="flex w-full items-center gap-2 rounded-lg border border-border/70 px-3 py-2 text-left text-sm hover:bg-muted"
+                onClick={() => toggle(s.id)}
+              >
+                <span className={cn('flex h-4 w-4 shrink-0 items-center justify-center rounded border', sel.has(s.id) ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground/40')}>
+                  {sel.has(s.id) ? <Check className="h-3 w-3" /> : null}
+                </span>
+                <span className="min-w-0 flex-1 truncate">{s.name}</span>
+                <Badge variant="outline" className="text-[11px]">{TYPE_LABEL[s.server_type] ?? s.server_type}</Badge>
+              </button>
+            ))
+          )}
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={onClose} disabled={busy}>取消</Button>
+          <Button type="button" className="gap-1.5" disabled={busy || sel.size === 0} onClick={() => onConfirm([...sel])}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            应用到 {sel.size} 个
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
 
 const MC_TYPES = ['vanilla', 'fabric', 'forge']
 const ROLE_LEVELS = ['0 游客', '1 用户', '2 助手', '3 管理', '4 所有者']
@@ -76,13 +153,36 @@ function FieldInput({ field, value, onChange }: { field: PresetField; value: unk
   }
 }
 
-function PresetCard({ preset, serverId }: { preset: Preset; serverId: number }) {
+function PresetCard({ preset, serverId, servers }: { preset: Preset; serverId: number; servers: ServerSummary[] }) {
   const { showToast } = useGlobalToast()
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [installed, setInstalled] = useState<boolean | null>(null)
   const [values, setValues] = useState<Record<string, unknown>>({})
   const [busy, setBusy] = useState(false)
+  const [picker, setPicker] = useState<'copy' | 'install' | null>(null)
+  const [pickerBusy, setPickerBusy] = useState(false)
+
+  const others = useMemo(() => servers.filter((s) => s.id !== serverId), [servers, serverId])
+
+  const reportBatch = (results: BatchResult[]) => {
+    const bad = results.filter((r) => r.status !== 'ok')
+    if (bad.length === 0) showToast('success', `已应用到 ${results.length} 个服务器`)
+    else showToast('error', `${results.length - bad.length} 成功,${bad.length} 失败:${bad.map((b) => `${b.name}(${b.detail})`).join('、')}`)
+  }
+
+  const doBatch = async (ids: number[]) => {
+    setPickerBusy(true)
+    try {
+      const r = picker === 'copy' ? await copyConfigTo(preset.key, serverId, ids) : await installPresetTo(preset.key, ids)
+      reportBatch(r.results)
+      setPicker(null)
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : '操作失败')
+    } finally {
+      setPickerBusy(false)
+    }
+  }
 
   const load = async () => {
     setLoading(true)
@@ -152,10 +252,16 @@ function PresetCard({ preset, serverId }: { preset: Preset; serverId: number }) 
           ) : installed === false ? (
             <div className="flex items-center justify-between gap-3">
               <span className="text-sm text-muted-foreground">尚未安装,点击从 MCDR 仓库一键安装并写入默认配置。</span>
-              <Button type="button" className="gap-1.5 shrink-0" onClick={install} disabled={busy}>
-                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-                一键安装
-              </Button>
+              <div className="flex shrink-0 gap-2">
+                <Button type="button" variant="outline" className="gap-1.5" onClick={() => setPicker('install')}>
+                  <Send className="h-4 w-4" />
+                  安装到其他
+                </Button>
+                <Button type="button" className="gap-1.5" onClick={install} disabled={busy}>
+                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                  一键安装
+                </Button>
+              </div>
             </div>
           ) : (
             <div className="space-y-3">
@@ -165,7 +271,15 @@ function PresetCard({ preset, serverId }: { preset: Preset; serverId: number }) 
                   <FieldInput field={f} value={values[f.path]} onChange={(v) => setValues((cur) => ({ ...cur, [f.path]: v }))} />
                 </div>
               ))}
-              <div className="flex justify-end pt-1">
+              <div className="flex flex-wrap justify-end gap-2 pt-1">
+                <Button type="button" variant="outline" className="gap-1.5" onClick={() => setPicker('copy')}>
+                  <Copy className="h-4 w-4" />
+                  配置到其他
+                </Button>
+                <Button type="button" variant="outline" className="gap-1.5" onClick={() => setPicker('install')}>
+                  <Send className="h-4 w-4" />
+                  安装到其他
+                </Button>
                 <Button type="button" className="gap-1.5" onClick={save} disabled={busy}>
                   {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                   保存
@@ -175,6 +289,16 @@ function PresetCard({ preset, serverId }: { preset: Preset; serverId: number }) 
           )}
         </div>
       ) : null}
+
+      <ServerPickerDialog
+        open={picker !== null}
+        title={picker === 'copy' ? `把「${preset.name}」配置复制到` : `把「${preset.name}」安装到`}
+        description={picker === 'copy' ? '将当前实例该插件的整份配置覆盖到所选实例。' : '在所选实例上安装该插件并写入默认配置。'}
+        servers={others}
+        busy={pickerBusy}
+        onClose={() => setPicker(null)}
+        onConfirm={doBatch}
+      />
     </div>
   )
 }
@@ -212,7 +336,7 @@ export default function PluginConfig() {
         <div className="flex h-40 items-center justify-center"><InlineLoader /></div>
       ) : (
         <PageSurface bodyClassName="space-y-3">
-          {(presets ?? []).map((p) => (<PresetCard key={p.key} preset={p} serverId={serverId} />))}
+          {(presets ?? []).map((p) => (<PresetCard key={p.key} preset={p} serverId={serverId} servers={mcServers} />))}
         </PageSurface>
       )}
     </PageShell>
