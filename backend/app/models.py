@@ -48,6 +48,16 @@ class ServerGroup(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
+class PluginScan(Base):
+    """每个实例已安装 MCDR 插件 id 的缓存(由定时 worker 扫描更新),供「插件配置」秒读。"""
+
+    __tablename__ = "plugin_scans"
+
+    server_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    installed_ids: Mapped[str] = mapped_column(Text, default="[]")  # JSON 数组
+    scanned_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
 class PcrcInstance(Base):
     """一个 PCRC 录像机实例(模拟客户端,连进服务器录制 .mcpr)。"""
 

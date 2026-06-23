@@ -68,6 +68,10 @@ async def _autostart() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    import asyncio
+
+    from . import plugin_scan
+
     await _autostart()
     # 启动 QQ 互通客户端(OneBot 正向 ws)
     db = SessionLocal()
@@ -76,7 +80,12 @@ async def lifespan(_: FastAPI):
         onebot.client.start(row.onebot_enabled, row.onebot_ws_url, row.onebot_token)
     finally:
         db.close()
-    yield
+    # 插件安装状态扫描 worker(周期刷新 DB 缓存)
+    scan_task = asyncio.create_task(plugin_scan.worker())
+    try:
+        yield
+    finally:
+        scan_task.cancel()
 
 
 app = FastAPI(title="mc-panel API", lifespan=lifespan)

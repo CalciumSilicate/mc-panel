@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from .. import plugin_presets as presets
+from .. import plugin_scan
 from ..database import get_db
 from ..deps import ensure_not_protected, get_settings_row, require_helper
 from ..mcdr import manager
@@ -47,9 +48,12 @@ def get_config(key: str, server_id: int, _: str = Depends(require_helper), db: S
     preset = _preset(key)
     server = _server(db, server_id)
     inst = manager.instance_dir(server)
-    installed_ids = {p["id"] for p in plugins.list_plugins(inst) if p.get("id")}
+    # 读缓存(无缓存则触发一次现场扫描并写入)
+    ids = plugin_scan.get_installed_ids(db, server_id)
+    if ids is None:
+        ids = plugin_scan.scan_server(db, server)
     return {
-        "installed": preset.plugin_id in installed_ids,
+        "installed": preset.plugin_id in ids,
         "values": presets.field_values(inst, preset),
     }
 
@@ -81,6 +85,7 @@ async def install_preset(key: str, server_id: int, _: str = Depends(require_help
     if server.server_type not in _MC_TYPES:
         raise HTTPException(status_code=400, detail="该插件仅适用于 MC 服务器实例")
     await _install_one(preset, server, get_settings_row(db).python_executable)
+    plugin_scan.mark_installed(db, server.id, preset.plugin_id)
     return {"ok": True}
 
 
@@ -130,6 +135,7 @@ async def install_preset_to(key: str, body: TargetsBody, _: str = Depends(requir
             continue
         try:
             await _install_one(preset, t, python)
+            plugin_scan.mark_installed(db, t.id, preset.plugin_id)
             results.append({"name": t.name, "status": "ok", "detail": "已安装"})
         except Exception as exc:  # noqa: BLE001
             results.append({"name": t.name, "status": "error", "detail": str(exc)})
