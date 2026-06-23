@@ -181,7 +181,7 @@ export default function Superflat() {
         </PageSurface>
 
         <PageSurface title="配置预览" bodyClassName="space-y-3">
-          <pre className="overflow-x-auto rounded-md border border-border/70 bg-muted/40 p-3 font-mono text-xs">{generatorSettings}</pre>
+          <pre className="whitespace-pre-wrap break-all rounded-md border border-border/70 bg-muted/40 p-3 font-mono text-xs">{generatorSettings}</pre>
           <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={() => { navigator.clipboard?.writeText(generatorSettings); showToast('success', '已复制') }}>
             <Copy className="h-3.5 w-3.5" />
             复制

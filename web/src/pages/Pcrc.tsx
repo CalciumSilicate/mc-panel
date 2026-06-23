@@ -114,7 +114,7 @@ export default function Pcrc() {
   return (
     <PageShell
       title="PCRC 录像机"
-      description="模拟客户端连进服务器录制 .mcpr(ReplayMod 可编辑)。microsoft 登录的设备码会出现在控制台。"
+      description="模拟客户端连进服务器录制 .mcpr(ReplayMod 可编辑)。仅支持 MC 1.12 ~ 1.18.2。microsoft 登录的设备码会出现在控制台。"
       width="6xl"
       actions={
         isAdmin ? (
@@ -124,6 +124,9 @@ export default function Pcrc() {
         ) : null
       }
     >
+      <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-2.5 text-sm text-amber-700 dark:text-amber-300">
+        注意:PCRC 仅支持 Minecraft 1.12 ~ 1.18.2,更高版本的服务器无法连接录制。
+      </div>
       {!available ? (
         <PageSurface>
           <div className="flex flex-col items-center gap-3 py-8 text-center">
