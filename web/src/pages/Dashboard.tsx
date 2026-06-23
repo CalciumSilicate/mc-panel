@@ -49,6 +49,7 @@ const Superflat = lazy(() => import('@/pages/Superflat'))
 const ChatPage = lazy(() => import('@/pages/Chat'))
 const ProxyNetPage = lazy(() => import('@/pages/ProxyNet'))
 const PluginConfigPage = lazy(() => import('@/pages/PluginConfig'))
+const ModConfigPage = lazy(() => import('@/pages/ModConfig'))
 const PrimeBackupPage = lazy(() => import('@/pages/PrimeBackup'))
 const LitematicaPage = lazy(() => import('@/pages/Litematica'))
 const PcrcPage = lazy(() => import('@/pages/Pcrc'))
@@ -63,7 +64,7 @@ const SettingsPage = lazy(() => import('@/pages/Settings'))
  * 真要做深链接/多级路由时,把 `currentPage` 状态换成 router 即可,其余结构不动。
  */
 
-type Page = 'overview' | 'servers' | 'proxy' | 'plugins' | 'pconfig' | 'mods' | 'archives' | 'primebackup' | 'litematica' | 'pcrc' | 'superflat' | 'chat' | 'users' | 'settings'
+type Page = 'overview' | 'servers' | 'proxy' | 'plugins' | 'pconfig' | 'mods' | 'mconfig' | 'archives' | 'primebackup' | 'litematica' | 'pcrc' | 'superflat' | 'chat' | 'users' | 'settings'
 
 interface NavItem {
   key: Page
@@ -79,6 +80,7 @@ const navItems: NavItem[] = [
   { key: 'plugins', label: '插件', icon: Puzzle, minRole: 'helper' },
   { key: 'pconfig', label: '插件配置', icon: SlidersHorizontal, minRole: 'helper' },
   { key: 'mods', label: '模组', icon: Package, minRole: 'helper' },
+  { key: 'mconfig', label: '模组配置', icon: SlidersHorizontal, minRole: 'helper' },
   { key: 'archives', label: '存档', icon: Archive, minRole: 'user' },
   { key: 'primebackup', label: 'Prime Backup', icon: DatabaseBackup, minRole: 'helper' },
   { key: 'litematica', label: 'Litematica', icon: Building2, minRole: 'helper' },
@@ -325,6 +327,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                       {currentPage === 'servers' ? <Servers /> : null}
                       {currentPage === 'proxy' ? <ProxyNetPage /> : null}
                       {currentPage === 'pconfig' ? <PluginConfigPage /> : null}
+                      {currentPage === 'mconfig' ? <ModConfigPage /> : null}
                       {currentPage === 'primebackup' ? <PrimeBackupPage /> : null}
                       {currentPage === 'litematica' ? <LitematicaPage /> : null}
                       {currentPage === 'pcrc' ? <PcrcPage /> : null}

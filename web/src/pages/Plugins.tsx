@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, Download, Loader2, RefreshCw, Replace, Search, Trash2, Upload, X } from 'lucide-react'
+import { Check, Copy, Download, Loader2, RefreshCw, Replace, Search, Trash2, Upload, X } from 'lucide-react'
 
 import { ApiError } from '@/api/client'
 import {
   type CataloguePlugin,
   type InstalledPlugin,
+  copyPluginsTo,
   deleteFromLibrary,
   deletePlugin,
   getCatalogue,
@@ -20,6 +21,7 @@ import {
 import { pollJob } from '@/api/jobs'
 import { listServers } from '@/api/servers'
 import { InlineLoader } from '@/components/PageLoader'
+import { ServerPickerDialog } from '@/components/ServerPickerDialog'
 import { PageShell, PageSurface } from '@/components/layout/PageScaffold'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -107,6 +109,23 @@ export default function Plugins() {
     await run('upload', () => uploadPlugin(serverId, file), '已上传')
   }
 
+  const [copyOpen, setCopyOpen] = useState(false)
+  const [copyBusy, setCopyBusy] = useState(false)
+  const doCopy = async (ids: number[]) => {
+    if (serverId === null) return
+    setCopyBusy(true)
+    try {
+      const r = await copyPluginsTo(serverId, ids)
+      const bad = r.results.filter((x) => x.status !== 'ok')
+      showToast(bad.length ? 'error' : 'success', bad.length ? `${r.results.length - bad.length} 成功,${bad.length} 失败:${bad.map((b) => `${b.name}(${b.detail})`).join('、')}` : `已复制到 ${r.results.length} 个服务器`)
+      setCopyOpen(false)
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : '复制失败')
+    } finally {
+      setCopyBusy(false)
+    }
+  }
+
   return (
     <PageShell
       title="插件管理"
@@ -114,6 +133,10 @@ export default function Plugins() {
       width="7xl"
       actions={
         <div className="flex items-center gap-2">
+          <Button type="button" variant="outline" className="gap-1.5" disabled={serverId === null} onClick={() => setCopyOpen(true)}>
+            <Copy className="h-4 w-4" />
+            复制到服务器
+          </Button>
           <Select
             value={serverId === null ? undefined : String(serverId)}
             onValueChange={(v) => setServerId(Number(v))}
@@ -233,6 +256,17 @@ export default function Plugins() {
           </Tabs>
         </div>
       )}
+
+      <ServerPickerDialog
+        open={copyOpen}
+        title="复制插件到其他服务器"
+        description="把当前所选服务器的全部 MCDR 插件复制到下列实例(同名覆盖)。"
+        servers={(servers ?? []).filter((s) => s.id !== serverId)}
+        busy={copyBusy}
+        confirmLabel="复制"
+        onClose={() => setCopyOpen(false)}
+        onConfirm={doCopy}
+      />
     </PageShell>
   )
 }

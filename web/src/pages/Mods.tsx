@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Check, Download, Loader2, RefreshCw, Replace, Search, Trash2, Upload, X } from 'lucide-react'
+import { Check, Copy, Download, Loader2, RefreshCw, Replace, Search, Trash2, Upload, X } from 'lucide-react'
 
 import { ApiError } from '@/api/client'
 import {
   type InstalledMod,
   type ModrinthHit,
+  copyModsTo,
   deleteFromLibrary,
   deleteMod,
   installFromLibrary,
@@ -21,6 +22,7 @@ import {
 import { pollJob } from '@/api/jobs'
 import { listServers } from '@/api/servers'
 import { InlineLoader } from '@/components/PageLoader'
+import { ServerPickerDialog } from '@/components/ServerPickerDialog'
 import { PageShell, PageSurface } from '@/components/layout/PageScaffold'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -110,24 +112,47 @@ export default function Mods() {
     await run('upload', () => uploadMod(serverId, file), '已上传')
   }
 
+  const [copyOpen, setCopyOpen] = useState(false)
+  const [copyBusy, setCopyBusy] = useState(false)
+  const doCopy = async (ids: number[]) => {
+    if (serverId === null) return
+    setCopyBusy(true)
+    try {
+      const r = await copyModsTo(serverId, ids)
+      const bad = r.results.filter((x) => x.status !== 'ok')
+      showToast(bad.length ? 'error' : 'success', bad.length ? `${r.results.length - bad.length} 成功,${bad.length} 失败:${bad.map((b) => `${b.name}(${b.detail})`).join('、')}` : `已复制到 ${r.results.length} 个服务器`)
+      setCopyOpen(false)
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : '复制失败')
+    } finally {
+      setCopyBusy(false)
+    }
+  }
+
   return (
     <PageShell
       title="模组管理"
       description="管理实例的模组,或从 Modrinth 在线安装。注意:vanilla 服务端需 Fabric/Forge 等加载器才会加载模组。"
       width="7xl"
       actions={
-        <Select value={serverId === null ? undefined : String(serverId)} onValueChange={(v) => setServerId(Number(v))}>
-          <SelectTrigger className="w-44">
-            <SelectValue placeholder="选择服务器" />
-          </SelectTrigger>
-          <SelectContent>
-            {(servers ?? []).map((s) => (
-              <SelectItem key={s.id} value={String(s.id)}>
-                {s.name}{s.protected ? '(受保护)' : ''}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="flex items-center gap-2">
+          <Button type="button" variant="outline" className="gap-1.5" disabled={serverId === null} onClick={() => setCopyOpen(true)}>
+            <Copy className="h-4 w-4" />
+            复制到服务器
+          </Button>
+          <Select value={serverId === null ? undefined : String(serverId)} onValueChange={(v) => setServerId(Number(v))}>
+            <SelectTrigger className="w-44">
+              <SelectValue placeholder="选择服务器" />
+            </SelectTrigger>
+            <SelectContent>
+              {(servers ?? []).map((s) => (
+                <SelectItem key={s.id} value={String(s.id)}>
+                  {s.name}{s.protected ? '(受保护)' : ''}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       }
     >
       {serverId === null ? (
@@ -231,6 +256,17 @@ export default function Mods() {
           </Tabs>
         </div>
       )}
+
+      <ServerPickerDialog
+        open={copyOpen}
+        title="复制模组到其他服务器"
+        description="把当前所选服务器的全部模组复制到下列实例(同名覆盖)。"
+        servers={(servers ?? []).filter((s) => s.id !== serverId)}
+        busy={copyBusy}
+        confirmLabel="复制"
+        onClose={() => setCopyOpen(false)}
+        onConfirm={doCopy}
+      />
     </PageShell>
   )
 }

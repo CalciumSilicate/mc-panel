@@ -34,12 +34,54 @@ class InstallModBody(BaseModel):
     version_id: str
 
 
+def _copy_all(src_dir, dst_dir) -> int:
+    import shutil
+
+    if not src_dir.exists():
+        return 0
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    n = 0
+    for entry in src_dir.iterdir():
+        target = dst_dir / entry.name
+        if entry.is_dir():
+            shutil.copytree(entry, target, dirs_exist_ok=True)
+        else:
+            shutil.copy2(entry, target)
+        n += 1
+    return n
+
+
+class CopyToBody(BaseModel):
+    targets: list[int]
+
+
 @router.get("/server/{server_id}")
 def list_installed(
     server_id: int, _: str = Depends(require_helper), db: Session = Depends(get_db)
 ) -> list[dict]:
     server = _get_server(db, server_id)
     return mods.list_mods(mcdr_manager.instance_dir(server))
+
+
+@router.post("/server/{server_id}/copy-to")
+def copy_to(server_id: int, body: CopyToBody, _: str = Depends(require_helper), db: Session = Depends(get_db)) -> dict:
+    """把当前实例的全部模组复制到所选实例。"""
+    src = _get_server(db, server_id)
+    src_dir = mods.mods_dir(mcdr_manager.instance_dir(src))
+    results = []
+    for tid in body.targets:
+        t = db.get(Server, tid)
+        if t is None or tid == server_id:
+            continue
+        if t.protected:
+            results.append({"name": t.name, "status": "error", "detail": "实例受保护"})
+            continue
+        try:
+            n = _copy_all(src_dir, mods.mods_dir(mcdr_manager.instance_dir(t)))
+            results.append({"name": t.name, "status": "ok", "detail": f"已复制 {n} 个模组"})
+        except Exception as exc:  # noqa: BLE001
+            results.append({"name": t.name, "status": "error", "detail": str(exc)})
+    return {"results": results}
 
 
 @router.post("/server/{server_id}/switch/{file_name}")

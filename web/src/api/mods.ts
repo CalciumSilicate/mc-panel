@@ -30,6 +30,16 @@ export interface ModrinthVersion {
   date_published: string
 }
 
+export interface CopyResult {
+  name: string
+  status: 'ok' | 'error'
+  detail: string
+}
+
+export function copyModsTo(serverId: number, targets: number[]): Promise<{ results: CopyResult[] }> {
+  return apiRequest(`/mods/server/${serverId}/copy-to`, { method: 'POST', body: JSON.stringify({ targets }) })
+}
+
 export function listMods(serverId: number): Promise<InstalledMod[]> {
   return apiRequest<InstalledMod[]>(`/mods/server/${serverId}`)
 }

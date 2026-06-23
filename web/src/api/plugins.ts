@@ -20,6 +20,16 @@ export interface CataloguePlugin {
   authors: string[]
 }
 
+export interface CopyResult {
+  name: string
+  status: 'ok' | 'error'
+  detail: string
+}
+
+export function copyPluginsTo(serverId: number, targets: number[]): Promise<{ results: CopyResult[] }> {
+  return apiRequest(`/plugins/server/${serverId}/copy-to`, { method: 'POST', body: JSON.stringify({ targets }) })
+}
+
 export function listPlugins(serverId: number): Promise<InstalledPlugin[]> {
   return apiRequest<InstalledPlugin[]>(`/plugins/server/${serverId}`)
 }
