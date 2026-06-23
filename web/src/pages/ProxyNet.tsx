@@ -1,12 +1,13 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Loader2, Network, Plug, RefreshCw, Server, X, Zap } from 'lucide-react'
 
 import { ApiError } from '@/api/client'
-import { type ServerSummary, type WireResult, listServers, updateServer, wireProxy } from '@/api/servers'
+import { type ServerSummary, type WireResult, getProxySecret, listServers, updateServer, wireProxy } from '@/api/servers'
 import { InlineLoader } from '@/components/PageLoader'
 import { PageShell, PageSurface } from '@/components/layout/PageScaffold'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useGlobalToast } from '@/components/ui/use-global-toast'
 import { SERVER_STATUS_META } from '@/lib/server-status'
@@ -25,8 +26,20 @@ export default function ProxyNet() {
   const { data, loading, error, refresh } = useResource(() => listServers(), [])
   const [busy, setBusy] = useState<number | null>(null)
   const [wireResults, setWireResults] = useState<Record<number, WireResult[]>>({})
+  const [secrets, setSecrets] = useState<Record<number, string>>({})
 
   const proxies = useMemo(() => (data ?? []).filter((s) => s.server_type === 'velocity'), [data])
+
+  const randomSecret = () =>
+    Array.from(crypto.getRandomValues(new Uint8Array(16))).map((b) => b.toString(16).padStart(2, '0')).join('')
+
+  // 为每个代理拉取/初始化 forwarding secret(无则前端随机生成)
+  useEffect(() => {
+    for (const p of proxies) {
+      if (secrets[p.id] !== undefined) continue
+      getProxySecret(p.id).then((s) => setSecrets((cur) => ({ ...cur, [p.id]: s || randomSecret() }))).catch(() => undefined)
+    }
+  }, [proxies]) // eslint-disable-line react-hooks/exhaustive-deps
   // 可作为子服的(非 velocity)且未挂在任何代理下的
   const unattached = useMemo(
     () => (data ?? []).filter((s) => s.server_type !== 'velocity' && s.proxy_id == null),
@@ -49,7 +62,7 @@ export default function ProxyNet() {
   const wire = async (proxyId: number) => {
     setBusy(proxyId)
     try {
-      const r = await wireProxy(proxyId)
+      const r = await wireProxy(proxyId, secrets[proxyId] ?? '')
       setWireResults((cur) => ({ ...cur, [proxyId]: r.results }))
       const bad = r.results.filter((x) => x.status !== 'ok').length
       showToast(bad ? 'error' : 'success', bad ? `完成,${bad} 个子服需注意` : '接线完成')
@@ -106,6 +119,20 @@ export default function ProxyNet() {
                   <Button type="button" className="gap-1.5" disabled={busy === proxy.id || backends.length === 0} onClick={() => wire(proxy.id)}>
                     {busy === proxy.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
                     一键接线
+                  </Button>
+                </div>
+
+                {/* forwarding secret */}
+                <div className="flex items-center gap-2 border-b border-border/70 px-4 py-2.5">
+                  <span className="shrink-0 text-xs text-muted-foreground">转发密钥</span>
+                  <Input
+                    value={secrets[proxy.id] ?? ''}
+                    placeholder="加载中…"
+                    className="h-8 flex-1 font-mono text-xs"
+                    onChange={(e) => setSecrets((cur) => ({ ...cur, [proxy.id]: e.target.value }))}
+                  />
+                  <Button type="button" variant="outline" size="sm" onClick={() => setSecrets((cur) => ({ ...cur, [proxy.id]: randomSecret() }))}>
+                    随机
                   </Button>
                 </div>
 

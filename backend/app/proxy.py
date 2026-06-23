@@ -28,10 +28,27 @@ def _key(name: str) -> str:
     return k or "server"
 
 
-def _velocity_secret(proxy_inst: Path) -> str:
-    f = proxy_inst / "server" / "forwarding.secret"
-    if f.exists() and f.read_text(encoding="utf-8").strip():
+def _secret_file(proxy_inst: Path) -> Path:
+    return proxy_inst / "server" / "forwarding.secret"
+
+
+def read_secret(proxy_inst: Path) -> str:
+    """读取 velocity 的 forwarding.secret(不存在返回空串)。"""
+    f = _secret_file(proxy_inst)
+    if f.exists():
         return f.read_text(encoding="utf-8").strip()
+    return ""
+
+
+def _velocity_secret(proxy_inst: Path, override: str = "") -> str:
+    f = _secret_file(proxy_inst)
+    if override:
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(override, encoding="utf-8")
+        return override
+    cur = read_secret(proxy_inst)
+    if cur:
+        return cur
     s = secrets.token_hex(16)
     f.parent.mkdir(parents=True, exist_ok=True)
     f.write_text(s, encoding="utf-8")
@@ -108,9 +125,9 @@ async def _install_forward_mod(server: Server, slug: str, loader: str) -> bool:
     return True
 
 
-async def wire(proxy: Server, backends: list[Server]) -> list[dict]:
+async def wire(proxy: Server, backends: list[Server], secret_override: str = "") -> list[dict]:
     """执行接线,返回每个子服的结果 [{name, status, detail}]。"""
-    secret = _velocity_secret(manager.instance_dir(proxy))
+    secret = _velocity_secret(manager.instance_dir(proxy), secret_override.strip())
     _write_velocity_toml(proxy, backends)
 
     results: list[dict] = []

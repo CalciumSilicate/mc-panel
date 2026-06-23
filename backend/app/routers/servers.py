@@ -92,9 +92,21 @@ def _port_in_use(db: Session, port: int, exclude_id: int | None = None) -> bool:
     return db.scalar(q) is not None
 
 
+@router.get("/proxy/{proxy_id}/secret")
+def proxy_secret(proxy_id: int, _: str = Depends(require_admin), db: Session = Depends(get_db)) -> dict:
+    proxy = _get_server_or_404(db, proxy_id)
+    if proxy.server_type != "velocity":
+        raise HTTPException(status_code=400, detail="只有 Velocity 实例可作为代理主服")
+    return {"secret": proxy_mod.read_secret(manager.instance_dir(proxy))}
+
+
+class WireBody(BaseModel):
+    secret: str = ""
+
+
 @router.post("/proxy/{proxy_id}/wire")
 async def wire_proxy(
-    proxy_id: int, _: str = Depends(require_admin), db: Session = Depends(get_db)
+    proxy_id: int, body: WireBody = WireBody(), _: str = Depends(require_admin), db: Session = Depends(get_db)
 ) -> dict:
     """一键接线:为该 Velocity 主服与其全部子服配置 modern 转发(需相关实例已停止)。"""
     proxy = _get_server_or_404(db, proxy_id)
@@ -106,7 +118,7 @@ async def wire_proxy(
     busy = [s.name for s in [proxy, *backends] if manager.get_status(s) in ("running", "starting", "installing")]
     if busy:
         raise HTTPException(status_code=400, detail=f"请先停止:{', '.join(busy)}")
-    results = await proxy_mod.wire(proxy, backends)
+    results = await proxy_mod.wire(proxy, backends, body.secret)
     return {"results": results}
 
 

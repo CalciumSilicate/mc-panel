@@ -84,8 +84,12 @@ export interface WireResult {
   detail: string
 }
 
-export function wireProxy(proxyId: number): Promise<{ results: WireResult[] }> {
-  return apiRequest<{ results: WireResult[] }>(`/servers/proxy/${proxyId}/wire`, { method: 'POST', body: '{}' })
+export function getProxySecret(proxyId: number): Promise<string> {
+  return apiRequest<{ secret: string }>(`/servers/proxy/${proxyId}/secret`).then((r) => r.secret)
+}
+
+export function wireProxy(proxyId: number, secret = ''): Promise<{ results: WireResult[] }> {
+  return apiRequest<{ results: WireResult[] }>(`/servers/proxy/${proxyId}/wire`, { method: 'POST', body: JSON.stringify({ secret }) })
 }
 
 export function getSuggestedPort(): Promise<number> {
