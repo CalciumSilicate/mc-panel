@@ -44,7 +44,7 @@ export interface BuildInput {
   place_air: boolean
 }
 
-export function buildLitematica(input: BuildInput): Promise<{ ok: boolean; commands: number }> {
+export function buildLitematica(input: BuildInput): Promise<{ ok: boolean; started: boolean }> {
   return apiRequest('/litematica/build', { method: 'POST', body: JSON.stringify(input) })
 }
 

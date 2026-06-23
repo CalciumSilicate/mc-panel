@@ -102,19 +102,21 @@ async def build(body: BuildBody, _: str = Depends(require_helper), db: Session =
     p = _path(body.name)
     if not p.exists():
         raise HTTPException(status_code=404, detail="投影文件不存在")
-    try:
-        cmds = lm.generate_commands(p, offset=(body.x, body.y, body.z), place_air=body.place_air)
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=f"生成指令失败:{exc}")
-    if not cmds:
-        raise HTTPException(status_code=400, detail="投影为空")
+    sid = server.id
 
-    async def feed() -> None:
-        # 节流:每批若干条,批间小睡,避免刷屏卡服
+    async def run() -> None:
+        # 解析(CPU 密集)放线程池,避免阻塞事件循环导致全站卡顿
+        try:
+            cmds = await asyncio.to_thread(lm.generate_commands, str(p), (body.x, body.y, body.z), body.place_air)
+        except Exception:  # noqa: BLE001
+            return
+        # 节流逐条下发,避免刷屏卡服
         for i, cmd in enumerate(cmds):
-            manager.send_raw(server.id, cmd)
+            if not manager.is_running(sid):
+                break
+            manager.send_raw(sid, cmd)
             if i % 10 == 9:
                 await asyncio.sleep(0.2)
 
-    asyncio.create_task(feed())
-    return {"ok": True, "commands": len(cmds)}
+    asyncio.create_task(run())
+    return {"ok": True, "started": True}

@@ -171,8 +171,8 @@ function BuildDialog({ file, servers, onClose }: { file: LitematicaFile; servers
     if (serverId === null) return
     setBusy(true)
     try {
-      const r = await buildLitematica({ name: file.name, server_id: serverId, x: Number(coords.x) || 0, y: Number(coords.y) || 0, z: Number(coords.z) || 0, place_air: placeAir })
-      showToast('success', `已下发 ${r.commands} 条指令,正在建造…`)
+      await buildLitematica({ name: file.name, server_id: serverId, x: Number(coords.x) || 0, y: Number(coords.y) || 0, z: Number(coords.z) || 0, place_air: placeAir })
+      showToast('success', '建造已开始,正在后台解析并逐条下发…')
       onClose()
     } catch (err) {
       showToast('error', err instanceof ApiError ? err.message : '建造失败')
