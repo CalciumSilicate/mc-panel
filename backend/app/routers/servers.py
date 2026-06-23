@@ -55,6 +55,7 @@ COMMON_PROPERTY_KEYS = [
     "level-seed",
 ]
 from .. import ports as port_utils
+from .. import proxy as proxy_mod
 from .. import versions as versions_mod
 
 router = APIRouter(prefix="/servers", tags=["servers"])
@@ -88,6 +89,24 @@ def _port_in_use(db: Session, port: int, exclude_id: int | None = None) -> bool:
     if exclude_id is not None:
         q = q.where(Server.id != exclude_id)
     return db.scalar(q) is not None
+
+
+@router.post("/proxy/{proxy_id}/wire")
+async def wire_proxy(
+    proxy_id: int, _: str = Depends(require_admin), db: Session = Depends(get_db)
+) -> dict:
+    """一键接线:为该 Velocity 主服与其全部子服配置 modern 转发(需相关实例已停止)。"""
+    proxy = _get_server_or_404(db, proxy_id)
+    if proxy.server_type != "velocity":
+        raise HTTPException(status_code=400, detail="只有 Velocity 实例可作为代理主服")
+    backends = list(db.scalars(select(Server).where(Server.proxy_id == proxy_id)).all())
+    if not backends:
+        raise HTTPException(status_code=400, detail="该代理下还没有子服")
+    busy = [s.name for s in [proxy, *backends] if manager.get_status(s) in ("running", "starting", "installing")]
+    if busy:
+        raise HTTPException(status_code=400, detail=f"请先停止:{', '.join(busy)}")
+    results = await proxy_mod.wire(proxy, backends)
+    return {"results": results}
 
 
 @router.get("/suggest-port")
@@ -318,6 +337,12 @@ async def update_server(
         if payload.group_id and not db.get(ServerGroup, payload.group_id):
             raise HTTPException(status_code=400, detail="互联组不存在")
         server.group_id = payload.group_id
+    if "proxy_id" in payload.model_fields_set:
+        if payload.proxy_id is not None:
+            px = db.get(Server, payload.proxy_id)
+            if px is None or px.server_type != "velocity":
+                raise HTTPException(status_code=400, detail="代理必须是 Velocity 实例")
+        server.proxy_id = payload.proxy_id
 
     mc_changed = bool(payload.mc_version) and payload.mc_version != server.mc_version
     loader_changed = payload.loader_version is not None and payload.loader_version != server.loader_version

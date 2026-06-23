@@ -10,6 +10,7 @@ import {
   Loader2,
   LogOut,
   MessagesSquare,
+  Network,
   Package,
   PanelLeft,
   Puzzle,
@@ -42,6 +43,7 @@ const Mods = lazy(() => import('@/pages/Mods'))
 const Archives = lazy(() => import('@/pages/Archives'))
 const Superflat = lazy(() => import('@/pages/Superflat'))
 const ChatPage = lazy(() => import('@/pages/Chat'))
+const ProxyNetPage = lazy(() => import('@/pages/ProxyNet'))
 const UsersPage = lazy(() => import('@/pages/Users'))
 const SettingsPage = lazy(() => import('@/pages/Settings'))
 
@@ -53,7 +55,7 @@ const SettingsPage = lazy(() => import('@/pages/Settings'))
  * 真要做深链接/多级路由时,把 `currentPage` 状态换成 router 即可,其余结构不动。
  */
 
-type Page = 'overview' | 'servers' | 'plugins' | 'mods' | 'archives' | 'superflat' | 'chat' | 'users' | 'settings'
+type Page = 'overview' | 'servers' | 'proxy' | 'plugins' | 'mods' | 'archives' | 'superflat' | 'chat' | 'users' | 'settings'
 
 interface NavItem {
   key: Page
@@ -65,6 +67,7 @@ interface NavItem {
 const navItems: NavItem[] = [
   { key: 'overview', label: '仪表盘', icon: LayoutDashboard, minRole: 'user' },
   { key: 'servers', label: '服务器实例', icon: Server, minRole: 'user' },
+  { key: 'proxy', label: '代理网络', icon: Network, minRole: 'admin' },
   { key: 'plugins', label: '插件', icon: Puzzle, minRole: 'helper' },
   { key: 'mods', label: '模组', icon: Package, minRole: 'helper' },
   { key: 'archives', label: '存档', icon: Archive, minRole: 'user' },
@@ -308,6 +311,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                     >
                       {currentPage === 'overview' ? <Overview /> : null}
                       {currentPage === 'servers' ? <Servers /> : null}
+                      {currentPage === 'proxy' ? <ProxyNetPage /> : null}
                       {currentPage === 'plugins' ? <Plugins /> : null}
                       {currentPage === 'mods' ? <Mods /> : null}
                       {currentPage === 'archives' ? <Archives /> : null}

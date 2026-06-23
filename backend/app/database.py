@@ -45,6 +45,7 @@ _COLUMN_MIGRATIONS = {
         "protected": "BOOLEAN DEFAULT 0",
         "loader_version": "VARCHAR(64) DEFAULT ''",
         "group_id": "INTEGER",
+        "proxy_id": "INTEGER",
     },
     "system_settings": {
         "download_proxy": "VARCHAR(255) DEFAULT ''",

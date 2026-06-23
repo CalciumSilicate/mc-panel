@@ -118,6 +118,7 @@ class ServerUpdate(BaseModel):
     java_path_override: str | None = None
     protected: bool | None = None
     group_id: int | None = None
+    proxy_id: int | None = None
 
 
 class PropertiesResponse(BaseModel):
@@ -151,6 +152,7 @@ class ServerSummary(BaseModel):
     protected: bool = False
     group_id: int | None = None
     group_name: str = ""
+    proxy_id: int | None = None
     created_at: datetime
     # 运行时派生字段
     status: str = "stopped"

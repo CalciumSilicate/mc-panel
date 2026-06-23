@@ -74,6 +74,8 @@ class Server(Base):
     protected: Mapped[bool] = mapped_column(default=False)
     # 所属互联组(纯组织,与权限无关);空 = 不属于任何组
     group_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 子服指向的代理(velocity 实例 id);空 = 不挂在任何代理下
+    proxy_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 

@@ -34,6 +34,7 @@ export interface ServerSummary {
   protected: boolean
   group_id: number | null
   group_name: string
+  proxy_id: number | null
   created_at: string
   status: ServerStatus
   install?: InstallProgress | null
@@ -74,6 +75,16 @@ export function updateVelocityConfig(id: number, cfg: VelocityConfig): Promise<V
     method: 'PATCH',
     body: JSON.stringify(cfg),
   })
+}
+
+export interface WireResult {
+  name: string
+  status: 'ok' | 'unsupported' | 'error'
+  detail: string
+}
+
+export function wireProxy(proxyId: number): Promise<{ results: WireResult[] }> {
+  return apiRequest<{ results: WireResult[] }>(`/servers/proxy/${proxyId}/wire`, { method: 'POST', body: '{}' })
 }
 
 export function getSuggestedPort(): Promise<number> {
@@ -124,6 +135,7 @@ export interface ServerUpdateInput {
   mc_version?: string
   loader_version?: string
   group_id?: number | null
+  proxy_id?: number | null
   extra_jvm_args?: string
   auto_start?: boolean
   java_path_override?: string
