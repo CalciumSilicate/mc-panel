@@ -12,6 +12,7 @@ import {
   Layers,
   Loader2,
   LogOut,
+  Map as MapIcon,
   MessagesSquare,
   Network,
   Package,
@@ -54,6 +55,7 @@ const ModConfigPage = lazy(() => import('@/pages/ModConfig'))
 const PrimeBackupPage = lazy(() => import('@/pages/PrimeBackup'))
 const LitematicaPage = lazy(() => import('@/pages/Litematica'))
 const StatsPage = lazy(() => import('@/pages/Stats'))
+const WorldMapPage = lazy(() => import('@/pages/WorldMap'))
 const PcrcPage = lazy(() => import('@/pages/Pcrc'))
 const UsersPage = lazy(() => import('@/pages/Users'))
 const SettingsPage = lazy(() => import('@/pages/Settings'))
@@ -66,7 +68,7 @@ const SettingsPage = lazy(() => import('@/pages/Settings'))
  * 真要做深链接/多级路由时,把 `currentPage` 状态换成 router 即可,其余结构不动。
  */
 
-type Page = 'overview' | 'servers' | 'proxy' | 'plugins' | 'pconfig' | 'mods' | 'mconfig' | 'archives' | 'primebackup' | 'litematica' | 'pcrc' | 'stats' | 'superflat' | 'chat' | 'users' | 'settings'
+type Page = 'overview' | 'servers' | 'proxy' | 'plugins' | 'pconfig' | 'mods' | 'mconfig' | 'archives' | 'primebackup' | 'litematica' | 'pcrc' | 'stats' | 'worldmap' | 'superflat' | 'chat' | 'users' | 'settings'
 
 interface NavItem {
   key: Page
@@ -89,6 +91,7 @@ const navItems: NavItem[] = [
   { key: 'pcrc', label: 'PCRC 录像', icon: Video, minRole: 'helper' },
   { key: 'chat', label: '聊天室', icon: MessagesSquare, minRole: 'user' },
   { key: 'stats', label: '数据统计', icon: BarChart3, minRole: 'user' },
+  { key: 'worldmap', label: '世界地图', icon: MapIcon, minRole: 'user' },
   { key: 'superflat', label: '超平坦', icon: Layers, minRole: 'helper' },
   { key: 'users', label: '用户管理', icon: UsersIcon, minRole: 'admin' },
   { key: 'settings', label: '设置', icon: Settings, minRole: 'admin' },
@@ -335,6 +338,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                       {currentPage === 'litematica' ? <LitematicaPage /> : null}
                       {currentPage === 'pcrc' ? <PcrcPage /> : null}
                       {currentPage === 'stats' ? <StatsPage /> : null}
+                      {currentPage === 'worldmap' ? <WorldMapPage /> : null}
                       {currentPage === 'plugins' ? <Plugins /> : null}
                       {currentPage === 'mods' ? <Mods /> : null}
                       {currentPage === 'archives' ? <Archives /> : null}

@@ -62,6 +62,22 @@ class PlayerStat(Base):
     ts: Mapped[datetime] = mapped_column(DateTime, default=_now, index=True)
 
 
+class PlayerPosition(Base):
+    """玩家位置轨迹采样(来自 world/playerdata/<uuid>.dat 的 Pos)。仅在位置变化时插入。"""
+
+    __tablename__ = "player_positions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    server_id: Mapped[int] = mapped_column(Integer, index=True)
+    uuid: Mapped[str] = mapped_column(String(40), index=True)
+    name: Mapped[str] = mapped_column(String(64), default="")
+    x: Mapped[float] = mapped_column(default=0.0)
+    y: Mapped[float] = mapped_column(default=0.0)
+    z: Mapped[float] = mapped_column(default=0.0)
+    dim: Mapped[str] = mapped_column(String(48), default="minecraft:overworld")
+    ts: Mapped[datetime] = mapped_column(DateTime, default=_now, index=True)
+
+
 class PluginScan(Base):
     """每个实例已安装 MCDR 插件 id 的缓存(由定时 worker 扫描更新),供「插件配置」秒读。"""
 
