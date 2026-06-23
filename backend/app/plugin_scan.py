@@ -55,6 +55,13 @@ def get_installed_ids(db: Session, server_id: int) -> set[str] | None:
         return set()
 
 
+def get_scanned_at(db: Session, server_id: int) -> float | None:
+    row = db.get(PluginScan, server_id)
+    if row is None or row.scanned_at is None:
+        return None
+    return row.scanned_at.replace(tzinfo=timezone.utc).timestamp()
+
+
 def mark_installed(db: Session, server_id: int, plugin_id: str) -> None:
     """安装后即时把插件 id 写入缓存,UI 无需等 worker。"""
     cur = get_installed_ids(db, server_id) or set()

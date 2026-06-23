@@ -8,15 +8,24 @@ import asyncio
 import os
 import re
 import shutil
+import time
 import uuid
 from pathlib import Path
 
+from sqlalchemy import select
+
 from .config import DATA_DIR
+from .database import SessionLocal
 from .mcdr import manager
+from .models import Server
 from .plugin_manager import manager as plugins
 
 PB_PLUGIN_ID = "prime_backup"
 _TEMP = DATA_DIR / "tmp"
+SCAN_INTERVAL = 600  # 10 分钟
+
+# server_id -> {overview, backups, usage, scanned_at}
+_cache: dict[int, dict] = {}
 
 
 def pb_dir(instance_dir: Path) -> Path:
@@ -181,3 +190,40 @@ async def restore(source_inst: Path, backup_id: int, target_inst: Path) -> str:
         return str(target_world)
     finally:
         shutil.rmtree(temp_out, ignore_errors=True)
+
+
+# ---------- 缓存 + 定时刷新 ----------
+async def scan_one(server: Server) -> dict:
+    inst = manager.instance_dir(server)
+    ov = await overview(inst)
+    bl = await backup_list(inst)
+    us = await asyncio.to_thread(usage, inst)
+    data = {"overview": ov, "backups": bl, "usage": us, "scanned_at": time.time()}
+    _cache[server.id] = data
+    return data
+
+
+def get_cached(server_id: int) -> dict | None:
+    return _cache.get(server_id)
+
+
+async def scan_all() -> None:
+    db = SessionLocal()
+    try:
+        servers = list(db.scalars(select(Server)).all())
+    finally:
+        db.close()
+    for s in servers:
+        try:
+            await scan_one(s)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+async def worker(interval: int = SCAN_INTERVAL) -> None:
+    while True:
+        try:
+            await scan_all()
+        except Exception:  # noqa: BLE001
+            pass
+        await asyncio.sleep(interval)

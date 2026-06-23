@@ -70,6 +70,8 @@ async def _autostart() -> None:
 async def lifespan(_: FastAPI):
     import asyncio
 
+    from . import mod_presets
+    from . import pb as pb_mod
     from . import plugin_scan
 
     await _autostart()
@@ -80,12 +82,16 @@ async def lifespan(_: FastAPI):
         onebot.client.start(row.onebot_enabled, row.onebot_ws_url, row.onebot_token)
     finally:
         db.close()
-    # 插件安装状态扫描 worker(周期刷新 DB 缓存)
+    # 后台扫描 worker:插件安装状态(DB 缓存)+ Prime Backup 概览/列表(内存缓存)
     scan_task = asyncio.create_task(plugin_scan.worker())
+    pb_task = asyncio.create_task(pb_mod.worker())
+    mod_task = asyncio.create_task(mod_presets.worker())
     try:
         yield
     finally:
         scan_task.cancel()
+        pb_task.cancel()
+        mod_task.cancel()
 
 
 app = FastAPI(title="mc-panel API", lifespan=lifespan)

@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ChevronDown, Download, Loader2, Save } from 'lucide-react'
+import { ChevronDown, Download, Loader2, RefreshCw, Save } from 'lucide-react'
 
 import { ApiError } from '@/api/client'
 import {
   type ModPreset,
   type ModPresetField,
+  type ModPresetStatus,
   getModPresetConfig,
   getModPresetStatus,
   installModPreset,
   listModPresets,
+  refreshModPresetStatus,
   updateModPresetConfig,
 } from '@/api/modconfigs'
 import { type ServerSummary, listServers } from '@/api/servers'
@@ -22,7 +24,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch'
 import { useGlobalToast } from '@/components/ui/use-global-toast'
 import { useResource } from '@/lib/use-resource'
-import { cn } from '@/lib/utils'
+import { cn, fmtRefreshed } from '@/lib/utils'
 
 const TYPE_LABEL: Record<string, string> = { vanilla: '原版', fabric: 'Fabric', forge: 'Forge', velocity: 'Velocity' }
 
@@ -43,7 +45,7 @@ function PresetCard({ preset, serverId, serverType, installed, onInstalled }: {
   preset: ModPreset
   serverId: number
   serverType: string
-  installed: boolean
+  installed?: boolean // undefined = 状态未加载
   onInstalled: () => void
 }) {
   const { showToast } = useGlobalToast()
@@ -109,15 +111,17 @@ function PresetCard({ preset, serverId, serverType, installed, onInstalled }: {
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <span className="font-medium">{preset.name}</span>
-              {installed
-                ? <Badge variant="outline" className="text-[11px] text-emerald-600 dark:text-emerald-400">已安装</Badge>
-                : <Badge variant="outline" className="text-[11px] text-muted-foreground">未安装</Badge>}
+              {installed === undefined
+                ? <Badge variant="outline" className="text-[11px] text-muted-foreground/60">检测中</Badge>
+                : installed
+                  ? <Badge variant="outline" className="text-[11px] text-emerald-600 dark:text-emerald-400">已安装</Badge>
+                  : <Badge variant="outline" className="text-[11px] text-muted-foreground">未安装</Badge>}
               <Badge variant="outline" className="text-[11px] text-muted-foreground">{preset.server_types.map((t) => TYPE_LABEL[t] ?? t).join('/')}</Badge>
             </div>
             <div className="truncate text-xs text-muted-foreground">{preset.description}</div>
           </div>
         </button>
-        {applicable && !installed ? (
+        {applicable && installed === false ? (
           <Button type="button" size="sm" className="gap-1.5 shrink-0" onClick={install} disabled={busy}>
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
             一键安装
@@ -159,10 +163,12 @@ function PresetCard({ preset, serverId, serverType, installed, onInstalled }: {
 }
 
 export default function ModConfig() {
+  const { showToast } = useGlobalToast()
   const { data: servers } = useResource(() => listServers(), [])
   const [serverId, setServerId] = useState<number | null>(null)
   const { data: presets, loading } = useResource(() => listModPresets(), [])
-  const [status, setStatus] = useState<Record<string, boolean>>({})
+  const [status, setStatus] = useState<ModPresetStatus | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
 
   const all = useMemo<ServerSummary[]>(() => servers ?? [], [servers])
   const sel = all.find((s) => s.id === serverId) ?? null
@@ -171,10 +177,23 @@ export default function ModConfig() {
     if (serverId === null && all.length > 0) setServerId(all[0].id)
   }, [all, serverId])
 
-  const refreshStatus = () => {
+  const loadStatus = () => {
     if (serverId !== null) getModPresetStatus(serverId).then(setStatus).catch(() => undefined)
   }
-  useEffect(() => { setStatus({}); refreshStatus() }, [serverId]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setStatus(null); loadStatus() }, [serverId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const doRefresh = async () => {
+    if (serverId === null) return
+    setRefreshing(true)
+    try {
+      setStatus(await refreshModPresetStatus(serverId))
+      showToast('success', '已刷新')
+    } catch {
+      showToast('error', '刷新失败')
+    } finally {
+      setRefreshing(false)
+    }
+  }
 
   return (
     <PageShell
@@ -183,12 +202,18 @@ export default function ModConfig() {
       width="4xl"
       actions={
         all.length > 0 ? (
-          <Select value={serverId === null ? undefined : String(serverId)} onValueChange={(v) => setServerId(Number(v))}>
-            <SelectTrigger className="w-52"><SelectValue placeholder="选择服务器" /></SelectTrigger>
-            <SelectContent>
-              {all.map((s) => (<SelectItem key={s.id} value={String(s.id)}>{s.name}（{TYPE_LABEL[s.server_type] ?? s.server_type}）</SelectItem>))}
-            </SelectContent>
-          </Select>
+          <div className="flex items-center gap-2">
+            <span className="hidden text-xs text-muted-foreground sm:inline">{fmtRefreshed(status?.scanned_at)}</span>
+            <Select value={serverId === null ? undefined : String(serverId)} onValueChange={(v) => setServerId(Number(v))}>
+              <SelectTrigger className="w-52"><SelectValue placeholder="选择服务器" /></SelectTrigger>
+              <SelectContent>
+                {all.map((s) => (<SelectItem key={s.id} value={String(s.id)}>{s.name}（{TYPE_LABEL[s.server_type] ?? s.server_type}）</SelectItem>))}
+              </SelectContent>
+            </Select>
+            <Button type="button" variant="outline" className="gap-2" onClick={doRefresh} disabled={refreshing}>
+              <RefreshCw className={refreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />刷新
+            </Button>
+          </div>
         ) : null
       }
     >
@@ -199,7 +224,7 @@ export default function ModConfig() {
       ) : (
         <PageSurface bodyClassName="space-y-3">
           {(presets ?? []).map((p) => (
-            <PresetCard key={p.key} preset={p} serverId={serverId} serverType={sel.server_type} installed={Boolean(status[p.key])} onInstalled={refreshStatus} />
+            <PresetCard key={p.key} preset={p} serverId={serverId} serverType={sel.server_type} installed={status ? Boolean(status.status[p.key]) : undefined} onInstalled={loadStatus} />
           ))}
         </PageSurface>
       )}

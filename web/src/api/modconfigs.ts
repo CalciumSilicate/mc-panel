@@ -25,8 +25,17 @@ export function listModPresets(): Promise<ModPreset[]> {
   return apiRequest<ModPreset[]>('/modconfigs')
 }
 
-export function getModPresetStatus(serverId: number): Promise<Record<string, boolean>> {
-  return apiRequest<Record<string, boolean>>(`/modconfigs/status/${serverId}`)
+export interface ModPresetStatus {
+  status: Record<string, boolean>
+  scanned_at: number | null
+}
+
+export function getModPresetStatus(serverId: number): Promise<ModPresetStatus> {
+  return apiRequest<ModPresetStatus>(`/modconfigs/status/${serverId}`)
+}
+
+export function refreshModPresetStatus(serverId: number): Promise<ModPresetStatus> {
+  return apiRequest<ModPresetStatus>(`/modconfigs/refresh/${serverId}`, { method: 'POST', body: '{}' })
 }
 
 export function getModPresetConfig(key: string, serverId: number): Promise<ModPresetConfig> {

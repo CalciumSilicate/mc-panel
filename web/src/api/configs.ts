@@ -24,8 +24,17 @@ export function listPresets(): Promise<Preset[]> {
   return apiRequest<Preset[]>('/configs')
 }
 
-export function getPresetStatus(serverId: number): Promise<Record<string, boolean>> {
-  return apiRequest<Record<string, boolean>>(`/configs/status/${serverId}`)
+export interface PresetStatus {
+  installed: Record<string, boolean>
+  scanned_at: number | null
+}
+
+export function getPresetStatus(serverId: number): Promise<PresetStatus> {
+  return apiRequest<PresetStatus>(`/configs/status/${serverId}`)
+}
+
+export function refreshPresetStatus(serverId: number): Promise<PresetStatus> {
+  return apiRequest<PresetStatus>(`/configs/refresh/${serverId}`, { method: 'POST', body: '{}' })
 }
 
 export function getPresetConfig(key: string, serverId: number): Promise<PresetConfig> {

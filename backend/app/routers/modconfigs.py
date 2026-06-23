@@ -41,8 +41,12 @@ def list_presets() -> list[dict]:
 @router.get("/status/{server_id}")
 def status(server_id: int, _: str = Depends(require_helper), db: Session = Depends(get_db)) -> dict:
     server = _server(db, server_id)
-    inst = manager.instance_dir(server)
-    return {key: mp.is_installed(inst, p) for key, p in mp.PRESETS.items()}
+    return mp.get_status_cached(server_id) or mp.scan_status(server)
+
+
+@router.post("/refresh/{server_id}")
+def refresh(server_id: int, _: str = Depends(require_helper), db: Session = Depends(get_db)) -> dict:
+    return mp.scan_status(_server(db, server_id))
 
 
 @router.get("/{key}/{server_id}")

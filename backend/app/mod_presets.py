@@ -4,6 +4,8 @@
 """
 from __future__ import annotations
 
+import asyncio
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -14,6 +16,10 @@ from . import jar_cache
 from .mcdr import manager
 from .mod_manager import manager as mods
 from .plugin_presets import deep_get, deep_set
+
+SCAN_INTERVAL = 600  # 10 分钟
+# server_id -> {status: {key: bool}, scanned_at}
+_status_cache: dict[int, dict] = {}
 
 
 @dataclass
@@ -161,6 +167,41 @@ def is_installed(inst: Path, preset: ModPreset) -> bool:
     if not d.exists():
         return False
     return any(preset.marker in p.name.lower() for p in d.iterdir() if p.is_file())
+
+
+def scan_status(server) -> dict:
+    inst = manager.instance_dir(server)
+    st = {key: is_installed(inst, p) for key, p in PRESETS.items()}
+    data = {"status": st, "scanned_at": time.time()}
+    _status_cache[server.id] = data
+    return data
+
+
+def get_status_cached(server_id: int) -> dict | None:
+    return _status_cache.get(server_id)
+
+
+async def worker(interval: int = SCAN_INTERVAL) -> None:
+    from sqlalchemy import select
+
+    from .database import SessionLocal
+    from .models import Server
+
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                servers = list(db.scalars(select(Server)).all())
+            finally:
+                db.close()
+            for s in servers:
+                try:
+                    scan_status(s)
+                except Exception:  # noqa: BLE001
+                    pass
+        except Exception:  # noqa: BLE001
+            pass
+        await asyncio.sleep(interval)
 
 
 async def install(server, preset: ModPreset) -> str:

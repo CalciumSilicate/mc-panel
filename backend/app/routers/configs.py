@@ -45,12 +45,26 @@ def list_presets() -> list[dict]:
 
 @router.get("/status/{server_id}")
 def status(server_id: int, _: str = Depends(require_helper), db: Session = Depends(get_db)) -> dict:
-    """一次返回该实例所有预设的安装状态(读缓存)。"""
+    """一次返回该实例所有预设的安装状态(读缓存)+ 上次扫描时间。"""
     server = _server(db, server_id)
     ids = plugin_scan.get_installed_ids(db, server_id)
     if ids is None:
         ids = plugin_scan.scan_server(db, server)
-    return {key: (p.plugin_id in ids) for key, p in presets.PRESETS.items()}
+    return {
+        "installed": {key: (p.plugin_id in ids) for key, p in presets.PRESETS.items()},
+        "scanned_at": plugin_scan.get_scanned_at(db, server_id),
+    }
+
+
+@router.post("/refresh/{server_id}")
+def refresh(server_id: int, _: str = Depends(require_helper), db: Session = Depends(get_db)) -> dict:
+    """立即扫描该实例并刷新缓存。"""
+    server = _server(db, server_id)
+    ids = plugin_scan.scan_server(db, server)
+    return {
+        "installed": {key: (p.plugin_id in ids) for key, p in presets.PRESETS.items()},
+        "scanned_at": plugin_scan.get_scanned_at(db, server_id),
+    }
 
 
 @router.get("/{key}/{server_id}")

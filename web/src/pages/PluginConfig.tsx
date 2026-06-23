@@ -1,17 +1,19 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ChevronDown, Copy, Download, ExternalLink, Loader2, Save, Send } from 'lucide-react'
+import { ChevronDown, Copy, Download, ExternalLink, Loader2, RefreshCw, Save, Send } from 'lucide-react'
 
 import { ApiError } from '@/api/client'
 import {
   type BatchResult,
   type Preset,
   type PresetField,
+  type PresetStatus,
   copyConfigTo,
   getPresetConfig,
   getPresetStatus,
   installPreset,
   installPresetTo,
   listPresets,
+  refreshPresetStatus,
   updatePresetConfig,
 } from '@/api/configs'
 import { type ServerSummary, listServers } from '@/api/servers'
@@ -27,7 +29,7 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { useGlobalToast } from '@/components/ui/use-global-toast'
 import { useResource } from '@/lib/use-resource'
-import { cn } from '@/lib/utils'
+import { cn, fmtRefreshed } from '@/lib/utils'
 
 const MC_TYPES = ['vanilla', 'fabric', 'forge']
 const ROLE_LEVELS = ['0 游客', '1 用户', '2 助手', '3 管理', '4 所有者']
@@ -92,7 +94,7 @@ function PresetCard({ preset, serverId, servers, installed, onInstalled }: {
   preset: Preset
   serverId: number
   servers: ServerSummary[]
-  installed: boolean
+  installed?: boolean // undefined = 状态未加载
   onInstalled: () => void
 }) {
   const { showToast } = useGlobalToast()
@@ -180,14 +182,16 @@ function PresetCard({ preset, serverId, servers, installed, onInstalled }: {
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <span className="font-medium">{preset.name}</span>
-              {installed
-                ? <Badge variant="outline" className="text-[11px] text-emerald-600 dark:text-emerald-400">已安装</Badge>
-                : <Badge variant="outline" className="text-[11px] text-muted-foreground">未安装</Badge>}
+              {installed === undefined
+                ? <Badge variant="outline" className="text-[11px] text-muted-foreground/60">检测中</Badge>
+                : installed
+                  ? <Badge variant="outline" className="text-[11px] text-emerald-600 dark:text-emerald-400">已安装</Badge>
+                  : <Badge variant="outline" className="text-[11px] text-muted-foreground">未安装</Badge>}
             </div>
             <div className="truncate text-xs text-muted-foreground">{preset.description}</div>
           </div>
         </button>
-        {!installed ? (
+        {installed === false ? (
           <Button type="button" size="sm" className="gap-1.5 shrink-0" onClick={install} disabled={busy}>
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
             一键安装
@@ -262,10 +266,12 @@ function PresetCard({ preset, serverId, servers, installed, onInstalled }: {
 }
 
 export default function PluginConfig() {
+  const { showToast } = useGlobalToast()
   const { data: servers } = useResource(() => listServers(), [])
   const [serverId, setServerId] = useState<number | null>(null)
   const { data: presets, loading } = useResource(() => listPresets(), [])
-  const [status, setStatus] = useState<Record<string, boolean>>({})
+  const [status, setStatus] = useState<PresetStatus | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
 
   const mcServers = useMemo<ServerSummary[]>(() => (servers ?? []).filter((s) => MC_TYPES.includes(s.server_type)), [servers])
 
@@ -273,10 +279,23 @@ export default function PluginConfig() {
     if (serverId === null && mcServers.length > 0) setServerId(mcServers[0].id)
   }, [mcServers, serverId])
 
-  const refreshStatus = () => {
+  const loadStatus = () => {
     if (serverId !== null) getPresetStatus(serverId).then(setStatus).catch(() => undefined)
   }
-  useEffect(() => { setStatus({}); refreshStatus() }, [serverId]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setStatus(null); loadStatus() }, [serverId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const doRefresh = async () => {
+    if (serverId === null) return
+    setRefreshing(true)
+    try {
+      setStatus(await refreshPresetStatus(serverId))
+      showToast('success', '已刷新')
+    } catch {
+      showToast('error', '刷新失败')
+    } finally {
+      setRefreshing(false)
+    }
+  }
 
   return (
     <PageShell
@@ -285,12 +304,18 @@ export default function PluginConfig() {
       width="4xl"
       actions={
         mcServers.length > 0 ? (
-          <Select value={serverId === null ? undefined : String(serverId)} onValueChange={(v) => setServerId(Number(v))}>
-            <SelectTrigger className="w-52"><SelectValue placeholder="选择服务器" /></SelectTrigger>
-            <SelectContent>
-              {mcServers.map((s) => (<SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>))}
-            </SelectContent>
-          </Select>
+          <div className="flex items-center gap-2">
+            <span className="hidden text-xs text-muted-foreground sm:inline">{fmtRefreshed(status?.scanned_at)}</span>
+            <Select value={serverId === null ? undefined : String(serverId)} onValueChange={(v) => setServerId(Number(v))}>
+              <SelectTrigger className="w-52"><SelectValue placeholder="选择服务器" /></SelectTrigger>
+              <SelectContent>
+                {mcServers.map((s) => (<SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>))}
+              </SelectContent>
+            </Select>
+            <Button type="button" variant="outline" className="gap-2" onClick={doRefresh} disabled={refreshing}>
+              <RefreshCw className={refreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />刷新
+            </Button>
+          </div>
         ) : null
       }
     >
@@ -301,7 +326,7 @@ export default function PluginConfig() {
       ) : (
         <PageSurface bodyClassName="space-y-3">
           {(presets ?? []).map((p) => (
-            <PresetCard key={p.key} preset={p} serverId={serverId} servers={mcServers} installed={Boolean(status[p.key])} onInstalled={refreshStatus} />
+            <PresetCard key={p.key} preset={p} serverId={serverId} servers={mcServers} installed={status ? Boolean(status.installed[p.key]) : undefined} onInstalled={loadStatus} />
           ))}
         </PageSurface>
       )}

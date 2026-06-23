@@ -22,6 +22,22 @@ def _server(db: Session, server_id: int) -> Server:
     return s
 
 
+@router.get("/{server_id}/cached")
+async def cached(server_id: int, _: str = Depends(require_helper), db: Session = Depends(get_db)) -> dict:
+    """读缓存(每 10 分钟由 worker 刷新);首次无缓存则现扫一次。"""
+    server = _server(db, server_id)
+    data = pb.get_cached(server_id)
+    if data is None:
+        data = await pb.scan_one(server)
+    return data
+
+
+@router.post("/{server_id}/refresh")
+async def refresh(server_id: int, _: str = Depends(require_helper), db: Session = Depends(get_db)) -> dict:
+    """立即刷新该实例的 PB 缓存。"""
+    return await pb.scan_one(_server(db, server_id))
+
+
 @router.get("/{server_id}/overview")
 async def overview(server_id: int, _: str = Depends(require_helper), db: Session = Depends(get_db)) -> dict:
     return await pb.overview(manager.instance_dir(_server(db, server_id)))

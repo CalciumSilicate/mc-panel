@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Download, History, Loader2, RefreshCw, Upload } from 'lucide-react'
 
 import { ApiError } from '@/api/client'
-import { type PBBackupItem, type PBOverview, pbExport, pbImport, pbList, pbOverview, pbRestore, pbUsage } from '@/api/pb'
+import { type PBBackupItem, type PBOverview, getPbCached, pbExport, pbImport, pbRefresh, pbRestore } from '@/api/pb'
 import { type ServerSummary, listServers } from '@/api/servers'
 import { InlineLoader } from '@/components/PageLoader'
 import { PageShell, PageStat, PageSurface } from '@/components/layout/PageScaffold'
@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useGlobalToast } from '@/components/ui/use-global-toast'
 import { useResource } from '@/lib/use-resource'
+import { fmtRefreshed } from '@/lib/utils'
 
 const MC_TYPES = ['vanilla', 'fabric', 'forge']
 
@@ -31,6 +32,7 @@ export default function PrimeBackup() {
   const [overview, setOverview] = useState<PBOverview | null>(null)
   const [usage, setUsage] = useState<number>(0)
   const [list, setList] = useState<PBBackupItem[]>([])
+  const [scannedAt, setScannedAt] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState<number | 'import' | null>(null)
   const [restoreTarget, setRestoreTarget] = useState<PBBackupItem | null>(null)
@@ -41,11 +43,14 @@ export default function PrimeBackup() {
     if (serverId === null && mcServers.length > 0) setServerId(mcServers[0].id)
   }, [mcServers, serverId])
 
-  const reload = async (sid: number) => {
+  const apply = (d: { overview: PBOverview; backups: PBBackupItem[]; usage: number; scanned_at: number }) => {
+    setOverview(d.overview); setList(d.backups); setUsage(d.usage); setScannedAt(d.scanned_at)
+  }
+
+  const load = async (sid: number) => {
     setLoading(true)
     try {
-      const [ov, ls, us] = await Promise.all([pbOverview(sid), pbList(sid), pbUsage(sid)])
-      setOverview(ov); setList(ls); setUsage(us)
+      apply(await getPbCached(sid))
     } catch (err) {
       showToast('error', err instanceof ApiError ? err.message : '加载失败')
     } finally {
@@ -53,7 +58,20 @@ export default function PrimeBackup() {
     }
   }
 
-  useEffect(() => { if (serverId !== null) reload(serverId) }, [serverId]) // eslint-disable-line react-hooks/exhaustive-deps
+  const doRefresh = async () => {
+    if (serverId === null) return
+    setLoading(true)
+    try {
+      apply(await pbRefresh(serverId))
+      showToast('success', '已刷新')
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : '刷新失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { if (serverId !== null) load(serverId) }, [serverId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const onExport = async (b: PBBackupItem) => {
     setBusy(b.id)
@@ -66,7 +84,7 @@ export default function PrimeBackup() {
     try {
       await pbImport(serverId, file)
       showToast('success', '已导入')
-      reload(serverId)
+      doRefresh()
     } catch (err) {
       showToast('error', err instanceof ApiError ? err.message : '导入失败')
     } finally {
@@ -100,14 +118,15 @@ export default function PrimeBackup() {
       width="5xl"
       actions={
         mcServers.length > 0 ? (
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
+            <span className="hidden text-xs text-muted-foreground sm:inline">{fmtRefreshed(scannedAt)}</span>
             <Select value={serverId === null ? undefined : String(serverId)} onValueChange={(v) => setServerId(Number(v))}>
               <SelectTrigger className="w-48"><SelectValue placeholder="选择服务器" /></SelectTrigger>
               <SelectContent>
                 {mcServers.map((s) => (<SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>))}
               </SelectContent>
             </Select>
-            <Button type="button" variant="outline" className="gap-2" onClick={() => serverId !== null && reload(serverId)} disabled={loading}>
+            <Button type="button" variant="outline" className="gap-2" onClick={doRefresh} disabled={loading}>
               <RefreshCw className={loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />刷新
             </Button>
           </div>

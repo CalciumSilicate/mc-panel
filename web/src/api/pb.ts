@@ -19,6 +19,21 @@ export interface PBBackupItem {
   comment: string
 }
 
+export interface PbCached {
+  overview: PBOverview
+  backups: PBBackupItem[]
+  usage: number
+  scanned_at: number
+}
+
+export function getPbCached(serverId: number): Promise<PbCached> {
+  return apiRequest<PbCached>(`/pb/${serverId}/cached`)
+}
+
+export function pbRefresh(serverId: number): Promise<PbCached> {
+  return apiRequest<PbCached>(`/pb/${serverId}/refresh`, { method: 'POST', body: '{}' })
+}
+
 export function pbOverview(serverId: number): Promise<PBOverview> {
   return apiRequest<PBOverview>(`/pb/${serverId}/overview`)
 }
