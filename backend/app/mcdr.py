@@ -569,6 +569,24 @@ class MCDRManager:
         else:
             self.write_properties(server, {"server-port": str(server.port)})
 
+    # ---------- RCON(世界地图位置采集用) ----------
+    def enable_rcon(self, server: Server) -> None:
+        """把 server 的 rcon 端口/密码写入 server.properties 并开启 rcon。
+        端口/密码由调用方(路由)预先分配到 server 对象上。重启实例后生效。"""
+        self.write_properties(
+            server,
+            {
+                "enable-rcon": "true",
+                "rcon.port": str(server.rcon_port),
+                "rcon.password": server.rcon_password,
+                # rcon 执行的命令不广播给 OP,避免位置查询刷屏游戏内
+                "broadcast-rcon-to-ops": "false",
+            },
+        )
+
+    def disable_rcon(self, server: Server) -> None:
+        self.write_properties(server, {"enable-rcon": "false"})
+
     def _apply_velocity_bind(self, server: Server) -> None:
         """改写 velocity.toml 的 bind 端口;文件不存在则写完整默认模板。"""
         path = self.instance_dir(server) / "server" / "velocity.toml"

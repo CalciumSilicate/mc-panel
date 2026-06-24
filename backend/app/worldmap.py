@@ -1,22 +1,34 @@
-"""世界地图:save-all 后读 playerdata NBT 的 Pos 采样玩家位置,位置变化才入库。"""
+"""世界地图:通过 RCON 采集在线玩家实时位置。
+
+走 RCON(``data get entity <name> Pos/Dimension``)而非读 playerdata NBT /
+``save-all``:命令与返回不经过 MCDR 控制台,不污染 stdin/stdout 与日志。
+仅对「已启用 RCON 且正在运行」的实例采集;未启用 RCON 的实例不显示世界地图。
+位置变化才入库(去重)。
+"""
 from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from datetime import datetime, timedelta, timezone
 
-import nbtlib
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .database import SessionLocal
 from .mcdr import manager
 from .models import PlayerPosition, Server
+from .rcon import RconClient, RconError
 
-SCAN_INTERVAL = 300
+SCAN_INTERVAL = 60
 _MC_TYPES = ("vanilla", "fabric", "forge")
 _scanned_at: dict[int, float] = {}
+
+# data get entity <name> Pos  ->  "... has the following entity data: [12.3d, 64.0d, -8.0d]"
+_POS_RE = re.compile(r"\[\s*(-?[\d.]+)d?\s*,\s*(-?[\d.]+)d?\s*,\s*(-?[\d.]+)d?\s*\]")
+# data get entity <name> Dimension  ->  '... entity data: "minecraft:overworld"'
+_DIM_RE = re.compile(r'"([^"]+)"')
 
 
 def _now() -> datetime:
@@ -24,6 +36,7 @@ def _now() -> datetime:
 
 
 def _usercache(inst_server) -> dict[str, str]:
+    """读 usercache.json,返回 uuid(无连字符,小写) -> name。"""
     p = inst_server / "usercache.json"
     out: dict[str, str] = {}
     if p.exists():
@@ -37,19 +50,6 @@ def _usercache(inst_server) -> dict[str, str]:
     return out
 
 
-def _read_pos(dat_file):
-    try:
-        root = nbtlib.load(str(dat_file))
-        pos = root.get("Pos")
-        if not pos or len(pos) < 3:
-            return None
-        x, y, z = float(pos[0]), float(pos[1]), float(pos[2])
-        dim = str(root.get("Dimension", "minecraft:overworld"))
-        return x, y, z, dim
-    except Exception:  # noqa: BLE001
-        return None
-
-
 def _last_pos(db: Session, server_id: int, uuid: str):
     row = db.execute(
         select(PlayerPosition.x, PlayerPosition.y, PlayerPosition.z, PlayerPosition.dim)
@@ -60,40 +60,84 @@ def _last_pos(db: Session, server_id: int, uuid: str):
     return row
 
 
-def scan_server(server: Server) -> None:
-    inst_server = manager.instance_dir(server) / "server"
-    pdata = inst_server / "world" / "playerdata"
-    if not pdata.exists():
-        _scanned_at[server.id] = time.time()
-        return
-    names = _usercache(inst_server)
+def _parse_online(text: str) -> list[str]:
+    """解析 vanilla ``list`` 输出末尾的玩家名列表。"""
+    idx = text.find("online:")
+    if idx < 0:
+        return []
+    tail = text[idx + len("online:"):].strip()
+    return [n.strip() for n in tail.split(",") if n.strip()]
+
+
+def _parse_pos(text: str):
+    m = _POS_RE.search(text)
+    if not m:
+        return None
+    return float(m.group(1)), float(m.group(2)), float(m.group(3))
+
+
+def _parse_dim(text: str) -> str:
+    m = _DIM_RE.search(text)
+    return m.group(1) if m else "minecraft:overworld"
+
+
+async def _collect(server: Server) -> list[tuple]:
+    """RCON 连一次,拉在线玩家及其坐标/维度。返回 (uuid, name, x, y, z, dim) 列表。"""
+    names = _usercache(manager.instance_dir(server) / "server")  # uuid->name
+    name_to_uuid = {v.lower(): k for k, v in names.items() if v}
+    out: list[tuple] = []
+    try:
+        async with RconClient("127.0.0.1", server.rcon_port, server.rcon_password) as rc:
+            online = _parse_online(await rc.command("list"))
+            for name in online:
+                try:
+                    pos = _parse_pos(await rc.command(f"data get entity {name} Pos"))
+                    if pos is None:
+                        continue
+                    dim = _parse_dim(await rc.command(f"data get entity {name} Dimension"))
+                except RconError:
+                    continue  # 单个玩家失败不影响其它
+                # 拿不到 uuid 时用名字小写兜底,保证轨迹 key 稳定
+                uuid = name_to_uuid.get(name.lower(), "") or name.lower()
+                out.append((uuid, name, pos[0], pos[1], pos[2], dim))
+    except RconError:
+        return []
+    return out
+
+
+def _persist(server_id: int, samples: list[tuple]) -> None:
     db = SessionLocal()
     try:
         now = _now()
-        for f in pdata.glob("*.dat"):
-            uuid = f.stem.replace("-", "").lower()
-            res = _read_pos(f)
-            if res is None:
-                continue
-            x, y, z, dim = res
-            last = _last_pos(db, server.id, uuid)
-            if last and abs(last[0] - x) < 0.5 and abs(last[1] - y) < 0.5 and abs(last[2] - z) < 0.5 and last[3] == dim:
+        for uuid, name, x, y, z, dim in samples:
+            last = _last_pos(db, server_id, uuid)
+            if (
+                last
+                and abs(last[0] - x) < 0.5
+                and abs(last[1] - y) < 0.5
+                and abs(last[2] - z) < 0.5
+                and last[3] == dim
+            ):
                 continue  # 位置基本未变,去重
-            db.add(PlayerPosition(server_id=server.id, uuid=uuid, name=names.get(uuid, uuid[:8]), x=x, y=y, z=z, dim=dim, ts=now))
+            db.add(
+                PlayerPosition(
+                    server_id=server_id, uuid=uuid, name=name, x=x, y=y, z=z, dim=dim, ts=now
+                )
+            )
         db.commit()
     finally:
         db.close()
-    _scanned_at[server.id] = time.time()
 
 
 async def scan_server_async(server: Server) -> None:
-    if manager.is_running(server.id):
-        try:
-            await manager.send_raw(server.id, "save-all flush")
-            await asyncio.sleep(2)
-        except Exception:  # noqa: BLE001
-            pass
-    await asyncio.to_thread(scan_server, server)
+    """对单个实例采集一次(仅当已启用 RCON 且运行中)。"""
+    if not getattr(server, "rcon_enabled", False) or not manager.is_running(server.id):
+        _scanned_at[server.id] = time.time()
+        return
+    samples = await _collect(server)
+    if samples:
+        await asyncio.to_thread(_persist, server.id, samples)
+    _scanned_at[server.id] = time.time()
 
 
 async def scan_all() -> None:

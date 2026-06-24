@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import secrets
 import uuid
 
 from fastapi import (
@@ -396,6 +397,59 @@ async def update_server(
     # 运行中改了配置 → 标记需要重启
     manager.mark_needs_restart(server.id)
 
+    return _to_summary(server, _group_name(db, server.group_id))
+
+
+def _alloc_rcon_port(db: Session, settings) -> int:
+    """为 RCON 分配一个空闲端口:游戏端口段之上的独立区间,避开已用端口。"""
+    taken: set[int] = set()
+    for s in db.scalars(select(Server)).all():
+        if s.port:
+            taken.add(s.port)
+        if s.rcon_port:
+            taken.add(s.rcon_port)
+    lo = (settings.port_max or 25999) + 1
+    hi = min(lo + 1000, 65535)
+    return port_utils.find_free_port(taken, lo, hi)
+
+
+class RconBody(BaseModel):
+    enabled: bool
+
+
+@router.post("/{server_id}/rcon", response_model=ServerSummary)
+def set_rcon(
+    server_id: int,
+    body: RconBody,
+    _: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> ServerSummary:
+    """开/关实例 RCON(面板托管:自动分配端口 + 随机密码,写入 server.properties)。
+    世界地图位置采集依赖 RCON;改动需重启实例后生效。"""
+    server = _get_server_or_404(db, server_id)
+    ensure_not_protected(server)
+    if server.server_type not in ("vanilla", "fabric", "forge"):
+        raise HTTPException(status_code=400, detail="仅 Minecraft 实例支持 RCON")
+
+    if body.enabled:
+        if not server.rcon_port:
+            port = _alloc_rcon_port(db, get_settings_row(db))
+            if not port:
+                raise HTTPException(status_code=409, detail="无可用 RCON 端口,请检查端口段设置")
+            server.rcon_port = port
+        if not server.rcon_password:
+            server.rcon_password = secrets.token_hex(16)
+        server.rcon_enabled = True
+        db.commit()
+        db.refresh(server)
+        manager.enable_rcon(server)
+    else:
+        server.rcon_enabled = False
+        db.commit()
+        db.refresh(server)
+        manager.disable_rcon(server)
+
+    manager.mark_needs_restart(server.id)
     return _to_summary(server, _group_name(db, server.group_id))
 
 

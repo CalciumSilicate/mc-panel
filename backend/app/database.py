@@ -50,6 +50,9 @@ _COLUMN_MIGRATIONS = {
         "mcdr_language": "VARCHAR(16) DEFAULT ''",
         "startup_commands": "TEXT DEFAULT '[]'",
         "autostart_priority": "INTEGER DEFAULT 0",
+        "rcon_enabled": "BOOLEAN DEFAULT 0",
+        "rcon_port": "INTEGER DEFAULT 0",
+        "rcon_password": "VARCHAR(64) DEFAULT ''",
     },
     "system_settings": {
         "download_proxy": "VARCHAR(255) DEFAULT ''",

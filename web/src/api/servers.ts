@@ -40,6 +40,8 @@ export interface ServerSummary {
   mcdr_language?: string
   startup_commands?: string[]
   autostart_priority?: number
+  rcon_enabled?: boolean
+  rcon_port?: number
   created_at: string
   status: ServerStatus
   needs_restart?: boolean
@@ -160,6 +162,13 @@ export function updateServer(id: number, patch: ServerUpdateInput): Promise<Serv
   return apiRequest<ServerSummary>(`/servers/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(patch),
+  })
+}
+
+export function setRcon(id: number, enabled: boolean): Promise<ServerSummary> {
+  return apiRequest<ServerSummary>(`/servers/${id}/rcon`, {
+    method: 'POST',
+    body: JSON.stringify({ enabled }),
   })
 }
 

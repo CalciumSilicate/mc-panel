@@ -19,6 +19,7 @@ import {
   listServers,
   forceStopServer,
   reinstallServer,
+  setRcon,
   startServer,
   stopServer,
   updateProperties,
@@ -754,6 +755,7 @@ function EditServerDialog({
   const [javaInstalls, setJavaInstalls] = useState<JavaInstall[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [rconBusy, setRconBusy] = useState(false)
 
   const open = server !== null
   const running = server?.status === 'running' || server?.status === 'starting'
@@ -875,6 +877,20 @@ function EditServerDialog({
       showToast('error', err instanceof ApiError ? err.message : '删除失败')
     } finally {
       setDeleting(false)
+    }
+  }
+
+  const doToggleRcon = async (enabled: boolean) => {
+    if (!server) return
+    setRconBusy(true)
+    try {
+      await setRcon(server.id, enabled)
+      showToast('success', enabled ? '已启用 RCON,重启实例后生效' : '已关闭 RCON')
+      onSaved()
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : '操作失败')
+    } finally {
+      setRconBusy(false)
     }
   }
 
@@ -1197,6 +1213,19 @@ function EditServerDialog({
               <Label htmlFor="edit-priority">自启优先级</Label>
               <Input id="edit-priority" type="number" value={autostartPriority} onChange={(e) => setAutostartPriority(e.target.value)} placeholder="0" />
             </div>
+            {!isVelocity ? (
+              <label className="flex items-center justify-between gap-4 rounded-md border border-border/70 px-3 py-2.5">
+                <span>
+                  <span className="block text-sm font-medium">启用 RCON</span>
+                  <span className="block text-xs text-muted-foreground">
+                    世界地图玩家位置采集依赖 RCON。开启后自动分配端口与随机密码,
+                    {server?.rcon_enabled && server?.rcon_port ? `当前端口 ${server.rcon_port},` : ''}
+                    改动需重启实例后生效。
+                  </span>
+                </span>
+                <Switch checked={server?.rcon_enabled ?? false} disabled={rconBusy || locked} onCheckedChange={doToggleRcon} />
+              </label>
+            ) : null}
             <label className="flex items-center justify-between gap-4 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2.5">
               <span>
                 <span className="block text-sm font-medium">保护实例</span>

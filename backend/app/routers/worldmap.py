@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .. import worldmap
 from ..database import get_db
-from ..deps import require_auth
-from ..models import Server
+from ..deps import require_admin, require_auth
+from ..mcdr import manager
+from ..models import MapMarker, Server
+from ..schemas import MarkerCreate, MarkerOut, MarkerUpdate
 
 router = APIRouter(prefix="/map", tags=["worldmap"])
 
@@ -21,8 +24,13 @@ def _server(db: Session, server_id: int) -> Server:
 
 @router.get("/{server_id}/players")
 def map_players(server_id: int, _: object = Depends(require_auth), db: Session = Depends(get_db)) -> dict:
-    _server(db, server_id)
-    return {"players": worldmap.players(db, server_id), "scanned_at": worldmap.scanned_at(server_id)}
+    s = _server(db, server_id)
+    return {
+        "players": worldmap.players(db, server_id),
+        "scanned_at": worldmap.scanned_at(server_id),
+        "rcon_enabled": bool(s.rcon_enabled),
+        "running": manager.is_running(server_id),
+    }
 
 
 @router.get("/{server_id}/positions")
@@ -42,5 +50,81 @@ def map_positions(
 @router.post("/{server_id}/refresh")
 async def refresh(server_id: int, _: object = Depends(require_auth), db: Session = Depends(get_db)) -> dict:
     server = _server(db, server_id)
+    if not server.rcon_enabled:
+        raise HTTPException(status_code=400, detail="该实例未启用 RCON,无法采集位置")
     await worldmap.scan_server_async(server)
     return {"scanned_at": worldmap.scanned_at(server_id)}
+
+
+# ---------- 自定义地标 POI ----------
+def _get_marker(db: Session, server_id: int, marker_id: int) -> MapMarker:
+    m = db.get(MapMarker, marker_id)
+    if m is None or m.server_id != server_id:
+        raise HTTPException(status_code=404, detail="地标不存在")
+    return m
+
+
+@router.get("/{server_id}/markers")
+def list_markers(
+    server_id: int,
+    dim: str = Query("", description="按维度过滤;空=全部"),
+    _: object = Depends(require_auth),
+    db: Session = Depends(get_db),
+) -> dict:
+    _server(db, server_id)
+    q = select(MapMarker).where(MapMarker.server_id == server_id)
+    if dim:
+        q = q.where(MapMarker.dim == dim)
+    rows = db.scalars(q.order_by(MapMarker.id)).all()
+    return {"markers": [MarkerOut.model_validate(m) for m in rows]}
+
+
+@router.post("/{server_id}/markers", response_model=MarkerOut)
+def create_marker(
+    server_id: int,
+    payload: MarkerCreate,
+    _: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> MarkerOut:
+    _server(db, server_id)
+    m = MapMarker(
+        server_id=server_id, dim=payload.dim, name=payload.name,
+        x=payload.x, y=payload.y, z=payload.z, icon=payload.icon, color=payload.color,
+    )
+    db.add(m)
+    db.commit()
+    db.refresh(m)
+    return MarkerOut.model_validate(m)
+
+
+@router.patch("/{server_id}/markers/{marker_id}", response_model=MarkerOut)
+def update_marker(
+    server_id: int,
+    marker_id: int,
+    payload: MarkerUpdate,
+    _: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> MarkerOut:
+    _server(db, server_id)
+    m = _get_marker(db, server_id, marker_id)
+    for field in ("name", "x", "y", "z", "icon", "color"):
+        value = getattr(payload, field)
+        if value is not None:
+            setattr(m, field, value)
+    db.commit()
+    db.refresh(m)
+    return MarkerOut.model_validate(m)
+
+
+@router.delete("/{server_id}/markers/{marker_id}")
+def delete_marker(
+    server_id: int,
+    marker_id: int,
+    _: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> dict:
+    _server(db, server_id)
+    m = _get_marker(db, server_id, marker_id)
+    db.delete(m)
+    db.commit()
+    return {"ok": True}

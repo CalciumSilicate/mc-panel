@@ -78,6 +78,24 @@ class PlayerPosition(Base):
     ts: Mapped[datetime] = mapped_column(DateTime, default=_now, index=True)
 
 
+class MapMarker(Base):
+    """世界地图上的自定义地标(POI):出生点 / 主城 / 传送点等。按维度归属。"""
+
+    __tablename__ = "map_markers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    server_id: Mapped[int] = mapped_column(Integer, index=True)
+    dim: Mapped[str] = mapped_column(String(48), default="minecraft:overworld")
+    name: Mapped[str] = mapped_column(String(64), default="")
+    x: Mapped[float] = mapped_column(default=0.0)
+    y: Mapped[float] = mapped_column(default=64.0)
+    z: Mapped[float] = mapped_column(default=0.0)
+    icon: Mapped[str] = mapped_column(String(16), default="📍")
+    color: Mapped[str] = mapped_column(String(16), default="#f87171")
+    created_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
 class PluginScan(Base):
     """每个实例已安装 MCDR 插件 id 的缓存(由定时 worker 扫描更新),供「插件配置」秒读。"""
 
@@ -139,6 +157,11 @@ class Server(Base):
     startup_commands: Mapped[str] = mapped_column(Text, default="[]")
     # 高级:开机自启优先级(越小越先;同级并行,全部就绪后再下一级)
     autostart_priority: Mapped[int] = mapped_column(Integer, default=0)
+    # RCON:面板托管(自动分配端口 + 随机密码,写入 server.properties)。
+    # 世界地图位置采集走 RCON,未启用则该实例不显示世界地图。
+    rcon_enabled: Mapped[bool] = mapped_column(default=False)
+    rcon_port: Mapped[int] = mapped_column(Integer, default=0)  # 0 = 未分配
+    rcon_password: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 

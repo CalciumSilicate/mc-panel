@@ -161,6 +161,8 @@ class ServerSummary(BaseModel):
     mcdr_language: str = ""
     startup_commands: list[str] = []
     autostart_priority: int = 0
+    rcon_enabled: bool = False
+    rcon_port: int = 0  # 仅供展示;密码不回传前端
     created_at: datetime
     # 运行时派生字段
     status: str = "stopped"
@@ -201,6 +203,41 @@ class JavaInfo(BaseModel):
     satisfied: bool
     chosen_major: int | None = None
     message: str | None = None
+
+
+# ---------- 世界地图地标 ----------
+class MarkerCreate(BaseModel):
+    dim: str = "minecraft:overworld"
+    name: str = Field(min_length=1, max_length=64)
+    x: float
+    y: float = 64.0
+    z: float
+    icon: str = Field(default="📍", max_length=16)
+    color: str = Field(default="#f87171", max_length=16)
+
+
+class MarkerUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+    x: float | None = None
+    y: float | None = None
+    z: float | None = None
+    icon: str | None = Field(default=None, max_length=16)
+    color: str | None = Field(default=None, max_length=16)
+
+
+class MarkerOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    server_id: int
+    dim: str
+    name: str
+    x: float
+    y: float
+    z: float
+    icon: str
+    color: str
+    created_at: datetime
 
 
 # ---------- 仪表盘 ----------
