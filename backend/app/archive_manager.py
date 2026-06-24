@@ -1,12 +1,14 @@
-"""世界存档:把实例的世界目录打包成 zip,以及从 zip 恢复。
+"""世界存档:把实例的世界目录打包成 zip,以及从压缩包恢复。
 
-打包/恢复是阻塞 IO,放到线程里跑(asyncio.to_thread),通过回调上报字节进度。
+导出始终用 zip;上传/恢复支持 zip 与 tar 系列(tar/tar.gz/tgz/tar.bz2/tar.xz),
+读 DataVersion 与解压都做到格式无关。打包/恢复是阻塞 IO,放线程里跑。
 """
 from __future__ import annotations
 
 import gzip
 import io
 import shutil
+import tarfile
 import uuid
 import zipfile
 from pathlib import Path
@@ -15,6 +17,42 @@ import nbtlib
 
 from .config import ARCHIVES_DIR
 from .models import Server
+
+# 支持的上传/恢复压缩扩展名(顺序:长扩展在前,便于精确匹配 .tar.gz 这类双扩展)
+ARCHIVE_EXTS = (".tar.gz", ".tar.bz2", ".tar.xz", ".tgz", ".tbz2", ".txz", ".tar", ".zip")
+
+
+def archive_ext(name: str) -> str:
+    """从文件名提取压缩扩展名(含 .tar.gz 这类双扩展);识别不出兜底 .zip。"""
+    low = name.lower()
+    for e in ARCHIVE_EXTS:
+        if low.endswith(e):
+            return e
+    return ".zip"
+
+
+def archive_kind(path: Path) -> str | None:
+    """按内容探测压缩格式:'zip' | 'tar'(含 gz/bz2/xz);都不是返回 None。"""
+    try:
+        if zipfile.is_zipfile(path):
+            return "zip"
+        if tarfile.is_tarfile(path):  # 自动识别 gz/bz2/xz
+            return "tar"
+    except OSError:
+        return None
+    return None
+
+
+def _safe_extract_tar(tf: tarfile.TarFile, dest: Path) -> None:
+    """解压 tar,防路径穿越。Python 3.12+ 用 data 过滤器,旧版手工校验成员路径。"""
+    try:
+        tf.extractall(dest, filter="data")  # type: ignore[call-arg]
+    except TypeError:
+        root = dest.resolve()
+        for m in tf.getmembers():
+            if (dest / m.name).resolve().relative_to(root) is None:  # pragma: no cover
+                raise ValueError("压缩包包含非法路径")
+        tf.extractall(dest)
 
 
 def read_data_version(level_dat_bytes: bytes) -> int | None:
@@ -41,19 +79,32 @@ def data_version_from_world(instance_dir: Path) -> int | None:
     return read_data_version(level.read_bytes())
 
 
-def data_version_from_zip(zip_path: Path) -> int | None:
-    try:
-        with zipfile.ZipFile(zip_path) as zf:
-            names = [
-                n for n in zf.namelist()
-                if n.endswith("level.dat") and not n.endswith("level.dat_old")
-            ]
-            if not names:
-                return None
-            name = min(names, key=lambda n: n.count("/"))
-            return read_data_version(zf.read(name))
-    except (zipfile.BadZipFile, OSError):
+def _first_level_dat_name(names: list[str]) -> str | None:
+    """从压缩包条目名里挑最靠近根的 level.dat(排除 level.dat_old)。"""
+    cand = [n for n in names if n.endswith("level.dat") and not n.endswith("level.dat_old")]
+    if not cand:
         return None
+    return min(cand, key=lambda n: n.count("/"))
+
+
+def data_version_from_archive(path: Path) -> int | None:
+    """从 zip / tar 系列压缩包里读 level.dat 的 DataVersion。"""
+    kind = archive_kind(path)
+    try:
+        if kind == "zip":
+            with zipfile.ZipFile(path) as zf:
+                name = _first_level_dat_name(zf.namelist())
+                return read_data_version(zf.read(name)) if name else None
+        if kind == "tar":
+            with tarfile.open(path) as tf:
+                name = _first_level_dat_name([m.name for m in tf.getmembers()])
+                if not name:
+                    return None
+                f = tf.extractfile(name)
+                return read_data_version(f.read()) if f is not None else None
+    except (zipfile.BadZipFile, tarfile.TarError, OSError):
+        return None
+    return None
 
 
 def world_name(instance_dir: Path) -> str:
@@ -97,7 +148,7 @@ def create_zip(instance_dir: Path, dest: Path, progress=None) -> int:
 
 
 def _find_world_root(extract_dir: Path) -> Path | None:
-    """在解压目录里定位含 level.dat 的目录(zip 根或某子目录)。"""
+    """在解压目录里定位含 level.dat 的目录(包根或某子目录)。"""
     if (extract_dir / "level.dat").exists():
         return extract_dir
     for p in extract_dir.rglob("level.dat"):
@@ -105,15 +156,22 @@ def _find_world_root(extract_dir: Path) -> Path | None:
     return None
 
 
-def restore_zip(archive_path: Path, instance_dir: Path, progress=None) -> None:
-    """从 zip 恢复世界:备份现有世界,再把存档中的世界覆盖进去。"""
+def restore_archive(archive_path: Path, instance_dir: Path, progress=None) -> None:
+    """从压缩包(zip / tar 系列)恢复世界:解压后定位 level.dat,备份现有世界再覆盖。"""
+    kind = archive_kind(archive_path)
+    if kind is None:
+        raise ValueError("不支持的压缩格式(支持 zip / tar / tar.gz / tar.bz2 / tar.xz)")
     target = world_dir(instance_dir)
     tmp = instance_dir / f".restore_{uuid.uuid4().hex}"
     try:
         if progress:
             progress(0, 100)
-        with zipfile.ZipFile(archive_path) as zf:
-            zf.extractall(tmp)
+        if kind == "zip":
+            with zipfile.ZipFile(archive_path) as zf:
+                zf.extractall(tmp)
+        else:
+            with tarfile.open(archive_path) as tf:
+                _safe_extract_tar(tf, tmp)
         if progress:
             progress(50, 100)
         src = _find_world_root(tmp)
@@ -132,8 +190,9 @@ def restore_zip(archive_path: Path, instance_dir: Path, progress=None) -> None:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def new_archive_filename() -> str:
-    return f"{uuid.uuid4().hex}.zip"
+def new_archive_filename(orig_name: str = ".zip") -> str:
+    """生成磁盘存储用文件名,保留原始压缩扩展名(供下载时还原)。"""
+    return f"{uuid.uuid4().hex}{archive_ext(orig_name)}"
 
 
 def archive_path(filename: str) -> Path:

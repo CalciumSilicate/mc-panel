@@ -49,6 +49,8 @@ _bg_tasks: set[asyncio.Task] = set()
 
 _RECT_RE = re.compile(r"World rectangle:\s*rr\(\s*(-?\d+);\s*(-?\d+);\s*(\d+)\s*x\s*(\d+)")
 _SIZE_RE = re.compile(r"Output image size:\s*(\d+)\s*x\s*(\d+)")
+# 渲染进度行:"Rendering region rr(0; 0), 1 / 4, 25.00%"
+_PROG_RE = re.compile(r"(\d+)\s*/\s*(\d+),\s*([\d.]+)\s*%")
 
 
 def _basemap_dir(server: Server) -> Path:
@@ -128,7 +130,7 @@ async def ensure_cli() -> Path:
     return exe
 
 
-async def _render_dim(exe: Path, world: Path, png: Path, dim_num: int) -> tuple[int, str]:
+async def _render_dim(exe: Path, world: Path, png: Path, dim_num: int, on_progress=None) -> tuple[int, str]:
     png.parent.mkdir(parents=True, exist_ok=True)
     args = [
         str(exe), "image", "render",
@@ -143,8 +145,20 @@ async def _render_dim(exe: Path, world: Path, png: Path, dim_num: int) -> tuple[
         *args, cwd=str(exe.parent),  # unmined 从 cwd/exe 目录读 config/templates
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
     )
-    out, _ = await proc.communicate()
-    return proc.returncode or 0, (out or b"").decode("utf-8", "replace")
+    assert proc.stdout is not None
+    lines: list[str] = []
+    while True:
+        raw = await proc.stdout.readline()
+        if not raw:
+            break
+        line = raw.decode("utf-8", "replace").rstrip()
+        lines.append(line)
+        if on_progress is not None:
+            m = _PROG_RE.search(line)
+            if m:
+                on_progress(float(m.group(3)))
+    await proc.wait()
+    return proc.returncode or 0, "\n".join(lines)
 
 
 def _write_meta(server: Server, dim_id: str, log: str) -> bool:
@@ -183,27 +197,42 @@ async def render(server_id: int) -> None:
         return
     prev = _state.get(server_id, {})
     async with lock:
-        _state[server_id] = {"status": "rendering", "message": "", "rendered_at": prev.get("rendered_at")}
+        _state[server_id] = {"status": "rendering", "message": "", "rendered_at": prev.get("rendered_at"),
+                             "progress": {"percent": 0, "label": "准备中…"}}
         try:
+            from . import archive_manager
+
             exe = await ensure_cli()
-            world = manager.instance_dir(server) / "server" / "world"
+            # 世界目录按实例 level-name 解析(不一定叫 "world")
+            world = archive_manager.world_dir(manager.instance_dir(server))
+            # 先收集已生成区块的维度
+            todo = [
+                (dim_id, dim_num)
+                for dim_id, dim_num, sub in _DIMS
+                if ((world / sub / "region") if sub else (world / "region")).exists()
+                and any((((world / sub / "region") if sub else (world / "region"))).glob("*.mca"))
+            ]
+            if not todo:
+                raise RuntimeError("该实例没有任何已生成区块的维度,请先进服探索并保存世界")
             done_dims: list[str] = []
             last_err = ""
-            for dim_id, dim_num, sub in _DIMS:
-                region = (world / sub / "region") if sub else (world / "region")
-                if not region.exists() or not any(region.glob("*.mca")):
-                    continue
-                code, log = await _render_dim(exe, world, png_path(server, dim_id), dim_num)
+            n = len(todo)
+            for i, (dim_id, dim_num) in enumerate(todo):
+                def on_prog(p: float, i=i, dim_id=dim_id) -> None:
+                    _state[server_id]["progress"] = {"percent": round((i + p / 100) / n * 100), "label": f"{dim_id} {p:.0f}%"}
+                on_prog(0.0)
+                code, log = await _render_dim(exe, world, png_path(server, dim_id), dim_num, on_prog)
                 if code != 0:
                     last_err = log[-300:]
                     continue
                 if _write_meta(server, dim_id, log):
                     done_dims.append(dim_id)
             if not done_dims:
-                raise RuntimeError(last_err or "该实例没有任何已生成区块的维度,请先进服探索并保存世界")
-            _state[server_id] = {"status": "done", "message": ",".join(done_dims), "rendered_at": time.time()}
+                raise RuntimeError(last_err or "渲染失败")
+            _state[server_id] = {"status": "done", "message": ",".join(done_dims), "rendered_at": time.time(),
+                                 "progress": {"percent": 100, "label": "完成"}}
         except Exception as exc:  # noqa: BLE001
-            _state[server_id] = {"status": "error", "message": str(exc), "rendered_at": prev.get("rendered_at")}
+            _state[server_id] = {"status": "error", "message": str(exc), "rendered_at": prev.get("rendered_at"), "progress": None}
 
 
 def render_bg(server_id: int) -> None:

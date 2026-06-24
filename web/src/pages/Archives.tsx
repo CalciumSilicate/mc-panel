@@ -10,7 +10,7 @@ import {
   listArchives,
   restoreArchive,
   updateArchive,
-  uploadArchive,
+  uploadArchiveWithProgress,
 } from '@/api/archives'
 import { pollJob } from '@/api/jobs'
 import { type ServerSummary, listServers } from '@/api/servers'
@@ -54,6 +54,7 @@ export default function Archives() {
   const [restoreFor, setRestoreFor] = useState<Archive | null>(null)
   const [editFor, setEditFor] = useState<Archive | null>(null)
   const [busy, setBusy] = useState<number | null>(null)
+  const [uploadPct, setUploadPct] = useState(0)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const serverName = (id: number | null) =>
@@ -64,21 +65,23 @@ export default function Archives() {
     e.target.value = ''
     if (!file) return
     setBusy(-1)
+    setUploadPct(0)
     try {
-      await uploadArchive(file)
+      await uploadArchiveWithProgress(file, setUploadPct)
       showToast('success', '已上传存档')
       refresh()
     } catch (err) {
       showToast('error', err instanceof ApiError ? err.message : '上传失败')
     } finally {
       setBusy(null)
+      setUploadPct(0)
     }
   }
 
   const onDownload = async (a: Archive) => {
     setBusy(a.id)
     try {
-      await downloadArchive(a.id, a.name)
+      await downloadArchive(a.id, a.name, a.filename)
     } catch (err) {
       showToast('error', err instanceof ApiError ? err.message : '下载失败')
     } finally {
@@ -107,7 +110,7 @@ export default function Archives() {
       width="7xl"
       actions={
         <>
-          <input ref={fileRef} type="file" accept=".zip" className="hidden" onChange={onUpload} />
+          <input ref={fileRef} type="file" accept=".zip,.tar,.tar.gz,.tgz,.tar.bz2,.tbz2,.tar.xz,.txz" className="hidden" onChange={onUpload} />
           <Button type="button" variant="outline" className="gap-2" onClick={refresh} disabled={loading}>
             <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
             刷新
@@ -115,7 +118,7 @@ export default function Archives() {
           {canOperate ? (
             <Button type="button" variant="outline" className="gap-2" onClick={() => fileRef.current?.click()} disabled={busy === -1}>
               {busy === -1 ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-              上传
+              {busy === -1 ? `上传中 ${uploadPct}%` : '上传'}
             </Button>
           ) : null}
           {canHelper ? (

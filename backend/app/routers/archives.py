@@ -106,18 +106,22 @@ async def upload_archive(
     db: Session = Depends(get_db),
 ) -> Archive:
     name = file.filename or "archive.zip"
-    if not name.lower().endswith(".zip"):
-        raise HTTPException(status_code=400, detail="仅支持 .zip 存档")
-    filename = am.new_archive_filename()
+    ext = am.archive_ext(name)
+    filename = am.new_archive_filename(name)
     dest = am.archive_path(filename)
     dest.parent.mkdir(parents=True, exist_ok=True)
     content = await file.read()
     dest.write_bytes(content)
+    # 按内容校验确实是支持的压缩格式(不只看扩展名)
+    if am.archive_kind(dest) is None:
+        dest.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail="不支持的格式(支持 zip / tar / tar.gz / tar.bz2 / tar.xz)")
     # 优先从上传的 level.dat 读 DataVersion 反推版本
-    dv = am.data_version_from_zip(dest)
+    dv = am.data_version_from_archive(dest)
     detected = superflat.version_for_data_version(dv) if dv else ""
+    base = name[: -len(ext)] if name.lower().endswith(ext) else name
     rec = Archive(
-        name=name[:-4], filename=filename, size=len(content),
+        name=base or name, filename=filename, size=len(content),
         source="uploaded", mc_version=detected or mc_version.strip(),
         owner_user_id=user.id,
     )
@@ -154,7 +158,9 @@ def download_archive(
     path = am.archive_path(arc.filename)
     if not path.exists():
         raise HTTPException(status_code=404, detail="存档文件丢失")
-    return FileResponse(path, media_type="application/zip", filename=f"{arc.name}.zip")
+    ext = am.archive_ext(arc.filename)
+    media = "application/zip" if ext == ".zip" else "application/octet-stream"
+    return FileResponse(path, media_type=media, filename=f"{arc.name}{ext}")
 
 
 @router.delete("/{archive_id}")
@@ -180,7 +186,7 @@ async def _do_restore(archive_id: int, server_id: int, job_id: str) -> None:
         inst = mcdr_manager.instance_dir(server)
         try:
             await asyncio.to_thread(
-                am.restore_zip, am.archive_path(arc.filename), inst,
+                am.restore_archive, am.archive_path(arc.filename), inst,
                 lambda d, t: jobstore.update(job_id, d, t),
             )
         except Exception as exc:  # noqa: BLE001

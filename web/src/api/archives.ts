@@ -30,6 +30,33 @@ export function uploadArchive(file: File): Promise<Archive> {
   return apiUpload<Archive>('/archives/upload', fd)
 }
 
+// 带上传进度的版本(fetch 不支持 upload progress,用 XHR)
+export function uploadArchiveWithProgress(file: File, onProgress?: (pct: number) => void): Promise<Archive> {
+  const fd = new FormData()
+  fd.append('file', file)
+  return new Promise<Archive>((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', '/api/archives/upload')
+    const token = getAuthToken()
+    if (token) xhr.setRequestHeader('authorization', `Bearer ${token}`)
+    xhr.upload.onprogress = (ev) => {
+      if (ev.lengthComputable && onProgress) onProgress(Math.round((ev.loaded / ev.total) * 100))
+    }
+    xhr.onload = () => {
+      let payload: unknown = {}
+      try { payload = JSON.parse(xhr.responseText) } catch { /* 非 JSON */ }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(payload as Archive)
+      } else {
+        const msg = (payload as { error?: string } | null)?.error
+        reject(new ApiError(typeof msg === 'string' ? msg : `HTTP ${xhr.status}`, xhr.status))
+      }
+    }
+    xhr.onerror = () => reject(new ApiError('网络错误', 0))
+    xhr.send(fd)
+  })
+}
+
 export function deleteArchive(id: number) {
   return apiRequest(`/archives/${id}`, { method: 'DELETE' })
 }
@@ -52,7 +79,9 @@ export function restoreArchive(id: number, serverId: number): Promise<{ job_id: 
   })
 }
 
-export async function downloadArchive(id: number, name: string): Promise<void> {
+export const ARCHIVE_EXTS = ['.tar.gz', '.tar.bz2', '.tar.xz', '.tgz', '.tbz2', '.txz', '.tar', '.zip']
+
+export async function downloadArchive(id: number, name: string, filename = ''): Promise<void> {
   const res = await fetch(`/api/archives/${id}/download`, {
     headers: { authorization: `Bearer ${getAuthToken()}` },
   })
@@ -61,7 +90,8 @@ export async function downloadArchive(id: number, name: string): Promise<void> {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `${name}.zip`
+  const ext = ARCHIVE_EXTS.find((e) => filename.toLowerCase().endsWith(e)) ?? '.zip'
+  a.download = `${name}${ext}`
   document.body.appendChild(a)
   a.click()
   a.remove()

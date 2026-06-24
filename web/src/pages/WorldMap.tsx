@@ -520,6 +520,17 @@ export default function WorldMap() {
                 底图渲染失败:{basemapStatus.message}
               </p>
             ) : null}
+            {basemapStatus?.status === 'rendering' ? (
+              <div className="rounded-md border border-border/70 bg-muted/30 px-3 py-2">
+                <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
+                  <span>底图渲染中 · {basemapStatus.progress?.label ?? '准备中…'}</span>
+                  <span>{basemapStatus.progress?.percent ?? 0}%</span>
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded bg-muted">
+                  <div className="h-full bg-primary transition-all" style={{ width: `${basemapStatus.progress?.percent ?? 0}%` }} />
+                </div>
+              </div>
+            ) : null}
             <MapCanvas
               tracks={tracks}
               markers={markers}

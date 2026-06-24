@@ -63,6 +63,7 @@ export interface BasemapStatus {
   status: 'idle' | 'rendering' | 'done' | 'error'
   message: string
   rendered_at: number | null
+  progress?: { percent: number; label: string } | null
 }
 
 export interface BasemapMeta {
