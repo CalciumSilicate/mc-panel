@@ -58,3 +58,22 @@ export function updateMarker(serverId: number, markerId: number, patch: Partial<
 export function deleteMarker(serverId: number, markerId: number): Promise<{ ok: boolean }> {
   return apiRequest(`/map/${serverId}/markers/${markerId}`, { method: 'DELETE' })
 }
+
+export interface BluemapStatus {
+  status: 'idle' | 'rendering' | 'done' | 'error'
+  message: string
+  rendered_at: number | null
+}
+
+export function getBluemapStatus(serverId: number): Promise<BluemapStatus> {
+  return apiRequest(`/map/${serverId}/bluemap/status`)
+}
+
+export function renderBluemap(serverId: number): Promise<BluemapStatus> {
+  return apiRequest(`/map/${serverId}/bluemap/render`, { method: 'POST', body: '{}' })
+}
+
+// iframe 直链(不经 apiRequest:浏览器直接加载,带 /api 前缀走同源/代理)
+export function bluemapWebUrl(serverId: number): string {
+  return `/api/map/${serverId}/bluemap/web/`
+}

@@ -12,10 +12,15 @@ import {
   getMarkers,
   refreshMap,
   updateMarker,
+  type BluemapStatus,
+  bluemapWebUrl,
+  getBluemapStatus,
+  renderBluemap,
 } from '@/api/worldmap'
 import { type ServerSummary, listServers } from '@/api/servers'
 import { PageShell, PageSurface } from '@/components/layout/PageScaffold'
 import { Button } from '@/components/ui/button'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Dialog,
   DialogContent,
@@ -230,6 +235,76 @@ function MapCanvas({
   )
 }
 
+function BluemapView({ serverId }: { serverId: number | null }) {
+  const { showToast } = useGlobalToast()
+  const [st, setSt] = useState<BluemapStatus | null>(null)
+  const [iframeKey, setIframeKey] = useState(0)
+
+  useEffect(() => {
+    if (serverId === null) { setSt(null); return }
+    getBluemapStatus(serverId).then(setSt).catch(() => setSt(null))
+  }, [serverId])
+
+  // 渲染中时轮询状态,done 后刷新 iframe
+  useEffect(() => {
+    if (serverId === null || st?.status !== 'rendering') return
+    const t = window.setInterval(() => {
+      getBluemapStatus(serverId).then((s) => {
+        setSt(s)
+        if (s.status === 'done') setIframeKey((k) => k + 1)
+      }).catch(() => undefined)
+    }, 3000)
+    return () => window.clearInterval(t)
+  }, [serverId, st?.status])
+
+  const doRender = async () => {
+    if (serverId === null) return
+    try {
+      setSt(await renderBluemap(serverId))
+      showToast('success', '已开始渲染')
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : '渲染失败')
+    }
+  }
+
+  if (serverId === null) return null
+  const rendering = st?.status === 'rendering'
+  const rendered = st?.rendered_at ?? null
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <Button type="button" onClick={doRender} disabled={rendering} className="gap-2">
+          <RefreshCw className={rendering ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
+          {rendering ? '渲染中…' : rendered ? '重新渲染' : '渲染地图'}
+        </Button>
+        <span className="text-xs text-muted-foreground">
+          {rendering
+            ? 'BlueMap 渲染中(首次会下载资源并渲染全图,可能数分钟)…'
+            : st?.status === 'error'
+              ? `失败:${st.message}`
+              : rendered
+                ? `上次渲染 ${fmtRefreshed(rendered)}`
+                : '尚未渲染。点「渲染地图」生成真实地形(BlueMap)。'}
+        </span>
+      </div>
+      {rendered ? (
+        <iframe
+          key={iframeKey}
+          src={bluemapWebUrl(serverId)}
+          title="BlueMap"
+          className="h-[620px] w-full rounded-lg border border-border/70"
+        />
+      ) : (
+        <div className="flex h-[620px] w-full items-center justify-center rounded-lg border border-border/70 bg-muted/20 text-center">
+          <p className="max-w-md px-6 text-xs text-muted-foreground">
+            还没有渲染。BlueMap 会读取该实例的存档生成 3D 真实地形(只读,不改世界)。需要该实例已生成并保存过区块。
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
 type MarkerForm = { id: number | null; name: string; x: string; y: string; z: string; icon: string; color: string }
 const EMPTY_FORM: MarkerForm = { id: null, name: '', x: '0', y: '64', z: '0', icon: '📍', color: '#f87171' }
 
@@ -419,61 +494,74 @@ export default function WorldMap() {
     >
       {mcServers.length === 0 ? (
         <PageSurface><p className="py-10 text-center text-sm text-muted-foreground">还没有 MC 服务器实例。</p></PageSurface>
-      ) : rconEnabled === false ? (
-        <PageSurface>
-          <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
-            <p className="text-sm font-medium">该实例未启用 RCON</p>
-            <p className="max-w-md text-xs text-muted-foreground">
-              世界地图通过 RCON 采集玩家实时位置。请到「实例 → 编辑 → 高级」开启 RCON,并重启实例后生效。
-            </p>
-          </div>
-        </PageSurface>
       ) : (
-        <div className="flex gap-4">
-          <div className="min-w-0 flex-1">
-            <MapCanvas tracks={tracks} markers={markers} players={players} colorOf={colorOf} onAddMarker={openAdd} resetKey={`${serverId ?? 'none'}:${dim}`} />
-          </div>
-          <div className="hidden w-52 shrink-0 space-y-4 lg:block">
-            <PageSurface title="玩家" bodyClassName="p-2 max-h-[280px] overflow-y-auto">
-              {players.length === 0 ? (
-                <p className="px-1 py-2 text-xs text-muted-foreground">暂无</p>
-              ) : (
-                players.map((p) => (
-                  <button key={p.uuid} type="button" className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-sm hover:bg-muted" onClick={() => toggle(p.uuid)}>
-                    <span className={cn('h-3 w-3 shrink-0 rounded-full border', selected.has(p.uuid) ? '' : 'opacity-25')} style={{ backgroundColor: colorOf(p.uuid) }} />
-                    <span className="min-w-0 flex-1 truncate">{p.name}</span>
-                  </button>
-                ))
-              )}
-            </PageSurface>
-            <PageSurface
-              title={`地标 · ${dimLabel}`}
-              bodyClassName="p-2 max-h-[300px] overflow-y-auto"
-              actions={
-                <Button type="button" variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs" onClick={() => openAdd(0, 0)}>
-                  <Plus className="h-3.5 w-3.5" />添加
-                </Button>
-              }
-            >
-              {markers.length === 0 ? (
-                <p className="px-1 py-2 text-xs text-muted-foreground">该维度暂无地标。点击地图空白处即可添加。</p>
-              ) : (
-                markers.map((m) => (
-                  <div key={m.id} className="group flex items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-muted">
-                    <span className="shrink-0 text-base leading-none">{m.icon}</span>
-                    <button type="button" className="min-w-0 flex-1 text-left" onClick={() => openEdit(m)}>
-                      <span className="block truncate font-medium" style={{ color: m.color }}>{m.name}</span>
-                      <span className="block truncate text-[11px] text-muted-foreground">{Math.round(m.x)}, {Math.round(m.y)}, {Math.round(m.z)}</span>
-                    </button>
-                    <button type="button" className="shrink-0 text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100" onClick={() => removeMarker(m)}>
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                ))
-              )}
-            </PageSurface>
-          </div>
-        </div>
+        <Tabs defaultValue="tracks" className="space-y-3">
+          <TabsList>
+            <TabsTrigger value="tracks">轨迹/地标</TabsTrigger>
+            <TabsTrigger value="bluemap">真实地图</TabsTrigger>
+          </TabsList>
+          <TabsContent value="tracks" className="mt-0">
+            {rconEnabled === false ? (
+              <PageSurface>
+                <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
+                  <p className="text-sm font-medium">该实例未启用 RCON</p>
+                  <p className="max-w-md text-xs text-muted-foreground">
+                    轨迹采集通过 RCON 实时获取玩家位置。请到「实例 → 编辑 → 高级」开启 RCON,并重启实例后生效。(真实地图无需 RCON)
+                  </p>
+                </div>
+              </PageSurface>
+            ) : (
+              <div className="flex gap-4">
+                <div className="min-w-0 flex-1">
+                  <MapCanvas tracks={tracks} markers={markers} players={players} colorOf={colorOf} onAddMarker={openAdd} resetKey={`${serverId ?? 'none'}:${dim}`} />
+                </div>
+                <div className="hidden w-52 shrink-0 space-y-4 lg:block">
+                  <PageSurface title="玩家" bodyClassName="p-2 max-h-[280px] overflow-y-auto">
+                    {players.length === 0 ? (
+                      <p className="px-1 py-2 text-xs text-muted-foreground">暂无</p>
+                    ) : (
+                      players.map((p) => (
+                        <button key={p.uuid} type="button" className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-sm hover:bg-muted" onClick={() => toggle(p.uuid)}>
+                          <span className={cn('h-3 w-3 shrink-0 rounded-full border', selected.has(p.uuid) ? '' : 'opacity-25')} style={{ backgroundColor: colorOf(p.uuid) }} />
+                          <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                        </button>
+                      ))
+                    )}
+                  </PageSurface>
+                  <PageSurface
+                    title={`地标 · ${dimLabel}`}
+                    bodyClassName="p-2 max-h-[300px] overflow-y-auto"
+                    actions={
+                      <Button type="button" variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs" onClick={() => openAdd(0, 0)}>
+                        <Plus className="h-3.5 w-3.5" />添加
+                      </Button>
+                    }
+                  >
+                    {markers.length === 0 ? (
+                      <p className="px-1 py-2 text-xs text-muted-foreground">该维度暂无地标。点击地图空白处即可添加。</p>
+                    ) : (
+                      markers.map((m) => (
+                        <div key={m.id} className="group flex items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-muted">
+                          <span className="shrink-0 text-base leading-none">{m.icon}</span>
+                          <button type="button" className="min-w-0 flex-1 text-left" onClick={() => openEdit(m)}>
+                            <span className="block truncate font-medium" style={{ color: m.color }}>{m.name}</span>
+                            <span className="block truncate text-[11px] text-muted-foreground">{Math.round(m.x)}, {Math.round(m.y)}, {Math.round(m.z)}</span>
+                          </button>
+                          <button type="button" className="shrink-0 text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100" onClick={() => removeMarker(m)}>
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </PageSurface>
+                </div>
+              </div>
+            )}
+          </TabsContent>
+          <TabsContent value="bluemap" className="mt-0">
+            <BluemapView serverId={serverId} />
+          </TabsContent>
+        </Tabs>
       )}
 
       <Dialog open={formOpen} onOpenChange={(o) => (!o ? setFormOpen(false) : undefined)}>

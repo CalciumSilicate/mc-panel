@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .. import worldmap
+from .. import bluemap, worldmap
 from ..database import get_db
 from ..deps import require_admin, require_auth
 from ..mcdr import manager
@@ -128,3 +129,45 @@ def delete_marker(
     db.delete(m)
     db.commit()
     return {"ok": True}
+
+
+# ---------- 真实地图(BlueMap CLI 渲染 + 托管)----------
+_MC_TYPES = ("vanilla", "fabric", "forge")
+
+
+@router.post("/{server_id}/bluemap/render")
+def bluemap_render(
+    server_id: int,
+    _: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> dict:
+    server = _server(db, server_id)
+    if server.server_type not in _MC_TYPES:
+        raise HTTPException(status_code=400, detail="仅 Minecraft 实例支持 BlueMap")
+    bluemap.render_bg(server_id)
+    return bluemap.status(server_id)
+
+
+@router.get("/{server_id}/bluemap/status")
+def bluemap_status(
+    server_id: int,
+    _: object = Depends(require_auth),
+    db: Session = Depends(get_db),
+) -> dict:
+    _server(db, server_id)
+    return bluemap.status(server_id)
+
+
+@router.get("/{server_id}/bluemap/web/{path:path}")
+def bluemap_web(server_id: int, path: str = "", db: Session = Depends(get_db)):
+    """托管 BlueMap 渲染输出供 iframe 加载(不鉴权:iframe 子请求不带 token;仅只读地形)。"""
+    server = _server(db, server_id)
+    root = bluemap.webroot(server).resolve()
+    target = (root / (path or "index.html")).resolve()
+    if target != root and root not in target.parents:
+        raise HTTPException(status_code=403, detail="非法路径")
+    if target.is_dir():
+        target = target / "index.html"
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="尚未渲染或文件不存在")
+    return FileResponse(target)
