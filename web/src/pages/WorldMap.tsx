@@ -57,17 +57,22 @@ function MapCanvas({
   players,
   colorOf,
   onAddMarker,
+  resetKey,
 }: {
   tracks: Tracks
   markers: MapMarker[]
   players: MapPlayer[]
   colorOf: (uuid: string) => string
   onAddMarker: (x: number, z: number) => void
+  resetKey: string
 }) {
   const ref = useRef<HTMLCanvasElement>(null)
+  // 相机:scale=像素/格,(cx,cz)=画布中心对应的世界坐标。null=未手动调整,跟随自动取景。
+  const [cam, setCam] = useState<{ scale: number; cx: number; cz: number } | null>(null)
+  const drag = useRef<{ x: number; y: number; cx: number; cz: number; moved: boolean } | null>(null)
 
-  // 视图变换:由轨迹点 + 地标共同决定取景范围,供绘制(toPx)与点击反算(toWorld)复用。
-  const view = useMemo(() => {
+  // 数据自动取景(未手动平移/缩放时使用)
+  const fit = useMemo(() => {
     const pts: [number, number][] = []
     for (const arr of Object.values(tracks)) for (const p of arr) pts.push([p[0], p[2]])
     for (const m of markers) pts.push([m.x, m.z])
@@ -78,10 +83,38 @@ function MapCanvas({
     const cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2
     const pad = 40
     const scale = Math.min((CANVAS_W - pad * 2) / (spanX * 1.16), (CANVAS_H - pad * 2) / (spanZ * 1.16))
-    const toPx = (x: number, z: number): [number, number] => [CANVAS_W / 2 + (x - cx) * scale, CANVAS_H / 2 + (z - cz) * scale]
-    const toWorld = (px: number, py: number): [number, number] => [cx + (px - CANVAS_W / 2) / scale, cz + (py - CANVAS_H / 2) / scale]
-    return { toPx, toWorld, scale, cx, cz, spanX, spanZ }
+    return { scale, cx, cz }
   }, [tracks, markers])
+
+  // 切换实例/维度时回到自动取景
+  useEffect(() => { setCam(null) }, [resetKey])
+
+  const view = cam ?? fit
+
+  const evtPx = (clientX: number, clientY: number): [number, number] => {
+    const canvas = ref.current
+    if (!canvas) return [0, 0]
+    const rect = canvas.getBoundingClientRect()
+    return [(clientX - rect.left) * (CANVAS_W / rect.width), (clientY - rect.top) * (CANVAS_H / rect.height)]
+  }
+
+  // 滚轮缩放(以光标为锚点);用 native listener 才能 preventDefault 阻止页面滚动
+  useEffect(() => {
+    const canvas = ref.current
+    if (!canvas) return
+    const onWheel = (e: globalThis.WheelEvent) => {
+      if (!view) return
+      e.preventDefault()
+      const [px, py] = evtPx(e.clientX, e.clientY)
+      const wx = view.cx + (px - CANVAS_W / 2) / view.scale
+      const wz = view.cz + (py - CANVAS_H / 2) / view.scale
+      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15
+      const scale = Math.min(Math.max(view.scale * factor, 0.02), 64)
+      setCam({ scale, cx: wx - (px - CANVAS_W / 2) / scale, cz: wz - (py - CANVAS_H / 2) / scale })
+    }
+    canvas.addEventListener('wheel', onWheel, { passive: false })
+    return () => canvas.removeEventListener('wheel', onWheel)
+  }, [view])
 
   useEffect(() => {
     const canvas = ref.current
@@ -100,16 +133,17 @@ function MapCanvas({
       ctx.fillText('暂无轨迹与地标数据(点击地图可添加地标)', W / 2, H / 2)
       return
     }
-    const { toPx, scale, cx, cz } = view
+    const { scale, cx, cz } = view
+    const toPx = (x: number, z: number): [number, number] => [W / 2 + (x - cx) * scale, H / 2 + (z - cz) * scale]
 
-    // 网格(世界坐标对齐到 nice 间隔)
+    // 网格(按当前缩放自适应间隔)
     const niceStep = (span: number) => {
       const raw = span / 6
       const pow = Math.pow(10, Math.floor(Math.log10(raw)))
       const m = raw / pow
       return (m >= 5 ? 5 : m >= 2 ? 2 : 1) * pow
     }
-    const step = niceStep(Math.max(view.spanX, view.spanZ) * 1.16)
+    const step = niceStep(Math.max(W, H) / scale)
     ctx.strokeStyle = 'rgba(255,255,255,0.06)'
     ctx.fillStyle = 'rgba(255,255,255,0.35)'
     ctx.font = '10px monospace'
@@ -130,8 +164,7 @@ function MapCanvas({
     // 轨迹
     for (const [uuid, arr] of Object.entries(tracks)) {
       if (arr.length === 0) continue
-      const color = colorOf(uuid)
-      ctx.strokeStyle = color
+      ctx.strokeStyle = colorOf(uuid)
       ctx.lineWidth = 2
       ctx.beginPath()
       arr.forEach((p, i) => {
@@ -161,15 +194,26 @@ function MapCanvas({
     }
   }, [tracks, markers, players, colorOf, view])
 
-  const handleClick = (e: MouseEvent<HTMLCanvasElement>) => {
-    const canvas = ref.current
-    if (!canvas) return
+  const onMouseDown = (e: MouseEvent<HTMLCanvasElement>) => {
+    const [px, py] = evtPx(e.clientX, e.clientY)
+    drag.current = { x: px, y: py, cx: view?.cx ?? 0, cz: view?.cz ?? 0, moved: false }
+  }
+  const onMouseMove = (e: MouseEvent<HTMLCanvasElement>) => {
+    if (!drag.current || !view) return
+    const [px, py] = evtPx(e.clientX, e.clientY)
+    const dx = px - drag.current.x, dy = py - drag.current.y
+    if (!drag.current.moved && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) drag.current.moved = true
+    if (drag.current.moved) {
+      setCam({ scale: view.scale, cx: drag.current.cx - dx / view.scale, cz: drag.current.cz - dy / view.scale })
+    }
+  }
+  const onMouseUp = (e: MouseEvent<HTMLCanvasElement>) => {
+    const d = drag.current
+    drag.current = null
+    if (!d || d.moved) return // 拖动结束,不当作点击
     if (!view) { onAddMarker(0, 0); return }
-    const rect = canvas.getBoundingClientRect()
-    const px = (e.clientX - rect.left) * (CANVAS_W / rect.width)
-    const py = (e.clientY - rect.top) * (CANVAS_H / rect.height)
-    const [wx, wz] = view.toWorld(px, py)
-    onAddMarker(Math.round(wx), Math.round(wz))
+    const [px, py] = evtPx(e.clientX, e.clientY)
+    onAddMarker(Math.round(view.cx + (px - CANVAS_W / 2) / view.scale), Math.round(view.cz + (py - CANVAS_H / 2) / view.scale))
   }
 
   return (
@@ -177,8 +221,11 @@ function MapCanvas({
       ref={ref}
       width={CANVAS_W}
       height={CANVAS_H}
-      onClick={handleClick}
-      className="w-full cursor-crosshair rounded-lg border border-border/70"
+      onMouseDown={onMouseDown}
+      onMouseMove={onMouseMove}
+      onMouseUp={onMouseUp}
+      onMouseLeave={() => { drag.current = null }}
+      className="w-full cursor-grab touch-none select-none rounded-lg border border-border/70 active:cursor-grabbing"
     />
   )
 }
@@ -345,7 +392,7 @@ export default function WorldMap() {
   return (
     <PageShell
       title="世界地图"
-      description="玩家位置轨迹(俯视 x-z,RCON 实时采集)+ 自定义地标。点击地图可在该处添加地标。"
+      description="玩家位置轨迹(俯视 x-z,RCON 实时采集)+ 自定义地标。拖动平移、滚轮缩放,单击地图可在该处添加地标。"
       width="6xl"
       actions={
         mcServers.length > 0 ? (
@@ -384,7 +431,7 @@ export default function WorldMap() {
       ) : (
         <div className="flex gap-4">
           <div className="min-w-0 flex-1">
-            <MapCanvas tracks={tracks} markers={markers} players={players} colorOf={colorOf} onAddMarker={openAdd} />
+            <MapCanvas tracks={tracks} markers={markers} players={players} colorOf={colorOf} onAddMarker={openAdd} resetKey={`${serverId ?? 'none'}:${dim}`} />
           </div>
           <div className="hidden w-52 shrink-0 space-y-4 lg:block">
             <PageSurface title="玩家" bodyClassName="p-2 max-h-[280px] overflow-y-auto">
