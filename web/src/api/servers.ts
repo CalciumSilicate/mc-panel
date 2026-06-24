@@ -165,10 +165,23 @@ export function updateServer(id: number, patch: ServerUpdateInput): Promise<Serv
   })
 }
 
-export function setRcon(id: number, enabled: boolean): Promise<ServerSummary> {
+export interface RconInfo {
+  enabled: boolean
+  port: number
+  password: string
+}
+
+export function getRconInfo(id: number): Promise<RconInfo> {
+  return apiRequest<RconInfo>(`/servers/${id}/rcon`)
+}
+
+export function setRcon(
+  id: number,
+  body: { enabled: boolean; port?: number; password?: string },
+): Promise<ServerSummary> {
   return apiRequest<ServerSummary>(`/servers/${id}/rcon`, {
     method: 'POST',
-    body: JSON.stringify({ enabled }),
+    body: JSON.stringify(body),
   })
 }
 

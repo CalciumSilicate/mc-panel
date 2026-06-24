@@ -415,6 +415,23 @@ def _alloc_rcon_port(db: Session, settings) -> int:
 
 class RconBody(BaseModel):
     enabled: bool
+    port: int | None = None  # 不传=保留/自动分配
+    password: str | None = None  # 不传=保留/自动生成
+
+
+@router.get("/{server_id}/rcon")
+def get_rcon(
+    server_id: int,
+    _: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> dict:
+    """返回实例 RCON 配置(含密码,仅管理员可见)。"""
+    server = _get_server_or_404(db, server_id)
+    return {
+        "enabled": bool(server.rcon_enabled),
+        "port": server.rcon_port,
+        "password": server.rcon_password,
+    }
 
 
 @router.post("/{server_id}/rcon", response_model=ServerSummary)
@@ -425,19 +442,29 @@ def set_rcon(
     db: Session = Depends(get_db),
 ) -> ServerSummary:
     """开/关实例 RCON(面板托管:自动分配端口 + 随机密码,写入 server.properties)。
-    世界地图位置采集依赖 RCON;改动需重启实例后生效。"""
+    可选传 port/password 自定义。世界地图位置采集依赖 RCON;改动需重启实例后生效。"""
     server = _get_server_or_404(db, server_id)
     ensure_not_protected(server)
     if server.server_type not in ("vanilla", "fabric", "forge"):
         raise HTTPException(status_code=400, detail="仅 Minecraft 实例支持 RCON")
 
     if body.enabled:
-        if not server.rcon_port:
+        if body.port is not None:
+            if not (1 <= body.port <= 65535):
+                raise HTTPException(status_code=400, detail="RCON 端口须在 1-65535")
+            if body.port == server.port:
+                raise HTTPException(status_code=400, detail="RCON 端口不能与游戏端口相同")
+            if _port_in_use(db, body.port, exclude_id=server_id):
+                raise HTTPException(status_code=409, detail=f"端口 {body.port} 已被其它实例使用")
+            server.rcon_port = body.port
+        elif not server.rcon_port:
             port = _alloc_rcon_port(db, get_settings_row(db))
             if not port:
                 raise HTTPException(status_code=409, detail="无可用 RCON 端口,请检查端口段设置")
             server.rcon_port = port
-        if not server.rcon_password:
+        if body.password is not None:
+            server.rcon_password = body.password.strip() or secrets.token_hex(16)
+        elif not server.rcon_password:
             server.rcon_password = secrets.token_hex(16)
         server.rcon_enabled = True
         db.commit()

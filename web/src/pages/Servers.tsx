@@ -19,6 +19,8 @@ import {
   listServers,
   forceStopServer,
   reinstallServer,
+  getRconInfo,
+  type RconInfo,
   setRcon,
   startServer,
   stopServer,
@@ -379,6 +381,7 @@ export default function Servers() {
           setEditServer(null)
           refresh()
         }}
+        onChanged={refresh}
       />
 
       <ManageGroupsDialog
@@ -720,12 +723,14 @@ function EditServerDialog({
   onClose,
   onSaved,
   onDeleted,
+  onChanged,
 }: {
   server: ServerSummary | null
   groups: ServerGroup[]
   onClose: () => void
   onSaved: () => void
   onDeleted: () => void
+  onChanged: () => void
 }) {
   const confirm = useConfirm()
   const { showToast } = useGlobalToast()
@@ -756,6 +761,9 @@ function EditServerDialog({
   const [submitting, setSubmitting] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [rconBusy, setRconBusy] = useState(false)
+  const [rconInfo, setRconInfo] = useState<RconInfo | null>(null)
+  const [rconPort, setRconPort] = useState('')
+  const [rconPwd, setRconPwd] = useState('')
 
   const open = server !== null
   const running = server?.status === 'running' || server?.status === 'starting'
@@ -805,6 +813,11 @@ function EditServerDialog({
     getSettings()
       .then((s) => setJavaInstalls(s.java_installs))
       .catch(() => setJavaInstalls([]))
+    if (!isVelocity) {
+      getRconInfo(server.id)
+        .then((r) => { setRconInfo(r); setRconPort(r.port ? String(r.port) : ''); setRconPwd(r.password) })
+        .catch(() => setRconInfo(null))
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, server?.id])
 
@@ -880,13 +893,34 @@ function EditServerDialog({
     }
   }
 
+  const reloadRcon = async (id: number) => {
+    const info = await getRconInfo(id)
+    setRconInfo(info); setRconPort(info.port ? String(info.port) : ''); setRconPwd(info.password)
+  }
+
   const doToggleRcon = async (enabled: boolean) => {
     if (!server) return
     setRconBusy(true)
     try {
-      await setRcon(server.id, enabled)
+      await setRcon(server.id, { enabled })
+      await reloadRcon(server.id)
+      onChanged() // 刷新列表但不关闭对话框
       showToast('success', enabled ? '已启用 RCON,重启实例后生效' : '已关闭 RCON')
-      onSaved()
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : '操作失败')
+    } finally {
+      setRconBusy(false)
+    }
+  }
+
+  const applyRcon = async () => {
+    if (!server) return
+    setRconBusy(true)
+    try {
+      await setRcon(server.id, { enabled: true, port: Number(rconPort) || undefined, password: rconPwd.trim() || undefined })
+      await reloadRcon(server.id)
+      onChanged()
+      showToast('success', '已更新 RCON,重启实例后生效')
     } catch (err) {
       showToast('error', err instanceof ApiError ? err.message : '操作失败')
     } finally {
@@ -1214,17 +1248,33 @@ function EditServerDialog({
               <Input id="edit-priority" type="number" value={autostartPriority} onChange={(e) => setAutostartPriority(e.target.value)} placeholder="0" />
             </div>
             {!isVelocity ? (
-              <label className="flex items-center justify-between gap-4 rounded-md border border-border/70 px-3 py-2.5">
-                <span>
-                  <span className="block text-sm font-medium">启用 RCON</span>
-                  <span className="block text-xs text-muted-foreground">
-                    世界地图玩家位置采集依赖 RCON。开启后自动分配端口与随机密码,
-                    {server?.rcon_enabled && server?.rcon_port ? `当前端口 ${server.rcon_port},` : ''}
-                    改动需重启实例后生效。
+              <div className="space-y-2 rounded-md border border-border/70 px-3 py-2.5">
+                <label className="flex items-center justify-between gap-4">
+                  <span>
+                    <span className="block text-sm font-medium">启用 RCON</span>
+                    <span className="block text-xs text-muted-foreground">世界地图位置采集依赖 RCON。开启后自动分配端口+随机密码,改动需重启实例后生效。</span>
                   </span>
-                </span>
-                <Switch checked={server?.rcon_enabled ?? false} disabled={rconBusy || locked} onCheckedChange={doToggleRcon} />
-              </label>
+                  <Switch checked={rconInfo?.enabled ?? false} disabled={rconBusy || locked} onCheckedChange={doToggleRcon} />
+                </label>
+                {rconInfo?.enabled ? (
+                  <div className="space-y-2 pt-1">
+                    <div className="grid grid-cols-[100px_1fr] gap-2">
+                      <div className="space-y-1">
+                        <Label htmlFor="rcon-port" className="text-xs">端口</Label>
+                        <Input id="rcon-port" type="number" value={rconPort} onChange={(e) => setRconPort(e.target.value)} className="h-8" />
+                      </div>
+                      <div className="space-y-1">
+                        <Label htmlFor="rcon-pwd" className="text-xs">密码</Label>
+                        <Input id="rcon-pwd" value={rconPwd} onChange={(e) => setRconPwd(e.target.value)} className="h-8 font-mono text-xs" />
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <Button type="button" variant="ghost" size="sm" className="h-7 text-xs" disabled={rconBusy} onClick={() => { void navigator.clipboard?.writeText(rconPwd); showToast('success', '密码已复制') }}>复制密码</Button>
+                      <Button type="button" variant="outline" size="sm" className="h-7 text-xs" disabled={rconBusy} onClick={applyRcon}>应用端口/密码</Button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
             ) : null}
             <label className="flex items-center justify-between gap-4 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2.5">
               <span>

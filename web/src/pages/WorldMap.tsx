@@ -216,13 +216,35 @@ export default function WorldMap() {
     if (serverId === null && mcServers.length > 0) setServerId(mcServers[0].id)
   }, [mcServers, serverId])
 
+  const seenRef = useRef<Set<string>>(new Set())
+
+  const loadPlayers = async () => {
+    if (serverId === null) return
+    try {
+      const r = await getMapPlayers(serverId)
+      setScannedAt(r.scanned_at)
+      setRconEnabled(r.rcon_enabled)
+      setPlayers(r.players)
+      // 新出现的玩家默认选中;已取消勾选的保留不动
+      setSelected((cur) => {
+        const next = new Set(cur)
+        for (const p of r.players) {
+          if (!seenRef.current.has(p.uuid)) { seenRef.current.add(p.uuid); next.add(p.uuid) }
+        }
+        return next
+      })
+    } catch {
+      // 忽略瞬时失败
+    }
+  }
+
   useEffect(() => {
     if (serverId === null) return
+    seenRef.current = new Set()
     setRconEnabled(null)
-    getMapPlayers(serverId).then((r) => {
-      setPlayers(r.players); setScannedAt(r.scanned_at); setSelected(new Set(r.players.map((p) => p.uuid)))
-      setRconEnabled(r.rcon_enabled)
-    }).catch(() => undefined)
+    setSelected(new Set())
+    loadPlayers()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverId])
 
   const loadTracks = async () => {
@@ -250,12 +272,21 @@ export default function WorldMap() {
   }
   useEffect(() => { loadMarkers() }, [serverId, dim]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 实时刷新:采集每 60s 一次,这里每 30s 拉一次玩家与轨迹
+  useEffect(() => {
+    if (serverId === null) return
+    const t = window.setInterval(() => { loadPlayers(); loadTracks() }, 30000)
+    return () => window.clearInterval(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serverId, dim, hours, selected])
+
   const doRefresh = async () => {
     if (serverId === null) return
     setLoading(true)
     try {
       const r = await refreshMap(serverId)
       setScannedAt(r.scanned_at)
+      await loadPlayers()
       await loadTracks()
       showToast('success', '已刷新')
     } catch (err) {
