@@ -59,21 +59,41 @@ export function deleteMarker(serverId: number, markerId: number): Promise<{ ok: 
   return apiRequest(`/map/${serverId}/markers/${markerId}`, { method: 'DELETE' })
 }
 
-export interface BluemapStatus {
+export interface BasemapStatus {
   status: 'idle' | 'rendering' | 'done' | 'error'
   message: string
   rendered_at: number | null
 }
 
-export function getBluemapStatus(serverId: number): Promise<BluemapStatus> {
-  return apiRequest(`/map/${serverId}/bluemap/status`)
+export interface BasemapMeta {
+  available: boolean
+  minX?: number
+  minZ?: number
+  widthPx?: number
+  heightPx?: number
+  blocksPerPixel?: number
 }
 
-export function renderBluemap(serverId: number): Promise<BluemapStatus> {
-  return apiRequest(`/map/${serverId}/bluemap/render`, { method: 'POST', body: '{}' })
+// 维度 key(minecraft:xxx)→ basemap 维度 id
+export const DIM_ID: Record<string, string> = {
+  'minecraft:overworld': 'overworld',
+  'minecraft:the_nether': 'nether',
+  'minecraft:the_end': 'the_end',
 }
 
-// iframe 直链(不经 apiRequest:浏览器直接加载,带 /api 前缀走同源/代理)
-export function bluemapWebUrl(serverId: number): string {
-  return `/api/map/${serverId}/bluemap/web/`
+export function getBasemapStatus(serverId: number): Promise<BasemapStatus> {
+  return apiRequest(`/map/${serverId}/basemap/status`)
+}
+
+export function renderBasemap(serverId: number): Promise<BasemapStatus> {
+  return apiRequest(`/map/${serverId}/basemap/render`, { method: 'POST', body: '{}' })
+}
+
+export function getBasemapMeta(serverId: number, dimId: string): Promise<BasemapMeta> {
+  return apiRequest(`/map/${serverId}/basemap/${dimId}/meta`)
+}
+
+// <img> 直链(浏览器直接加载,不经 apiRequest)
+export function basemapImageUrl(serverId: number, dimId: string): string {
+  return `/api/map/${serverId}/basemap/${dimId}/image.png`
 }

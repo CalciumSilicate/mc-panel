@@ -6,7 +6,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .. import bluemap, worldmap
+from .. import basemap, worldmap
 from ..database import get_db
 from ..deps import require_admin, require_auth
 from ..mcdr import manager
@@ -131,50 +131,61 @@ def delete_marker(
     return {"ok": True}
 
 
-# ---------- 真实地图(BlueMap CLI 渲染 + 托管)----------
+# ---------- 真实地形底图(unmined 渲染 → 前端 canvas 底图)----------
 _MC_TYPES = ("vanilla", "fabric", "forge")
+_DIM_IDS = ("overworld", "nether", "the_end")
 
 
-@router.post("/{server_id}/bluemap/render")
-async def bluemap_render(
+@router.post("/{server_id}/basemap/render")
+async def basemap_render(
     server_id: int,
     _: str = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> dict:
     server = _server(db, server_id)
     if server.server_type not in _MC_TYPES:
-        raise HTTPException(status_code=400, detail="仅 Minecraft 实例支持 BlueMap")
-    bluemap.render_bg(server_id)
-    return bluemap.status(server_id)
+        raise HTTPException(status_code=400, detail="仅 Minecraft 实例支持底图渲染")
+    basemap.render_bg(server_id)
+    return basemap.status(server_id)
 
 
-@router.get("/{server_id}/bluemap/status")
-def bluemap_status(
+@router.get("/{server_id}/basemap/status")
+def basemap_status(
     server_id: int,
     _: object = Depends(require_auth),
     db: Session = Depends(get_db),
 ) -> dict:
     _server(db, server_id)
-    return bluemap.status(server_id)
+    return basemap.status(server_id)
 
 
-@router.get("/{server_id}/bluemap/web/{path:path}")
-def bluemap_web(server_id: int, path: str = "", db: Session = Depends(get_db)):
-    """托管 BlueMap 渲染输出供 iframe 加载(不鉴权:iframe 子请求不带 token;仅只读地形)。"""
+@router.get("/{server_id}/basemap/{dim}/meta")
+def basemap_meta(
+    server_id: int,
+    dim: str,
+    _: object = Depends(require_auth),
+    db: Session = Depends(get_db),
+) -> dict:
+    if dim not in _DIM_IDS:
+        raise HTTPException(status_code=404, detail="维度不存在")
     server = _server(db, server_id)
-    root = bluemap.webroot(server).resolve()
-    target = (root / (path or "index.html")).resolve()
-    if target != root and root not in target.parents:
-        raise HTTPException(status_code=403, detail="非法路径")
-    if target.is_dir():
-        target = target / "index.html"
-    if target.is_file():
-        return FileResponse(target)
-    # BlueMap 把部分数据(textures/tiles 等)以 .gz 压缩存储,请求原名时返回 gzip 内容
-    gz = target.with_name(target.name + ".gz")
-    if gz.is_file():
-        import mimetypes
+    mp = basemap.meta_path(server, dim)
+    if not mp.is_file():
+        return {"available": False}
+    import json as _json
 
-        media = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
-        return FileResponse(gz, media_type=media, headers={"Content-Encoding": "gzip"})
-    raise HTTPException(status_code=404, detail="尚未渲染或文件不存在")
+    data = _json.loads(mp.read_text(encoding="utf-8"))
+    data["available"] = True
+    return data
+
+
+@router.get("/{server_id}/basemap/{dim}/image.png")
+def basemap_image(server_id: int, dim: str, db: Session = Depends(get_db)):
+    """托管底图 PNG 供 <img> 加载(不鉴权:img 请求不带 token;仅只读地形图)。"""
+    if dim not in _DIM_IDS:
+        raise HTTPException(status_code=404, detail="维度不存在")
+    server = _server(db, server_id)
+    p = basemap.png_path(server, dim)
+    if not p.is_file():
+        raise HTTPException(status_code=404, detail="尚未渲染")
+    return FileResponse(p, media_type="image/png")

@@ -1,26 +1,28 @@
 import { type MouseEvent, useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { Image as ImageIcon, Plus, RefreshCw, Trash2 } from 'lucide-react'
 
 import { ApiError } from '@/api/client'
 import {
+  type BasemapMeta,
+  type BasemapStatus,
+  DIM_ID,
   type MapMarker,
   type MapPlayer,
+  basemapImageUrl,
   createMarker,
   deleteMarker,
+  getBasemapMeta,
+  getBasemapStatus,
   getMapPlayers,
   getMapPositions,
   getMarkers,
   refreshMap,
+  renderBasemap,
   updateMarker,
-  type BluemapStatus,
-  bluemapWebUrl,
-  getBluemapStatus,
-  renderBluemap,
 } from '@/api/worldmap'
 import { type ServerSummary, listServers } from '@/api/servers'
 import { PageShell, PageSurface } from '@/components/layout/PageScaffold'
 import { Button } from '@/components/ui/button'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Dialog,
   DialogContent,
@@ -63,6 +65,8 @@ function MapCanvas({
   colorOf,
   onAddMarker,
   resetKey,
+  basemapImg,
+  basemapMeta,
 }: {
   tracks: Tracks
   markers: MapMarker[]
@@ -70,17 +74,30 @@ function MapCanvas({
   colorOf: (uuid: string) => string
   onAddMarker: (x: number, z: number) => void
   resetKey: string
+  basemapImg: HTMLImageElement | null
+  basemapMeta: BasemapMeta | null
 }) {
   const ref = useRef<HTMLCanvasElement>(null)
   // 相机:scale=像素/格,(cx,cz)=画布中心对应的世界坐标。null=未手动调整,跟随自动取景。
   const [cam, setCam] = useState<{ scale: number; cx: number; cz: number } | null>(null)
   const drag = useRef<{ x: number; y: number; cx: number; cz: number; moved: boolean } | null>(null)
 
-  // 数据自动取景(未手动平移/缩放时使用)
+  // 底图覆盖的世界范围(用于取景与绘制)
+  const bm = basemapMeta?.available && basemapMeta.minX != null
+    ? {
+        minX: basemapMeta.minX,
+        minZ: basemapMeta.minZ as number,
+        w: (basemapMeta.widthPx as number) * (basemapMeta.blocksPerPixel as number),
+        h: (basemapMeta.heightPx as number) * (basemapMeta.blocksPerPixel as number),
+      }
+    : null
+
+  // 数据自动取景(未手动平移/缩放时使用);底图、轨迹、地标共同决定范围
   const fit = useMemo(() => {
     const pts: [number, number][] = []
     for (const arr of Object.values(tracks)) for (const p of arr) pts.push([p[0], p[2]])
     for (const m of markers) pts.push([m.x, m.z])
+    if (bm) { pts.push([bm.minX, bm.minZ]); pts.push([bm.minX + bm.w, bm.minZ + bm.h]) }
     if (pts.length === 0) return null
     let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity
     for (const [x, z] of pts) { minX = Math.min(minX, x); maxX = Math.max(maxX, x); minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z) }
@@ -89,7 +106,7 @@ function MapCanvas({
     const pad = 40
     const scale = Math.min((CANVAS_W - pad * 2) / (spanX * 1.16), (CANVAS_H - pad * 2) / (spanZ * 1.16))
     return { scale, cx, cz }
-  }, [tracks, markers])
+  }, [tracks, markers, bm?.minX, bm?.minZ, bm?.w, bm?.h]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 切换实例/维度时回到自动取景
   useEffect(() => { setCam(null) }, [resetKey])
@@ -135,13 +152,20 @@ function MapCanvas({
       ctx.fillStyle = '#888'
       ctx.font = '14px sans-serif'
       ctx.textAlign = 'center'
-      ctx.fillText('暂无轨迹与地标数据(点击地图可添加地标)', W / 2, H / 2)
+      ctx.fillText('暂无底图/轨迹/地标(点击地图可添加地标,或点「渲染底图」生成地形)', W / 2, H / 2)
       return
     }
     const { scale, cx, cz } = view
     const toPx = (x: number, z: number): [number, number] => [W / 2 + (x - cx) * scale, H / 2 + (z - cz) * scale]
 
-    // 网格(按当前缩放自适应间隔)
+    // 真实地形底图(unmined 渲染的俯视彩图;最底层)
+    if (basemapImg && bm) {
+      const [dx, dy] = toPx(bm.minX, bm.minZ)
+      ctx.imageSmoothingEnabled = false  // 像素风,放大不糊
+      ctx.drawImage(basemapImg, dx, dy, bm.w * scale, bm.h * scale)
+    }
+
+    // 网格(半透明,叠在底图上作参考)
     const niceStep = (span: number) => {
       const raw = span / 6
       const pow = Math.pow(10, Math.floor(Math.log10(raw)))
@@ -149,8 +173,8 @@ function MapCanvas({
       return (m >= 5 ? 5 : m >= 2 ? 2 : 1) * pow
     }
     const step = niceStep(Math.max(W, H) / scale)
-    ctx.strokeStyle = 'rgba(255,255,255,0.06)'
-    ctx.fillStyle = 'rgba(255,255,255,0.35)'
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)'
+    ctx.fillStyle = 'rgba(255,255,255,0.45)'
     ctx.font = '10px monospace'
     ctx.lineWidth = 1
     const startX = Math.ceil((cx - W / 2 / scale) / step) * step
@@ -194,10 +218,12 @@ function MapCanvas({
       ctx.textAlign = 'center'
       ctx.font = '14px sans-serif'
       ctx.fillText(m.icon || '📍', px, py - 9)
-      ctx.fillStyle = '#e5e7eb'; ctx.font = '11px sans-serif'
-      ctx.fillText(m.name, px, py + 18)
+      ctx.fillStyle = '#fff'
+      ctx.font = 'bold 11px sans-serif'
+      ctx.strokeStyle = 'rgba(0,0,0,0.7)'; ctx.lineWidth = 2.5
+      ctx.strokeText(m.name, px, py + 18); ctx.fillText(m.name, px, py + 18)
     }
-  }, [tracks, markers, players, colorOf, view])
+  }, [tracks, markers, players, colorOf, view, basemapImg, bm?.minX, bm?.minZ, bm?.w, bm?.h]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const onMouseDown = (e: MouseEvent<HTMLCanvasElement>) => {
     const [px, py] = evtPx(e.clientX, e.clientY)
@@ -235,76 +261,6 @@ function MapCanvas({
   )
 }
 
-function BluemapView({ serverId }: { serverId: number | null }) {
-  const { showToast } = useGlobalToast()
-  const [st, setSt] = useState<BluemapStatus | null>(null)
-  const [iframeKey, setIframeKey] = useState(0)
-
-  useEffect(() => {
-    if (serverId === null) { setSt(null); return }
-    getBluemapStatus(serverId).then(setSt).catch(() => setSt(null))
-  }, [serverId])
-
-  // 渲染中时轮询状态,done 后刷新 iframe
-  useEffect(() => {
-    if (serverId === null || st?.status !== 'rendering') return
-    const t = window.setInterval(() => {
-      getBluemapStatus(serverId).then((s) => {
-        setSt(s)
-        if (s.status === 'done') setIframeKey((k) => k + 1)
-      }).catch(() => undefined)
-    }, 3000)
-    return () => window.clearInterval(t)
-  }, [serverId, st?.status])
-
-  const doRender = async () => {
-    if (serverId === null) return
-    try {
-      setSt(await renderBluemap(serverId))
-      showToast('success', '已开始渲染')
-    } catch (err) {
-      showToast('error', err instanceof ApiError ? err.message : '渲染失败')
-    }
-  }
-
-  if (serverId === null) return null
-  const rendering = st?.status === 'rendering'
-  const rendered = st?.rendered_at ?? null
-  return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-3">
-        <Button type="button" onClick={doRender} disabled={rendering} className="gap-2">
-          <RefreshCw className={rendering ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
-          {rendering ? '渲染中…' : rendered ? '重新渲染' : '渲染地图'}
-        </Button>
-        <span className="text-xs text-muted-foreground">
-          {rendering
-            ? 'BlueMap 渲染中(首次会下载资源并渲染全图,可能数分钟)…'
-            : st?.status === 'error'
-              ? `失败:${st.message}`
-              : rendered
-                ? `上次渲染 ${fmtRefreshed(rendered)}`
-                : '尚未渲染。点「渲染地图」生成真实地形(BlueMap)。'}
-        </span>
-      </div>
-      {rendered ? (
-        <iframe
-          key={iframeKey}
-          src={bluemapWebUrl(serverId)}
-          title="BlueMap"
-          className="h-[620px] w-full rounded-lg border border-border/70"
-        />
-      ) : (
-        <div className="flex h-[620px] w-full items-center justify-center rounded-lg border border-border/70 bg-muted/20 text-center">
-          <p className="max-w-md px-6 text-xs text-muted-foreground">
-            还没有渲染。BlueMap 会读取该实例的存档生成 3D 真实地形(只读,不改世界)。需要该实例已生成并保存过区块。
-          </p>
-        </div>
-      )}
-    </div>
-  )
-}
-
 type MarkerForm = { id: number | null; name: string; x: string; y: string; z: string; icon: string; color: string }
 const EMPTY_FORM: MarkerForm = { id: null, name: '', x: '0', y: '64', z: '0', icon: '📍', color: '#f87171' }
 
@@ -325,6 +281,9 @@ export default function WorldMap() {
   const [form, setForm] = useState<MarkerForm>(EMPTY_FORM)
   const [formOpen, setFormOpen] = useState(false)
   const [savingMarker, setSavingMarker] = useState(false)
+  const [basemapImg, setBasemapImg] = useState<HTMLImageElement | null>(null)
+  const [basemapMeta, setBasemapMeta] = useState<BasemapMeta | null>(null)
+  const [basemapStatus, setBasemapStatus] = useState<BasemapStatus | null>(null)
 
   const dimLabel = DIMS.find((d) => d.key === dim)?.label ?? dim
 
@@ -394,6 +353,45 @@ export default function WorldMap() {
   }
   useEffect(() => { loadMarkers() }, [serverId, dim]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 底图:加载当前实例+维度的 PNG(若已渲染)
+  const loadBasemap = async () => {
+    if (serverId === null) { setBasemapImg(null); setBasemapMeta(null); return }
+    const dimId = DIM_ID[dim]
+    if (!dimId) { setBasemapImg(null); setBasemapMeta(null); return }
+    try {
+      const m = await getBasemapMeta(serverId, dimId)
+      if (!m.available) { setBasemapImg(null); setBasemapMeta(null); return }
+      setBasemapMeta(m)
+      const img = new Image()
+      img.onload = () => setBasemapImg(img)
+      img.onerror = () => setBasemapImg(null)
+      img.src = `${basemapImageUrl(serverId, dimId)}?t=${Date.now()}`
+    } catch {
+      setBasemapImg(null); setBasemapMeta(null)
+    }
+  }
+  useEffect(() => { setBasemapImg(null); loadBasemap() }, [serverId, dim]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 底图渲染状态:初始拉取
+  useEffect(() => {
+    if (serverId === null) { setBasemapStatus(null); return }
+    getBasemapStatus(serverId).then(setBasemapStatus).catch(() => setBasemapStatus(null))
+  }, [serverId])
+
+  // 渲染中轮询,done 后重载底图
+  useEffect(() => {
+    if (serverId === null || basemapStatus?.status !== 'rendering') return
+    const t = window.setInterval(() => {
+      getBasemapStatus(serverId).then((s) => {
+        setBasemapStatus(s)
+        if (s.status === 'done') { showToast('success', '底图已渲染'); loadBasemap() }
+        if (s.status === 'error') showToast('error', `底图渲染失败:${s.message}`)
+      }).catch(() => undefined)
+    }, 3000)
+    return () => window.clearInterval(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serverId, basemapStatus?.status])
+
   // 实时刷新:采集每 60s 一次,这里每 30s 拉一次玩家与轨迹
   useEffect(() => {
     if (serverId === null) return
@@ -415,6 +413,16 @@ export default function WorldMap() {
       showToast('error', err instanceof ApiError ? err.message : '刷新失败')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const doRenderBasemap = async () => {
+    if (serverId === null) return
+    try {
+      setBasemapStatus(await renderBasemap(serverId))
+      showToast('success', '已开始渲染底图(读存档生成俯视地形,不改世界)')
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : '渲染失败')
     }
   }
 
@@ -464,10 +472,12 @@ export default function WorldMap() {
     }
   }
 
+  const basemapRendering = basemapStatus?.status === 'rendering'
+
   return (
     <PageShell
       title="世界地图"
-      description="玩家位置轨迹(俯视 x-z,RCON 实时采集)+ 自定义地标。拖动平移、滚轮缩放,单击地图可在该处添加地标。"
+      description="真实地形底图(unmined)+ 玩家轨迹(RCON 实时)+ 自定义地标,叠在一张图上。拖动平移、滚轮缩放,单击地图可在该处添加地标。"
       width="6xl"
       actions={
         mcServers.length > 0 ? (
@@ -485,6 +495,9 @@ export default function WorldMap() {
               <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
               <SelectContent>{WINDOWS.map((w) => (<SelectItem key={w.key} value={String(w.key)}>{w.label}</SelectItem>))}</SelectContent>
             </Select>
+            <Button type="button" variant="outline" className="gap-2" onClick={doRenderBasemap} disabled={basemapRendering}>
+              <ImageIcon className={basemapRendering ? 'h-4 w-4 animate-pulse' : 'h-4 w-4'} />{basemapRendering ? '渲染底图中…' : '渲染底图'}
+            </Button>
             <Button type="button" variant="outline" className="gap-2" onClick={doRefresh} disabled={loading || rconEnabled === false}>
               <RefreshCw className={loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />刷新
             </Button>
@@ -495,73 +508,70 @@ export default function WorldMap() {
       {mcServers.length === 0 ? (
         <PageSurface><p className="py-10 text-center text-sm text-muted-foreground">还没有 MC 服务器实例。</p></PageSurface>
       ) : (
-        <Tabs defaultValue="tracks" className="space-y-3">
-          <TabsList>
-            <TabsTrigger value="tracks">轨迹/地标</TabsTrigger>
-            <TabsTrigger value="bluemap">真实地图</TabsTrigger>
-          </TabsList>
-          <TabsContent value="tracks" className="mt-0">
+        <div className="flex gap-4">
+          <div className="min-w-0 flex-1 space-y-2">
             {rconEnabled === false ? (
-              <PageSurface>
-                <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
-                  <p className="text-sm font-medium">该实例未启用 RCON</p>
-                  <p className="max-w-md text-xs text-muted-foreground">
-                    轨迹采集通过 RCON 实时获取玩家位置。请到「实例 → 编辑 → 高级」开启 RCON,并重启实例后生效。(真实地图无需 RCON)
-                  </p>
-                </div>
-              </PageSurface>
-            ) : (
-              <div className="flex gap-4">
-                <div className="min-w-0 flex-1">
-                  <MapCanvas tracks={tracks} markers={markers} players={players} colorOf={colorOf} onAddMarker={openAdd} resetKey={`${serverId ?? 'none'}:${dim}`} />
-                </div>
-                <div className="hidden w-52 shrink-0 space-y-4 lg:block">
-                  <PageSurface title="玩家" bodyClassName="p-2 max-h-[280px] overflow-y-auto">
-                    {players.length === 0 ? (
-                      <p className="px-1 py-2 text-xs text-muted-foreground">暂无</p>
-                    ) : (
-                      players.map((p) => (
-                        <button key={p.uuid} type="button" className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-sm hover:bg-muted" onClick={() => toggle(p.uuid)}>
-                          <span className={cn('h-3 w-3 shrink-0 rounded-full border', selected.has(p.uuid) ? '' : 'opacity-25')} style={{ backgroundColor: colorOf(p.uuid) }} />
-                          <span className="min-w-0 flex-1 truncate">{p.name}</span>
-                        </button>
-                      ))
-                    )}
-                  </PageSurface>
-                  <PageSurface
-                    title={`地标 · ${dimLabel}`}
-                    bodyClassName="p-2 max-h-[300px] overflow-y-auto"
-                    actions={
-                      <Button type="button" variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs" onClick={() => openAdd(0, 0)}>
-                        <Plus className="h-3.5 w-3.5" />添加
-                      </Button>
-                    }
-                  >
-                    {markers.length === 0 ? (
-                      <p className="px-1 py-2 text-xs text-muted-foreground">该维度暂无地标。点击地图空白处即可添加。</p>
-                    ) : (
-                      markers.map((m) => (
-                        <div key={m.id} className="group flex items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-muted">
-                          <span className="shrink-0 text-base leading-none">{m.icon}</span>
-                          <button type="button" className="min-w-0 flex-1 text-left" onClick={() => openEdit(m)}>
-                            <span className="block truncate font-medium" style={{ color: m.color }}>{m.name}</span>
-                            <span className="block truncate text-[11px] text-muted-foreground">{Math.round(m.x)}, {Math.round(m.y)}, {Math.round(m.z)}</span>
-                          </button>
-                          <button type="button" className="shrink-0 text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100" onClick={() => removeMarker(m)}>
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      ))
-                    )}
-                  </PageSurface>
-                </div>
-              </div>
-            )}
-          </TabsContent>
-          <TabsContent value="bluemap" className="mt-0">
-            <BluemapView serverId={serverId} />
-          </TabsContent>
-        </Tabs>
+              <p className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-1.5 text-xs text-amber-700 dark:text-amber-300">
+                该实例未启用 RCON,暂无玩家轨迹。到「实例 → 编辑 → 高级」开启可采集轨迹(底图与地标不受影响)。
+              </p>
+            ) : null}
+            {basemapStatus?.status === 'error' ? (
+              <p className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-1.5 text-xs text-destructive">
+                底图渲染失败:{basemapStatus.message}
+              </p>
+            ) : null}
+            <MapCanvas
+              tracks={tracks}
+              markers={markers}
+              players={players}
+              colorOf={colorOf}
+              onAddMarker={openAdd}
+              resetKey={`${serverId ?? 'none'}:${dim}`}
+              basemapImg={basemapImg}
+              basemapMeta={basemapMeta}
+            />
+          </div>
+          <div className="hidden w-52 shrink-0 space-y-4 lg:block">
+            <PageSurface title="玩家" bodyClassName="p-2 max-h-[280px] overflow-y-auto">
+              {players.length === 0 ? (
+                <p className="px-1 py-2 text-xs text-muted-foreground">暂无</p>
+              ) : (
+                players.map((p) => (
+                  <button key={p.uuid} type="button" className="flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-sm hover:bg-muted" onClick={() => toggle(p.uuid)}>
+                    <span className={cn('h-3 w-3 shrink-0 rounded-full border', selected.has(p.uuid) ? '' : 'opacity-25')} style={{ backgroundColor: colorOf(p.uuid) }} />
+                    <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                  </button>
+                ))
+              )}
+            </PageSurface>
+            <PageSurface
+              title={`地标 · ${dimLabel}`}
+              bodyClassName="p-2 max-h-[300px] overflow-y-auto"
+              actions={
+                <Button type="button" variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs" onClick={() => openAdd(0, 0)}>
+                  <Plus className="h-3.5 w-3.5" />添加
+                </Button>
+              }
+            >
+              {markers.length === 0 ? (
+                <p className="px-1 py-2 text-xs text-muted-foreground">该维度暂无地标。点击地图空白处即可添加。</p>
+              ) : (
+                markers.map((m) => (
+                  <div key={m.id} className="group flex items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-muted">
+                    <span className="shrink-0 text-base leading-none">{m.icon}</span>
+                    <button type="button" className="min-w-0 flex-1 text-left" onClick={() => openEdit(m)}>
+                      <span className="block truncate font-medium" style={{ color: m.color }}>{m.name}</span>
+                      <span className="block truncate text-[11px] text-muted-foreground">{Math.round(m.x)}, {Math.round(m.y)}, {Math.round(m.z)}</span>
+                    </button>
+                    <button type="button" className="shrink-0 text-muted-foreground opacity-0 hover:text-destructive group-hover:opacity-100" onClick={() => removeMarker(m)}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))
+              )}
+            </PageSurface>
+          </div>
+        </div>
       )}
 
       <Dialog open={formOpen} onOpenChange={(o) => (!o ? setFormOpen(false) : undefined)}>
