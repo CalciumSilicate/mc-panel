@@ -136,7 +136,7 @@ _MC_TYPES = ("vanilla", "fabric", "forge")
 
 
 @router.post("/{server_id}/bluemap/render")
-def bluemap_render(
+async def bluemap_render(
     server_id: int,
     _: str = Depends(require_admin),
     db: Session = Depends(get_db),
@@ -168,6 +168,13 @@ def bluemap_web(server_id: int, path: str = "", db: Session = Depends(get_db)):
         raise HTTPException(status_code=403, detail="非法路径")
     if target.is_dir():
         target = target / "index.html"
-    if not target.is_file():
-        raise HTTPException(status_code=404, detail="尚未渲染或文件不存在")
-    return FileResponse(target)
+    if target.is_file():
+        return FileResponse(target)
+    # BlueMap 把部分数据(textures/tiles 等)以 .gz 压缩存储,请求原名时返回 gzip 内容
+    gz = target.with_name(target.name + ".gz")
+    if gz.is_file():
+        import mimetypes
+
+        media = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
+        return FileResponse(gz, media_type=media, headers={"Content-Encoding": "gzip"})
+    raise HTTPException(status_code=404, detail="尚未渲染或文件不存在")

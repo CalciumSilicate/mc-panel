@@ -192,7 +192,7 @@ _bg_tasks: set[asyncio.Task] = set()
 
 
 def render_bg(server_id: int) -> None:
-    """后台启动渲染(保留 task 引用避免被 GC)。"""
-    task = asyncio.get_event_loop().create_task(render(server_id))
+    """后台启动渲染(保留 task 引用避免被 GC)。须在事件循环线程内调用(async 路由)。"""
+    task = asyncio.create_task(render(server_id))
     _bg_tasks.add(task)
     task.add_done_callback(_bg_tasks.discard)
