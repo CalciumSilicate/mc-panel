@@ -37,9 +37,9 @@ _DOWNLOAD = {
 
 # (map id, unmined --dimension 值, region 相对 world 根的子目录)
 _DIMS = [
-    ("overworld", 0, ""),
-    ("nether", -1, "DIM-1"),
-    ("the_end", 1, "DIM1"),
+    ("overworld", 0, ["region", "dimensions/minecraft/overworld/region"]),
+    ("nether", -1, ["DIM-1/region", "dimensions/minecraft/the_nether/region"]),
+    ("the_end", 1, ["DIM1/region", "dimensions/minecraft/the_end/region"]),
 ]
 
 # server_id -> {status: idle|rendering|done|error, message, rendered_at}
@@ -51,6 +51,15 @@ _RECT_RE = re.compile(r"World rectangle:\s*rr\(\s*(-?\d+);\s*(-?\d+);\s*(\d+)\s*
 _SIZE_RE = re.compile(r"Output image size:\s*(\d+)\s*x\s*(\d+)")
 # 渲染进度行:"Rendering region rr(0; 0), 1 / 4, 25.00%"
 _PROG_RE = re.compile(r"(\d+)\s*/\s*(\d+),\s*([\d.]+)\s*%")
+
+
+def _has_region(world: Path, cands: list[str]) -> bool:
+    """候选 region 目录里任一有 .mca 即认为该维度有区块(兼容新旧世界布局)。"""
+    for c in cands:
+        d = world / c
+        if d.exists() and any(d.glob("*.mca")):
+            return True
+    return False
 
 
 def _basemap_dir(server: Server) -> Path:
@@ -76,7 +85,7 @@ def status(server_id: int) -> dict:
     finally:
         db.close()
     if server is not None:
-        for dim_id, _num, _sub in _DIMS:
+        for dim_id, _num, _cands in _DIMS:
             p = png_path(server, dim_id)
             if p.is_file():
                 return {"status": "done", "message": "", "rendered_at": p.stat().st_mtime}
@@ -208,9 +217,8 @@ async def render(server_id: int) -> None:
             # 先收集已生成区块的维度
             todo = [
                 (dim_id, dim_num)
-                for dim_id, dim_num, sub in _DIMS
-                if ((world / sub / "region") if sub else (world / "region")).exists()
-                and any((((world / sub / "region") if sub else (world / "region"))).glob("*.mca"))
+                for dim_id, dim_num, cands in _DIMS
+                if _has_region(world, cands)
             ]
             if not todo:
                 raise RuntimeError("该实例没有任何已生成区块的维度,请先进服探索并保存世界")
