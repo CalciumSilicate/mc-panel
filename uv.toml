@@ -1,0 +1,10 @@
+# 项目级 uv 配置(随仓库走,新机器 clone 即带,无需再手配全局)。
+
+# 只用系统已安装的 Python,绝不让 uv 下载 managed Python(国内太慢)。
+# 新机器需自行预装对应版本的 Python(见 .python-version)。
+python-preference = "only-system"
+
+# PyPI 镜像:清华大学 TUNA
+[[index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
