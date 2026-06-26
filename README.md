@@ -37,22 +37,18 @@ mc-panel/
 
 ```bash
 # 一次性准备后端环境
-cd backend
-python -m venv .venv
-# Windows: .venv\Scripts\activate    其他: source .venv/bin/activate
-pip install -r requirements.txt
+uv sync
 
 # 回到项目根,统一启动(前端产物不存在时会自动 npm install + build)
-cd ..
-python run.py
+uv run python run.py
 ```
 
 然后访问 **http://localhost:16824** 即可 —— 前端与 `/api` 同源,由后端一并提供。
 
 `run.py` 参数:
-- `python run.py` —— 前端 `web/dist` 不存在时自动构建再启动
-- `python run.py --build` —— 强制重新构建前端再启动(改了前端代码后用)
-- `python run.py --no-build` —— 跳过构建(产物须已存在)
+- `uv run python run.py` —— 前端 `web/dist` 不存在时自动构建再启动
+- `uv run python run.py --build` —— 强制重新构建前端再启动(改了前端代码后用)
+- `uv run python run.py --no-build` —— 跳过构建(产物须已存在)
 
 说明:
 - 健康检查:`GET http://localhost:16824/api/health` → `{"status":"ok"}`
@@ -103,7 +99,27 @@ python run.py
 同一进程已托管前端,直接用统一入口即可:
 
 ```bash
-python run.py --build            # 构建前端并启动(:16824 同时提供页面与 API)
+uv run python run.py --build            # 构建前端并启动(:16824 同时提供页面与 API)
 ```
 
 如需多 worker / 反代,可单独跑 `uvicorn app.main:app --host 0.0.0.0 --port 16824`(前端产物须已 `npm run build`);此时前端由后端托管,Nginx 仅做反代与 TLS 即可。同源部署可收紧后端 CORS。
+
+## 数据备份与恢复(换电脑搬家)
+
+`data/`(实例、世界、存档、数据库 `panel.db`、密钥 `secret.key`)是运行时状态,体积大且含密钥,**不进 git**。用 `backup.py` 把它打成一个可携带的 `.zip`,换电脑拷过去即可恢复:
+
+```bash
+# 创建备份(默认输出到仓库同级的 ../mc-panel-backups;默认排除可重新下载的 jar 缓存)
+uv run python backup.py create
+# 输出到指定目录(网盘 / 移动硬盘),换电脑最省事
+uv run python backup.py create --out D:/网盘/mc-panel-backups
+
+# 列出已有备份
+uv run python backup.py list
+
+# 恢复(请先停止面板与所有实例;旧 data 会自动留底为 data.bak-<时间戳>)
+uv run python backup.py restore mcpanel-backup-20260626-130542.zip
+```
+
+- 备份目录优先级:`--out` > 环境变量 `MCPANEL_BACKUP_DIR` > 仓库同级的 `../mc-panel-backups`。
+- 恢复会校验是否本工具备份(认 `backup-info.json`),非法 zip 会被拒绝;恢复前把旧 `data/` 原子改名留底,不直接覆盖。
