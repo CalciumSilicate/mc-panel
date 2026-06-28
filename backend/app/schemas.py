@@ -306,3 +306,10 @@ class SettingsUpdate(BaseModel):
     onebot_token: str | None = None
     # Java 安装池路径列表(整体替换);为 None 时不改动
     java_paths: list[str] | None = None
+
+
+class OneBotPrivateTestRequest(BaseModel):
+    ws_url: str = Field(min_length=1, max_length=255)
+    token: str = Field(default="", max_length=255)
+    qq: str = Field(min_length=1, max_length=32)
+    message: str = Field(default="MC Panel QQ 互通测试消息", min_length=1, max_length=300)

@@ -42,6 +42,19 @@ export interface SettingsPatch {
   java_paths?: string[]
 }
 
+export interface OneBotPrivateTestInput {
+  ws_url: string
+  token?: string
+  qq: string
+  message?: string
+}
+
+export interface OneBotPrivateTestResult {
+  ok: boolean
+  status?: string
+  retcode?: number
+}
+
 export function getSettings(): Promise<PanelSettings> {
   return apiRequest<PanelSettings>('/settings')
 }
@@ -50,5 +63,12 @@ export function updateSettings(patch: SettingsPatch): Promise<PanelSettings> {
   return apiRequest<PanelSettings>('/settings', {
     method: 'PATCH',
     body: JSON.stringify(patch),
+  })
+}
+
+export function testOneBotPrivate(input: OneBotPrivateTestInput): Promise<OneBotPrivateTestResult> {
+  return apiRequest<OneBotPrivateTestResult>('/settings/onebot/test-private', {
+    method: 'POST',
+    body: JSON.stringify(input),
   })
 }

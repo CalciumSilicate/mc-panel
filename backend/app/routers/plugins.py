@@ -1,4 +1,4 @@
-"""MCDR 插件管理接口。"""
+"""MCDR plugin management routes."""
 from __future__ import annotations
 
 import asyncio
@@ -9,8 +9,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .. import jobs as jobstore
+from .. import plugin_scan
 from ..config import PLUGIN_LIBRARY
-from ..database import get_db
+from ..database import SessionLocal, get_db
 from ..deps import ensure_not_protected, get_settings_row, require_helper
 from ..mcdr import manager as mcdr_manager
 from ..models import Server
@@ -23,25 +24,35 @@ class InstallFromLibraryBody(BaseModel):
     file_name: str
 
 
+class InstallPluginBody(BaseModel):
+    plugin_id: str
+    version: str | None = None
+
+
+class CopyToBody(BaseModel):
+    targets: list[int]
+
+
 def _instance_dir(db: Session, server_id: int):
     server = db.get(Server, server_id)
     if server is None:
-        raise HTTPException(status_code=404, detail="服务器不存在")
+        raise HTTPException(status_code=404, detail="server not found")
     return mcdr_manager.instance_dir(server)
 
 
 def _writable_instance_dir(db: Session, server_id: int):
-    """变更类操作用:受保护实例直接拒绝。"""
+    """Return writable instance dir and reject protected servers."""
     server = db.get(Server, server_id)
     if server is None:
-        raise HTTPException(status_code=404, detail="服务器不存在")
+        raise HTTPException(status_code=404, detail="server not found")
     ensure_not_protected(server)
     return mcdr_manager.instance_dir(server)
 
 
-class InstallPluginBody(BaseModel):
-    plugin_id: str
-    version: str | None = None
+def _refresh_scan(db: Session, server_id: int) -> None:
+    server = db.get(Server, server_id)
+    if server is not None:
+        plugin_scan.scan_server(db, server)
 
 
 @router.get("/catalogue")
@@ -51,7 +62,7 @@ async def get_catalogue(
     try:
         return await plugins.list_catalogue(force=refresh)
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=f"获取插件库失败: {exc}")
+        raise HTTPException(status_code=502, detail=f"fetch plugin catalogue failed: {exc}") from exc
 
 
 def _copy_all(src_dir, dst_dir) -> int:
@@ -71,10 +82,6 @@ def _copy_all(src_dir, dst_dir) -> int:
     return n
 
 
-class CopyToBody(BaseModel):
-    targets: list[int]
-
-
 @router.get("/server/{server_id}")
 def list_installed(
     server_id: int, _: str = Depends(require_helper), db: Session = Depends(get_db)
@@ -84,7 +91,7 @@ def list_installed(
 
 @router.post("/server/{server_id}/copy-to")
 def copy_to(server_id: int, body: CopyToBody, _: str = Depends(require_helper), db: Session = Depends(get_db)) -> dict:
-    """把当前实例的全部 MCDR 插件复制到所选实例。"""
+    """Copy all MCDR plugins from this server to selected servers."""
     src_dir = plugins.plugins_dir(_instance_dir(db, server_id))
     results = []
     for tid in body.targets:
@@ -92,11 +99,12 @@ def copy_to(server_id: int, body: CopyToBody, _: str = Depends(require_helper), 
         if t is None or tid == server_id:
             continue
         if t.protected:
-            results.append({"name": t.name, "status": "error", "detail": "实例受保护"})
+            results.append({"name": t.name, "status": "error", "detail": "server protected"})
             continue
         try:
             n = _copy_all(src_dir, plugins.plugins_dir(mcdr_manager.instance_dir(t)))
-            results.append({"name": t.name, "status": "ok", "detail": f"已复制 {n} 个插件"})
+            plugin_scan.scan_server(db, t)
+            results.append({"name": t.name, "status": "ok", "detail": f"copied {n} plugins"})
         except Exception as exc:  # noqa: BLE001
             results.append({"name": t.name, "status": "error", "detail": str(exc)})
     return {"results": results}
@@ -114,7 +122,8 @@ def switch_plugin(
     try:
         new_name = plugins.switch_plugin(inst, file_name, enable)
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    _refresh_scan(db, server_id)
     return {"file_name": new_name, "enabled": enable}
 
 
@@ -123,6 +132,7 @@ def delete_plugin(
     server_id: int, file_name: str, _: str = Depends(require_helper), db: Session = Depends(get_db)
 ) -> dict:
     plugins.delete_plugin(_writable_instance_dir(db, server_id), file_name)
+    _refresh_scan(db, server_id)
     return {"ok": True}
 
 
@@ -138,7 +148,8 @@ async def upload_plugin(
     try:
         name = plugins.save_upload(inst, file.filename or "plugin", content)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _refresh_scan(db, server_id)
     return {"file_name": name}
 
 
@@ -155,7 +166,7 @@ async def upload_library(
     try:
         name = plugins.save_file(PLUGIN_LIBRARY, file.filename or "plugin", content)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"file_name": name}
 
 
@@ -176,7 +187,8 @@ def install_from_library(
     try:
         name = plugins.install_from_library(PLUGIN_LIBRARY, inst, body.file_name)
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    _refresh_scan(db, server_id)
     return {"file_name": name}
 
 
@@ -191,15 +203,15 @@ async def replace_library(
     _: str = Depends(require_helper),
     db: Session = Depends(get_db),
 ) -> dict:
-    """用上传的新文件替换库中该插件,并替换所有已安装它的服务器里的版本。"""
+    """Replace a library plugin file and replace installed copies across servers."""
     old = next((i for i in plugins.scan_dir(PLUGIN_LIBRARY) if i["file_name"] == file_name), None)
     if old is None:
-        raise HTTPException(status_code=404, detail="库中不存在该文件")
+        raise HTTPException(status_code=404, detail="library file not found")
     content = await file.read()
     try:
         new_name = plugins.save_file(PLUGIN_LIBRARY, file.filename or "plugin", content)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if new_name != file_name:
         plugins.delete_file(PLUGIN_LIBRARY, file_name)
 
@@ -207,7 +219,7 @@ async def replace_library(
     old_stripped = _strip_disabled(file_name)
     for server in db.scalars(select(Server)).all():
         if server.protected:
-            continue  # 受保护实例不被替换波及
+            continue
         inst = mcdr_manager.instance_dir(server)
         replaced = False
         for item in plugins.list_plugins(inst):
@@ -216,6 +228,7 @@ async def replace_library(
                 replaced = True
         if replaced:
             plugins.install_from_library(PLUGIN_LIBRARY, inst, new_name)
+            plugin_scan.scan_server(db, server)
     return {"file_name": new_name}
 
 
@@ -240,6 +253,11 @@ async def install_plugin(
                 progress=lambda d, t: jobstore.update(job_id, d, t),
             )
             jobstore.finish(job_id, result["file_name"])
+            db2 = SessionLocal()
+            try:
+                _refresh_scan(db2, server_id)
+            finally:
+                db2.close()
         except Exception as exc:  # noqa: BLE001
             jobstore.fail(job_id, str(exc))
 

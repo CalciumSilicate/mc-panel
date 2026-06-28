@@ -82,4 +82,5 @@ async def install_preset(key: str, server_id: int, _: str = Depends(require_help
     if server.server_type not in preset.server_types:
         raise HTTPException(status_code=400, detail=f"{preset.name} 仅适用于 {'/'.join(preset.server_types)} 实例")
     await mp.install(server, preset)
+    mp.scan_status(server)
     return {"ok": True}

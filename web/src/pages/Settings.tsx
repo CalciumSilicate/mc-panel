@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
-import { Plus, Save, Trash2 } from 'lucide-react'
+import { Plus, Save, Send, Trash2 } from 'lucide-react'
 
 import { ApiError } from '@/api/client'
-import { type SettingsPatch, getSettings, updateSettings } from '@/api/settings'
+import { type SettingsPatch, getSettings, testOneBotPrivate, updateSettings } from '@/api/settings'
 import { InlineLoader } from '@/components/PageLoader'
 import { PageSurface } from '@/components/layout/PageScaffold'
 import { TabbedSettingsPage } from '@/components/layout/TabbedSettingsPage'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { usePrompt } from '@/components/ui/dialog-context'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
@@ -28,9 +29,11 @@ const TABS: Array<{ key: Tab; label: string }> = [
 
 export default function Settings() {
   const { data, loading, error, refresh } = useResource(() => getSettings(), [])
+  const prompt = usePrompt()
   const [activeTab, setActiveTab] = useState<Tab>('mcdr')
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const [saving, setSaving] = useState(false)
+  const [testingOnebot, setTestingOnebot] = useState(false)
 
   const [pythonExec, setPythonExec] = useState('')
   const [javaCmd, setJavaCmd] = useState('')
@@ -100,6 +103,37 @@ export default function Settings() {
       setMessage({ type: 'error', text: err instanceof ApiError ? err.message : '保存失败' })
     } finally {
       setSaving(false)
+    }
+  }
+
+  const testOnebotPrivate = async () => {
+    const wsUrl = onebotWsUrl.trim()
+    if (!wsUrl) {
+      setMessage({ type: 'error', text: '请先填写 OneBot ws 地址' })
+      return
+    }
+    const qq = await prompt({
+      title: '发送 QQ 私聊测试',
+      label: 'QQ 号',
+      placeholder: '如 123456789',
+      confirmText: '发送',
+    })
+    const target = qq?.trim()
+    if (!target) return
+
+    setTestingOnebot(true)
+    try {
+      await testOneBotPrivate({
+        ws_url: wsUrl,
+        token: onebotToken.trim(),
+        qq: target,
+        message: 'MC Panel QQ 互通测试消息',
+      })
+      setMessage({ type: 'success', text: '测试消息已发送' })
+    } catch (err) {
+      setMessage({ type: 'error', text: err instanceof ApiError ? err.message : '测试发送失败' })
+    } finally {
+      setTestingOnebot(false)
     }
   }
 
@@ -272,6 +306,12 @@ export default function Settings() {
             <div className="space-y-2">
               <Label htmlFor="ob-token">Access Token</Label>
               <Input id="ob-token" type="password" value={onebotToken} onChange={(e) => setOnebotToken(e.target.value)} placeholder="留空表示无 token" />
+            </div>
+            <div>
+              <Button type="button" variant="outline" className="gap-2" onClick={testOnebotPrivate} disabled={testingOnebot || !onebotWsUrl.trim()}>
+                <Send className="h-4 w-4" />
+                {testingOnebot ? '发送中' : '测试私聊'}
+              </Button>
             </div>
             <p className="text-xs text-muted-foreground">QQ 群与互联组的绑定在「服务器实例 → 互联组」里设置。保存后会按新配置重连;连接状态刷新本页可见。</p>
           </div>

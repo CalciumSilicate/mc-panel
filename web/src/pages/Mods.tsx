@@ -37,7 +37,7 @@ import { useGlobalToast } from '@/components/ui/use-global-toast'
 import { useResource } from '@/lib/use-resource'
 import { cn } from '@/lib/utils'
 
-const LOADERS = ['fabric', 'forge', 'neoforge', 'quilt']
+const LOADERS = ['fabric', 'forge', 'neoforge', 'quilt', 'velocity']
 
 const stripDisabled = (n: string) => (n.endsWith('.disabled') ? n.slice(0, -'.disabled'.length) : n)
 
@@ -251,7 +251,7 @@ export default function Mods() {
           </TabsContent>
 
           <TabsContent value="modrinth" className="pt-4">
-            <ModrinthTab serverId={serverId} mcVersion={server?.mc_version ?? ''} installedIds={installedIds} onInstalled={() => installed.refresh()} onUninstall={uninstall} />
+            <ModrinthTab serverId={serverId} serverType={server?.server_type ?? ''} mcVersion={server?.mc_version ?? ''} installedIds={installedIds} onInstalled={() => installed.refresh()} onUninstall={uninstall} />
           </TabsContent>
 
           <TabsContent value="library" className="pt-4">
@@ -470,12 +470,14 @@ function LibraryTab({
 
 function ModrinthTab({
   serverId,
+  serverType,
   mcVersion,
   installedIds,
   onInstalled,
   onUninstall,
 }: {
   serverId: number
+  serverType: string
   mcVersion: string
   installedIds: Set<string>
   onInstalled: () => void
@@ -483,8 +485,8 @@ function ModrinthTab({
 }) {
   const { showToast } = useGlobalToast()
   const [query, setQuery] = useState('')
-  const [loader, setLoader] = useState('fabric')
-  const [filterMc, setFilterMc] = useState(true)
+  const [loader, setLoader] = useState(serverType === 'velocity' ? 'velocity' : 'fabric')
+  const [filterMc, setFilterMc] = useState(serverType !== 'velocity')
   const [hits, setHits] = useState<ModrinthHit[]>([])
   const [searching, setSearching] = useState(false)
   const [progress, setProgress] = useState<Record<string, number | null>>({})
@@ -499,6 +501,16 @@ function ModrinthTab({
       setSearching(false)
     }
   }
+
+  useEffect(() => {
+    if (serverType === 'velocity') {
+      setLoader('velocity')
+      setFilterMc(false)
+    } else if (loader === 'velocity') {
+      setLoader('fabric')
+      setFilterMc(true)
+    }
+  }, [serverType]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const install = async (hit: ModrinthHit) => {
     setProgress((prev) => ({ ...prev, [hit.project_id]: null }))
@@ -539,7 +551,7 @@ function ModrinthTab({
           }}
         >
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索 Modrinth 模组,回车搜索" className="pl-8" />
+          <Input value={query} onChange={(e) => setQuery(e.target.value)} className="pl-8" />
         </form>
         <Select value={loader} onValueChange={setLoader}>
           <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>

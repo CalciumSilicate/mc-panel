@@ -62,6 +62,17 @@ def _read_jar_meta(path: Path) -> dict:
                         }
                 except (ValueError, ModuleNotFoundError):
                     pass
+            if "velocity-plugin.json" in names:
+                try:
+                    data = json.loads(zf.read("velocity-plugin.json").decode("utf-8", "ignore"))
+                    return {
+                        "id": data.get("id", ""),
+                        "name": data.get("name") or data.get("id") or path.name,
+                        "version": str(data.get("version", "")),
+                        "loader": "velocity",
+                    }
+                except ValueError:
+                    pass
     except (zipfile.BadZipFile, OSError):
         pass
     return fallback
@@ -71,8 +82,13 @@ class ModManager:
     def mods_dir(self, instance_dir: Path) -> Path:
         return instance_dir / "server" / "mods"
 
-    def list_mods(self, instance_dir: Path) -> list[dict]:
-        return self.scan_dir(self.mods_dir(instance_dir))
+    def managed_dir(self, instance_dir: Path, server_type: str = "") -> Path:
+        if server_type == "velocity":
+            return instance_dir / "server" / "plugins"
+        return self.mods_dir(instance_dir)
+
+    def list_mods(self, instance_dir: Path, server_type: str = "") -> list[dict]:
+        return self.scan_dir(self.managed_dir(instance_dir, server_type))
 
     def scan_dir(self, mdir: Path) -> list[dict]:
         result: list[dict] = []
@@ -96,8 +112,8 @@ class ModManager:
             )
         return result
 
-    def switch_mod(self, instance_dir: Path, file_name: str, enable: bool) -> str:
-        mdir = self.mods_dir(instance_dir)
+    def switch_mod(self, instance_dir: Path, file_name: str, enable: bool, server_type: str = "") -> str:
+        mdir = self.managed_dir(instance_dir, server_type)
         path = mdir / file_name
         if not path.exists():
             raise FileNotFoundError("mod 不存在")
@@ -108,16 +124,16 @@ class ModManager:
         path.rename(mdir / new_name)
         return new_name
 
-    def delete_mod(self, instance_dir: Path, file_name: str) -> None:
-        self.delete_file(self.mods_dir(instance_dir), file_name)
+    def delete_mod(self, instance_dir: Path, file_name: str, server_type: str = "") -> None:
+        self.delete_file(self.managed_dir(instance_dir, server_type), file_name)
 
     def delete_file(self, directory: Path, file_name: str) -> None:
         path = directory / Path(file_name).name
         if path.exists():
             path.unlink()
 
-    def save_upload(self, instance_dir: Path, filename: str, content: bytes) -> str:
-        return self.save_file(self.mods_dir(instance_dir), filename, content)
+    def save_upload(self, instance_dir: Path, filename: str, content: bytes, server_type: str = "") -> str:
+        return self.save_file(self.managed_dir(instance_dir, server_type), filename, content)
 
     def save_file(self, directory: Path, filename: str, content: bytes) -> str:
         name = Path(filename).name
@@ -127,13 +143,13 @@ class ModManager:
         (directory / name).write_bytes(content)
         return name
 
-    def install_from_library(self, library_dir: Path, instance_dir: Path, file_name: str) -> str:
+    def install_from_library(self, library_dir: Path, instance_dir: Path, file_name: str, server_type: str = "") -> str:
         import shutil
 
         src = library_dir / Path(file_name).name
         if not src.exists():
             raise FileNotFoundError("库中不存在该文件")
-        mdir = self.mods_dir(instance_dir)
+        mdir = self.managed_dir(instance_dir, server_type)
         mdir.mkdir(parents=True, exist_ok=True)
         dest = mdir / src.name
         shutil.copyfile(src, dest)
@@ -201,12 +217,12 @@ class ModManager:
             resp.raise_for_status()
             return resp.json()
 
-    async def _download_version_file(self, version: dict, instance_dir: Path, progress) -> str:
+    async def _download_version_file(self, version: dict, instance_dir: Path, progress, server_type: str = "") -> str:
         files = version.get("files") or []
         chosen = next((f for f in files if f.get("primary")), files[0] if files else None)
         if not chosen:
             raise ValueError("该版本没有可下载文件")
-        dest = self.mods_dir(instance_dir) / Path(chosen.get("filename") or "mod.jar").name
+        dest = self.managed_dir(instance_dir, server_type) / Path(chosen.get("filename") or "mod.jar").name
         dest.parent.mkdir(parents=True, exist_ok=True)
         await jar_cache.cached_download(
             chosen["url"],
@@ -219,7 +235,7 @@ class ModManager:
         return dest.name
 
     async def install_from_modrinth(
-        self, instance_dir: Path, version_id: str, progress=None, mc_version: str | None = None
+        self, instance_dir: Path, version_id: str, progress=None, mc_version: str | None = None, server_type: str = ""
     ) -> str:
         """安装模组并递归(BFS)安装其 required 依赖(可选依赖跳过)。
 
@@ -236,7 +252,7 @@ class ModManager:
                 continue
             visited_versions.add(vid)
             version = await self._fetch_version(vid)
-            name = await self._download_version_file(version, instance_dir, progress)
+            name = await self._download_version_file(version, instance_dir, progress, server_type)
             if primary_name is None:
                 primary_name = name
             if version.get("project_id"):
