@@ -9,13 +9,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import secrets
 
 from sqlalchemy import select
 
 from .database import SessionLocal
-from .models import User
+from .models import Server, User
 
 BIND_KEYWORD = "!!bind"
 # 匹配 "<玩家名> !!bind 验证码"(兼容前缀如 [Not Secure])
@@ -62,11 +63,20 @@ def handle_line(server_id: int, line: str) -> None:
 
 
 def _reply(server_id: int, player: str, message: str) -> None:
-    """游戏内 tell 回执(尽力而为,失败忽略)。"""
+    """游戏内 tellraw 回执:优先走 RCON(不污染控制台),失败回退 stdin;尽力而为。"""
     from .mcdr import manager
 
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return
-    loop.create_task(manager.send_raw(server_id, f'tell {player} [验证] {message}'))
+    db = SessionLocal()
+    try:
+        srv = db.get(Server, server_id)
+        rcon_port = srv.rcon_port if srv and srv.rcon_enabled else 0
+        rcon_password = srv.rcon_password if srv else ""
+    finally:
+        db.close()
+    payload = json.dumps({"text": f"[验证] {message}", "color": "yellow"}, ensure_ascii=False)
+    command = f"tellraw {player} {payload}"
+    loop.create_task(manager.send_cmd(server_id, command, rcon_port, rcon_password))

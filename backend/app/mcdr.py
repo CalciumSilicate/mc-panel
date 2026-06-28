@@ -21,7 +21,7 @@ from pathlib import Path
 
 import yaml
 
-from . import jar_cache
+from . import jar_cache, rcon
 from .config import SERVERS_ROOT
 from .models import Server
 from .versions import get_server_download
@@ -725,6 +725,21 @@ class MCDRManager:
 
     async def send_command(self, server: Server, command: str) -> None:
         await self.send_raw(server.id, command)
+
+    async def send_cmd(
+        self, server_id: int, command: str, rcon_port: int = 0, rcon_password: str = ""
+    ) -> None:
+        """后台命令下发:配置了 RCON(端口+密码非空)时优先走 RCON——命令与回显
+        不经过 MCDR 的 stdin/stdout,不污染控制台与日志;RCON 不可用(未开启 /
+        未重启生效 / 连接失败)时回退到 stdin。供聊天互转、验证回执、统计刷盘等后台
+        指令使用。玩家在控制台手动输入的命令仍走 stdin(见 send_command)。"""
+        if rcon_port and rcon_password:
+            try:
+                await rcon.query("127.0.0.1", rcon_port, rcon_password, command)
+                return
+            except Exception:  # noqa: BLE001 - RCON 不可用则回退 stdin
+                pass
+        await self.send_raw(server_id, command)
 
     async def send_raw(self, server_id: int, command: str) -> None:
         proc = self._procs.get(server_id)

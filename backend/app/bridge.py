@@ -249,9 +249,19 @@ def _broadcast(server_id: int, builder, qq_text: str = "", feed: dict | None = N
 
 
 async def _safe_send(server_id: int, command: str) -> None:
+    """转发 tellraw 到目标实例:配置了 RCON 则优先走 RCON(不污染控制台/日志),
+    未开 RCON 回退 stdin。聊天互转的三个方向(跨服 / QQ→MC / 网页→MC)都经此下发。
+    目标可能刚好停了,异常忽略。"""
     from .mcdr import manager
 
+    db = SessionLocal()
     try:
-        await manager.send_raw(server_id, command)
+        srv = db.get(Server, server_id)
+        rcon_port = srv.rcon_port if srv and srv.rcon_enabled else 0
+        rcon_password = srv.rcon_password if srv else ""
+    finally:
+        db.close()
+    try:
+        await manager.send_cmd(server_id, command, rcon_port, rcon_password)
     except Exception:  # noqa: BLE001 - 目标可能刚好停了,忽略
         pass
