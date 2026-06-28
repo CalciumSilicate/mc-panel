@@ -62,6 +62,49 @@ class PlayerStat(Base):
     ts: Mapped[datetime] = mapped_column(DateTime, default=_now, index=True)
 
 
+class StatMetric(Base):
+    """Discoverable vanilla stats metric."""
+
+    __tablename__ = "stat_metrics"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    key: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    category: Mapped[str] = mapped_column(String(64), default="")
+    item: Mapped[str] = mapped_column(String(96), default="")
+    label: Mapped[str] = mapped_column(String(128), default="")
+    sample_type: Mapped[str] = mapped_column(String(16), default="normal")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, index=True)
+
+
+class PlayerMetric(Base):
+    """Time-series value for vanilla stats metrics."""
+
+    __tablename__ = "player_metrics"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    server_id: Mapped[int] = mapped_column(Integer, index=True)
+    uuid: Mapped[str] = mapped_column(String(40), index=True)
+    name: Mapped[str] = mapped_column(String(64), default="")
+    metric: Mapped[str] = mapped_column(String(128), index=True)
+    total: Mapped[int] = mapped_column(Integer, default=0)
+    delta: Mapped[int] = mapped_column(Integer, default=0)
+    sample_type: Mapped[str] = mapped_column(String(16), default="normal", index=True)
+    ts: Mapped[datetime] = mapped_column(DateTime, default=_now, index=True)
+
+
+class StatJsonRead(Base):
+    """Last processed mtime for a server/player stats JSON file."""
+
+    __tablename__ = "stat_json_reads"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    server_id: Mapped[int] = mapped_column(Integer, index=True)
+    scope: Mapped[str] = mapped_column(String(16), default="full", index=True)
+    filename: Mapped[str] = mapped_column(String(128), index=True)
+    last_mtime: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
 class PlayerPosition(Base):
     """玩家位置轨迹采样(来自 world/playerdata/<uuid>.dat 的 Pos)。仅在位置变化时插入。"""
 

@@ -395,7 +395,7 @@ export default function WorldMap() {
   // 实时刷新:采集每 60s 一次,这里每 30s 拉一次玩家与轨迹
   useEffect(() => {
     if (serverId === null) return
-    const t = window.setInterval(() => { loadPlayers(); loadTracks() }, 30000)
+    const t = window.setInterval(() => { loadPlayers(); loadTracks() }, 10000)
     return () => window.clearInterval(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverId, dim, hours, selected])

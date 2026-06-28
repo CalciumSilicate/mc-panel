@@ -21,7 +21,7 @@ from .mcdr import manager
 from .models import PlayerPosition, Server
 from .rcon import RconClient, RconError
 
-SCAN_INTERVAL = 60
+SCAN_INTERVAL = 10
 _MC_TYPES = ("vanilla", "fabric", "forge")
 _scanned_at: dict[int, float] = {}
 

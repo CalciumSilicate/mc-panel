@@ -1,49 +1,145 @@
-"""数据统计:运行中 MC 服 save-all 后读 vanilla stats JSON,精选指标去重入库。
+"""Vanilla stats ingestion and query helpers.
 
-排行榜 total=最新值,delta=最新值−窗口起点值。后台 worker 每 10 分钟扫描。
+Two cadences are used:
+- important metrics: every aligned 10-minute boundary
+- full metrics: every aligned hour
+
+All stats are read from ``server/world/stats/*.json``. Running servers are
+flushed first; RCON is preferred and stdin is used as the fallback by
+``manager.send_cmd``.
 """
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import json
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Iterable
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .database import SessionLocal
 from .mcdr import manager
-from .models import PlayerStat, Server
+from .models import PlayerMetric, Server, StatJsonRead, StatMetric
 
-SCAN_INTERVAL = 600
+IMPORTANT_INTERVAL = 600
+FULL_INTERVAL = 3600
 _MC_TYPES = ("vanilla", "fabric", "forge")
 
-# 精选指标(vanilla custom 命名空间下的 key) -> 中文名
-METRICS: dict[str, str] = {
-    "play_time": "游戏时长",
-    "deaths": "死亡次数",
-    "mob_kills": "击杀生物",
-    "player_kills": "击杀玩家",
-    "jump": "跳跃次数",
-    "damage_dealt": "造成伤害",
-    "walk_one_cm": "步行距离",
-    "sprint_one_cm": "疾跑距离",
+IMPORTANT_METRICS: dict[str, str] = {
+    "custom.play_time": "游戏时长",
+    "custom.play_one_minute": "游戏时长",
+    "custom.deaths": "死亡次数",
+    "custom.mob_kills": "击杀生物",
+    "custom.player_kills": "击杀玩家",
+    "custom.jump": "跳跃次数",
+    "custom.damage_dealt": "造成伤害",
+    "custom.walk_one_cm": "步行距离",
+    "custom.sprint_one_cm": "疾跑距离",
 }
 
-# server_id -> 上次扫描 epoch
+METRIC_ALIASES = {
+    "play_time": "custom.play_time",
+    "deaths": "custom.deaths",
+    "mob_kills": "custom.mob_kills",
+    "player_kills": "custom.player_kills",
+    "jump": "custom.jump",
+    "damage_dealt": "custom.damage_dealt",
+    "walk_one_cm": "custom.walk_one_cm",
+    "sprint_one_cm": "custom.sprint_one_cm",
+}
+
+LABELS: dict[str, str] = {
+    **IMPORTANT_METRICS,
+    "custom.leave_game": "离开游戏",
+    "custom.play_time": "游戏时长",
+    "custom.time_since_death": "距上次死亡",
+    "custom.total_world_time": "世界时间",
+    "custom.fly_one_cm": "飞行距离",
+    "custom.swim_one_cm": "游泳距离",
+    "custom.climb_one_cm": "攀爬距离",
+    "custom.fall_one_cm": "坠落距离",
+    "custom.aviate_one_cm": "鞘翅飞行距离",
+}
+
+HIGH_FREQUENCY_PATTERNS = sorted(set(IMPORTANT_METRICS) | {"custom.play_one_minute"})
+WHITELIST_PATTERNS = ["*"]
+BLACKLIST_PATTERNS: list[str] = []
+
 _scanned_at: dict[int, float] = {}
+_scope_scanned_at: dict[tuple[int, str], float] = {}
 
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _usercache(inst_server: "object") -> dict[str, str]:
-    """usercache.json: uuid(无连字符或有) -> name。"""
-    from pathlib import Path
+def _next_boundary(step: int) -> float:
+    now = int(time.time())
+    return float(((now // step) + 1) * step)
 
-    p: "Path" = inst_server / "usercache.json"
+
+async def _sleep_until_boundary(step: int) -> None:
+    await asyncio.sleep(max(0.1, _next_boundary(step) - time.time()))
+
+
+def _normalize_metric(metric: str) -> str:
+    metric = metric.strip()
+    if metric in METRIC_ALIASES:
+        return METRIC_ALIASES[metric]
+    if metric.startswith("minecraft:"):
+        try:
+            left, right = metric.split(".", 1)
+            _ns1, cat = left.split(":", 1)
+            _ns2, item = right.split(":", 1)
+            return f"{cat}.{item}"
+        except ValueError:
+            return metric
+    return metric
+
+
+def _full_key(metric: str) -> str:
+    if "." not in metric:
+        return metric
+    cat, item = metric.split(".", 1)
+    return f"minecraft:{cat}.minecraft:{item}"
+
+
+def _matches(metric: str, patterns: Iterable[str]) -> bool:
+    full = _full_key(metric)
+    return any(fnmatch.fnmatch(metric, p) or fnmatch.fnmatch(full, p) for p in patterns)
+
+
+def sample_type(metric: str) -> str:
+    metric = _normalize_metric(metric)
+    if _matches(metric, BLACKLIST_PATTERNS):
+        return "ignored"
+    if _matches(metric, HIGH_FREQUENCY_PATTERNS):
+        return "important"
+    if _matches(metric, WHITELIST_PATTERNS):
+        return "normal"
+    return "ignored"
+
+
+def _label(metric: str) -> str:
+    metric = _normalize_metric(metric)
+    if metric in LABELS:
+        return LABELS[metric]
+    if "." in metric:
+        cat, item = metric.split(".", 1)
+        return f"{cat}.{item}"
+    return metric
+
+
+def _stats_dir(server: Server) -> Path:
+    return manager.instance_dir(server) / "server" / "world" / "stats"
+
+
+def _usercache(inst_server: Path) -> dict[str, str]:
+    p = inst_server / "usercache.json"
     out: dict[str, str] = {}
     if p.exists():
         try:
@@ -56,135 +152,304 @@ def _usercache(inst_server: "object") -> dict[str, str]:
     return out
 
 
-def _read_player_metrics(stats_file) -> dict[str, int]:
-    try:
-        js = json.loads(stats_file.read_text(encoding="utf-8"))
-    except Exception:  # noqa: BLE001
-        return {}
-    custom = (js.get("stats") or {}).get("minecraft:custom") or {}
+def _metrics_from_json(js: dict) -> dict[str, int]:
     out: dict[str, int] = {}
-    for key in METRICS:
-        v = custom.get(f"minecraft:{key}")
-        if v is None and key == "play_time":
-            v = custom.get("minecraft:play_one_minute")
-        if isinstance(v, (int, float)):
-            out[key] = int(v)
+    stats = js.get("stats") or {}
+    for cat_ns, items in stats.items():
+        if not isinstance(items, dict) or ":" not in cat_ns:
+            continue
+        ns, cat = cat_ns.split(":", 1)
+        if ns != "minecraft":
+            continue
+        for item_ns, value in items.items():
+            if not isinstance(value, (int, float)) or ":" not in item_ns:
+                continue
+            item_ns_part, item = item_ns.split(":", 1)
+            if item_ns_part == "minecraft":
+                out[f"{cat}.{item}"] = int(value)
+    if "custom.play_time" not in out and "custom.play_one_minute" in out:
+        out["custom.play_time"] = out["custom.play_one_minute"]
     return out
 
 
-def _last_value(db: Session, server_id: int, uuid: str, metric: str) -> int | None:
+def _read_mtime(db: Session, server_id: int, scope: str, filename: str) -> StatJsonRead | None:
+    return db.execute(
+        select(StatJsonRead).where(
+            StatJsonRead.server_id == server_id,
+            StatJsonRead.scope == scope,
+            StatJsonRead.filename == filename,
+        )
+    ).scalar_one_or_none()
+
+
+def _mark_read(db: Session, server_id: int, scope: str, filename: str, mtime: int) -> None:
+    row = _read_mtime(db, server_id, scope, filename)
+    if row is None:
+        row = StatJsonRead(server_id=server_id, scope=scope, filename=filename, last_mtime=mtime, updated_at=_now())
+        db.add(row)
+    else:
+        row.last_mtime = mtime
+        row.updated_at = _now()
+
+
+def _last_total(db: Session, server_id: int, uuid: str, metric: str) -> int | None:
     row = db.execute(
-        select(PlayerStat.value)
-        .where(PlayerStat.server_id == server_id, PlayerStat.uuid == uuid, PlayerStat.metric == metric)
-        .order_by(PlayerStat.ts.desc())
+        select(PlayerMetric.total)
+        .where(PlayerMetric.server_id == server_id, PlayerMetric.uuid == uuid, PlayerMetric.metric == metric)
+        .order_by(PlayerMetric.ts.desc())
         .limit(1)
     ).first()
-    return row[0] if row else None
+    return int(row[0]) if row else None
 
 
-def scan_server(server: Server) -> None:
-    inst_server = manager.instance_dir(server) / "server"
-    stats_dir = inst_server / "world" / "stats"
+def _upsert_metric_dim(db: Session, metric: str, stype: str) -> None:
+    cat, item = metric.split(".", 1) if "." in metric else ("custom", metric)
+    row = db.execute(select(StatMetric).where(StatMetric.key == metric)).scalar_one_or_none()
+    if row is None:
+        db.add(
+            StatMetric(
+                key=metric,
+                category=cat,
+                item=item,
+                label=_label(metric),
+                sample_type=stype,
+                updated_at=_now(),
+            )
+        )
+    else:
+        row.label = row.label or _label(metric)
+        row.sample_type = stype
+        row.updated_at = _now()
+
+
+def scan_server(server: Server, scope: str = "important", target_ts: datetime | None = None) -> int:
+    stats_dir = _stats_dir(server)
     if not stats_dir.exists():
         _scanned_at[server.id] = time.time()
-        return
-    names = _usercache(inst_server)
+        _scope_scanned_at[(server.id, scope)] = _scanned_at[server.id]
+        return 0
+
+    wanted = {"important"} if scope == "important" else {"important", "normal"}
+    names = _usercache(manager.instance_dir(server) / "server")
     db = SessionLocal()
+    written = 0
     try:
-        now = _now()
-        for f in stats_dir.glob("*.json"):
+        ts = target_ts or _now()
+        for f in sorted(stats_dir.glob("*.json")):
+            mtime = int(f.stat().st_mtime)
+            read_row = _read_mtime(db, server.id, scope, f.name)
+            if read_row is not None and mtime <= int(read_row.last_mtime or 0):
+                continue
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001
+                _mark_read(db, server.id, scope, f.name, mtime)
+                continue
+
             uuid = f.stem.replace("-", "").lower()
             name = names.get(uuid, uuid[:8])
-            for metric, value in _read_player_metrics(f).items():
-                if _last_value(db, server.id, uuid, metric) == value:
-                    continue  # 去重:值未变化不插入
-                db.add(PlayerStat(server_id=server.id, uuid=uuid, name=name, metric=metric, value=value, ts=now))
+            for metric, total in _metrics_from_json(data).items():
+                stype = sample_type(metric)
+                _upsert_metric_dim(db, metric, stype)
+                if stype not in wanted:
+                    continue
+                prev = _last_total(db, server.id, uuid, metric)
+                delta = 0 if prev is None else total - prev
+                if prev == total:
+                    continue
+                db.add(
+                    PlayerMetric(
+                        server_id=server.id,
+                        uuid=uuid,
+                        name=name,
+                        metric=metric,
+                        total=total,
+                        delta=delta,
+                        sample_type=stype,
+                        ts=ts,
+                    )
+                )
+                written += 1
+            _mark_read(db, server.id, scope, f.name, mtime)
         db.commit()
     finally:
         db.close()
     _scanned_at[server.id] = time.time()
+    _scope_scanned_at[(server.id, scope)] = _scanned_at[server.id]
+    return written
 
 
-async def scan_server_async(server: Server) -> None:
-    # 运行中先 save-all 落盘,再读
+async def scan_server_async(server: Server, scope: str = "important", target_ts: datetime | None = None) -> int:
     if manager.is_running(server.id):
         try:
-            await manager.send_raw(server.id, "save-all flush")
-            await asyncio.sleep(2)
+            rcon_port = server.rcon_port if server.rcon_enabled else 0
+            await manager.send_cmd(server.id, "save-all flush", rcon_port, server.rcon_password)
+            await asyncio.sleep(2 if scope == "important" else 1)
         except Exception:  # noqa: BLE001
             pass
-    await asyncio.to_thread(scan_server, server)
+    return await asyncio.to_thread(scan_server, server, scope, target_ts)
 
 
-async def scan_all() -> None:
+async def scan_all(scope: str = "important", target_ts: datetime | None = None) -> None:
     db = SessionLocal()
     try:
         servers = [s for s in db.scalars(select(Server)).all() if s.server_type in _MC_TYPES]
     finally:
         db.close()
-    for s in servers:
+    for server in servers:
         try:
-            await scan_server_async(s)
+            await scan_server_async(server, scope, target_ts)
         except Exception:  # noqa: BLE001
             pass
 
 
-async def worker(interval: int = SCAN_INTERVAL) -> None:
+async def worker() -> None:
+    important_task = asyncio.create_task(_cadence_loop("important", IMPORTANT_INTERVAL))
+    full_task = asyncio.create_task(_cadence_loop("full", FULL_INTERVAL))
+    try:
+        await asyncio.gather(important_task, full_task)
+    finally:
+        important_task.cancel()
+        full_task.cancel()
+
+
+async def _cadence_loop(scope: str, interval: int) -> None:
+    await _sleep_until_boundary(interval)
     while True:
+        boundary = datetime.fromtimestamp(int(time.time()) - (int(time.time()) % interval), timezone.utc)
         try:
-            await scan_all()
+            await scan_all(scope, boundary)
         except Exception:  # noqa: BLE001
             pass
-        await asyncio.sleep(interval)
+        await _sleep_until_boundary(interval)
 
 
-def scanned_at(server_id: int) -> float | None:
+def scanned_at(server_id: int, scope: str | None = None) -> float | None:
+    if scope:
+        return _scope_scanned_at.get((server_id, scope))
     return _scanned_at.get(server_id)
 
 
-def leaderboard(db: Session, server_id: int, metric: str, window: str) -> list[dict]:
-    """window: total / 24h / 7d / 30d。"""
+def list_metrics(db: Session, q: str = "", category: str = "all", limit: int = 200) -> list[dict]:
+    rows = db.scalars(select(StatMetric).order_by(StatMetric.sample_type, StatMetric.key)).all()
+    if not rows:
+        for metric in sorted(set(HIGH_FREQUENCY_PATTERNS)):
+            rows.append(
+                StatMetric(
+                    key=metric,
+                    category=metric.split(".", 1)[0],
+                    item=metric.split(".", 1)[1],
+                    label=_label(metric),
+                    sample_type=sample_type(metric),
+                )
+            )
+    ql = q.strip().lower()
+    out = []
+    for row in rows:
+        if category != "all" and row.sample_type != category:
+            continue
+        if ql and ql not in row.key.lower() and ql not in (row.label or "").lower():
+            continue
+        out.append({"key": row.key, "label": row.label or _label(row.key), "sample_type": row.sample_type})
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _metric_list(metrics: Iterable[str]) -> list[str]:
+    return [_normalize_metric(m) for m in metrics if m.strip()]
+
+
+def leaderboard(db: Session, server_id: int, metrics: list[str], window: str, limit: int = 100) -> list[dict]:
+    metric_keys = _metric_list(metrics)
+    if not metric_keys:
+        return []
     rows = db.execute(
-        select(PlayerStat.uuid, PlayerStat.name, PlayerStat.value, PlayerStat.ts)
-        .where(PlayerStat.server_id == server_id, PlayerStat.metric == metric)
-        .order_by(PlayerStat.uuid, PlayerStat.ts.asc())
+        select(PlayerMetric.uuid, PlayerMetric.name, PlayerMetric.metric, PlayerMetric.total, PlayerMetric.delta, PlayerMetric.ts)
+        .where(PlayerMetric.server_id == server_id, PlayerMetric.metric.in_(metric_keys))
+        .order_by(PlayerMetric.uuid, PlayerMetric.metric, PlayerMetric.ts.asc())
     ).all()
-    # 按 uuid 聚合:latest 值 + 窗口起点值
-    by_uuid: dict[str, list] = {}
-    for uuid, name, value, ts in rows:
-        by_uuid.setdefault(uuid, []).append((ts, value, name))
     cutoff = None
     if window != "total":
-        hours = {"24h": 24, "7d": 168, "30d": 720}.get(window, 24)
+        hours = {"24h": 24, "7d": 168, "30d": 720, "1y": 8760}.get(window, 24)
         cutoff = _now() - timedelta(hours=hours)
-    out = []
-    for uuid, series in by_uuid.items():
-        latest_ts, latest_val, name = series[-1]
+
+    by_player: dict[str, dict] = {}
+    by_key: dict[tuple[str, str], list] = {}
+    for uuid, name, metric, total, delta, ts in rows:
+        by_player.setdefault(uuid, {"uuid": uuid, "name": name, "value": 0})
+        by_key.setdefault((uuid, metric), []).append((ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc), total, delta))
+
+    for (uuid, _metric), series in by_key.items():
+        if not series:
+            continue
         if cutoff is None:
-            val = latest_val
+            value = series[-1][1]
         else:
-            # 窗口起点:cutoff 之前最后一条(没有则用最早一条)
-            base = series[0][1]
-            for ts, v, _n in series:
-                tsv = ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
-                if tsv <= cutoff:
-                    base = v
-                else:
-                    break
-            val = latest_val - base
-        out.append({"uuid": uuid, "name": name, "value": val})
+            value = sum(int(delta or 0) for ts, _total, delta in series if ts > cutoff)
+        by_player[uuid]["value"] += int(value or 0)
+
+    out = list(by_player.values())
     out.sort(key=lambda x: -x["value"])
-    return out
+    return out[:limit]
 
 
-def series(db: Session, server_id: int, uuid: str, metric: str) -> list[tuple[float, int]]:
+def series(
+    db: Session,
+    server_id: int,
+    uuids: list[str],
+    metrics: list[str],
+    mode: str = "delta",
+    granularity: str = "10min",
+    hours: int = 24,
+) -> dict[str, list[tuple[float, int]]]:
+    metric_keys = _metric_list(metrics)
+    if not uuids or not metric_keys:
+        return {}
+    cutoff = _now() - timedelta(hours=max(1, hours))
     rows = db.execute(
-        select(PlayerStat.ts, PlayerStat.value)
-        .where(PlayerStat.server_id == server_id, PlayerStat.uuid == uuid, PlayerStat.metric == metric)
-        .order_by(PlayerStat.ts.asc())
+        select(PlayerMetric.uuid, PlayerMetric.metric, PlayerMetric.ts, PlayerMetric.total, PlayerMetric.delta)
+        .where(
+            PlayerMetric.server_id == server_id,
+            PlayerMetric.uuid.in_(uuids),
+            PlayerMetric.metric.in_(metric_keys),
+            PlayerMetric.ts >= cutoff,
+        )
+        .order_by(PlayerMetric.uuid, PlayerMetric.ts.asc())
     ).all()
-    out = []
-    for ts, v in rows:
+    step = {
+        "10min": 600,
+        "20min": 1200,
+        "30min": 1800,
+        "1h": 3600,
+        "6h": 21600,
+        "12h": 43200,
+        "24h": 86400,
+    }.get(granularity, 600)
+    buckets: dict[str, dict[int, int]] = {u: {} for u in uuids}
+    latest_total: dict[tuple[str, str], int] = {}
+    total_by_player: dict[str, int] = {u: 0 for u in uuids}
+    for uuid, metric, ts, total, delta in rows:
         tsv = ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
-        out.append((tsv.timestamp(), v))
-    return out
+        bucket = int(tsv.timestamp()) - (int(tsv.timestamp()) % step)
+        if mode == "total":
+            key = (uuid, metric)
+            prev = latest_total.get(key, 0)
+            cur = int(total or 0)
+            total_by_player[uuid] = total_by_player.get(uuid, 0) - prev + cur
+            latest_total[key] = cur
+            buckets.setdefault(uuid, {})[bucket] = total_by_player[uuid]
+        else:
+            buckets.setdefault(uuid, {})[bucket] = buckets.setdefault(uuid, {}).get(bucket, 0) + int(delta or 0)
+    return {uuid: [(float(ts), val) for ts, val in sorted(points.items())] for uuid, points in buckets.items()}
+
+
+def player_options(db: Session, server_id: int, limit: int = 200) -> list[dict]:
+    rows = db.execute(
+        select(PlayerMetric.uuid, func.max(PlayerMetric.name), func.max(PlayerMetric.ts))
+        .where(PlayerMetric.server_id == server_id)
+        .group_by(PlayerMetric.uuid)
+        .order_by(func.max(PlayerMetric.ts).desc())
+        .limit(limit)
+    ).all()
+    return [{"uuid": uuid, "name": name or uuid[:8]} for uuid, name, _ts in rows]

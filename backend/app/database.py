@@ -76,6 +76,19 @@ _COLUMN_MIGRATIONS = {
         "verify_code": "VARCHAR(16) DEFAULT ''",
         "verify_target": "VARCHAR(64) DEFAULT ''",
     },
+    "stat_metrics": {
+        "label": "VARCHAR(128) DEFAULT ''",
+        "sample_type": "VARCHAR(16) DEFAULT 'normal'",
+        "updated_at": "DATETIME",
+    },
+    "player_metrics": {
+        "name": "VARCHAR(64) DEFAULT ''",
+        "delta": "INTEGER DEFAULT 0",
+        "sample_type": "VARCHAR(16) DEFAULT 'normal'",
+    },
+    "stat_json_reads": {
+        "scope": "VARCHAR(16) DEFAULT 'full'",
+    },
 }
 
 
