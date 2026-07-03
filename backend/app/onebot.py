@@ -423,14 +423,49 @@ def _build_rank_sync(server_ids: list[int], args: list[str], limit: int) -> tupl
         db.close()
 
 
+def _build_stats_sync(server_ids: list[int], name: str, online: set[str], rng: str | None) -> tuple[bool, str]:
+    """阻塞:个人统计卡(DB + matplotlib + PIL + 拉头像),放线程池里跑。"""
+    from .qqimg.stats_builder import build_stats_png
+
+    db = SessionLocal()
+    try:
+        return build_stats_png(db, server_ids, name, online, rng)
+    finally:
+        db.close()
+
+
 async def _handle_rank_command(qq_group: int, server_ids: list[int], text: str) -> bool:
-    """处理 ## 前缀指令。命中并已回复返回 True(调用方随后 return,不转发到 MC)。"""
+    """处理 ## 前缀指令。命中并已回复返回 True(调用方随后 return,不转发到 MC)。
+
+    - ##rank ...        排行榜出图
+    - ## <玩家名> [范围]  个人统计卡出图(范围:1d/1w/1m/1y/all,默认 1m)
+    """
     from .qqimg import boards
 
     body = text[2:].strip()
     tokens = body.split()
-    if not tokens or tokens[0].lower() != "rank":
-        client.send_group(qq_group, "个人统计卡暂未上线。查排行榜请用:\n##rank 挖掘榜 / ##rank list / ##rank help")
+    if not tokens:
+        client.send_group(qq_group, "用法:\n##rank <榜单>  查排行榜(##rank help)\n## <玩家名> [1d/1w/1m/1y/all]  查个人统计卡")
+        return True
+
+    if tokens[0].lower() != "rank":
+        # 个人统计卡:## <玩家名> [范围]
+        name = tokens[0]
+        rng = tokens[1].lower() if len(tokens) > 1 else None
+        online: set[str] = set()
+        try:
+            from . import bridge
+            for sid in server_ids:
+                online |= set(bridge.online_players(sid))
+        except Exception:  # noqa: BLE001
+            pass
+        loop = asyncio.get_running_loop()
+        try:
+            ok, payload = await loop.run_in_executor(None, _build_stats_sync, server_ids, name, online, rng)
+        except Exception as e:  # noqa: BLE001
+            client.send_group(qq_group, f"出图失败:{e}")
+            return True
+        client.send_group(qq_group, f"[CQ:image,file=base64://{payload}]" if ok else payload)
         return True
 
     args = tokens[1:]
