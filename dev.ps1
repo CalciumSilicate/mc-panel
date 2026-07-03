@@ -11,7 +11,11 @@ try {
   if (Test-Port 16824) { Write-Host "[skip] 后端 16824 已在运行" -ForegroundColor Yellow }
   else {
     $env:PYTHONPATH = "$repo\backend"
-    $be = Start-Process -FilePath $uv -ArgumentList 'run','uvicorn','app.main:app','--port','16824','--reload','--reload-dir','backend' `
+    # 用 watchfiles 包一层「无 --reload 的 uvicorn」来实现热重载:
+    # Windows 上 uvicorn 的 --reload 会强制 SelectorEventLoop,而它无法 create_subprocess_exec,
+    # 导致启动 MCDR 实例时抛空异常(前端见 {"error":""})。无 --reload 的 uvicorn 用 ProactorEventLoop,
+    # 可正常拉起子进程;watchfiles 负责监听 backend/ 改动后重启,兼得热重载与子进程管理。
+    $be = Start-Process -FilePath $uv -ArgumentList 'run','watchfiles','--filter','python','--target-type','command','uvicorn app.main:app --port 16824','backend' `
       -WorkingDirectory $repo -PassThru -WindowStyle Hidden `
       -RedirectStandardOutput "$repo\logs\backend.out.log" -RedirectStandardError "$repo\logs\backend.err.log"
     Write-Host "后端已启动 PID=$($be.Id)  日志: logs\backend.err.log" -ForegroundColor Cyan
