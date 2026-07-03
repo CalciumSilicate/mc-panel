@@ -459,8 +459,7 @@ def _build_playerlist_sync(server_ids: list[int]) -> tuple[bool, str]:
     finally:
         db.close()
 
-    if not servers_data:
-        return False, f"{group_name}:当前无人在线"
+    # 无人在线也出图(标题 + 共在线:0),与 asPanel 一致 —— # 始终是出图
     img = render_player_list_image(group_name, servers_data)
     buf = BytesIO()
     img.convert("RGB").save(buf, format="PNG")
