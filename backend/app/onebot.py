@@ -333,6 +333,13 @@ async def _process_group_message(payload: dict) -> None:
     if not base_url:
         base_url = f"http://localhost:{API_PORT}"
 
+    # ## 前缀:QQ 群指令(排行榜出图,照搬 asPanel);命中则回图/回文,不再转发到 MC
+    _cmd_plain = _plain(message).strip()
+    if _cmd_plain.startswith("##"):
+        server_ids = [sid for sid, _v in targets]
+        if await _handle_rank_command(qq_group, server_ids, _cmd_plain):
+            return
+
     # 先把图片下载到本地缓存(原始 url -> /api/chat/img/<name>),feed 与游戏内共用
     img_map: dict[str, str] = {}
     for seg in _seg_list(message):
@@ -386,3 +393,79 @@ async def _process_group_message(payload: dict) -> None:
         for p in bridge.online_players(sid):
             if f"@{p}".lower() in plain_low:
                 loop.create_task(bridge._safe_send(sid, f"execute at {p} run playsound minecraft:entity.experience_orb.pickup player {p}"))
+
+
+# ---------- ## 群指令:排行榜出图(照搬 asPanel) ----------
+_rank_limit: dict[int, int] = {}  # qq_group -> 榜单人数上限(内存级,默认 15)
+
+
+def _rank_help() -> str:
+    from .qqimg import boards
+    return (
+        "##rank 指令帮助:\n"
+        "- ##rank : 默认榜单(挖掘榜)\n"
+        "- ##rank list : 查看有哪些榜单\n"
+        "- ##rank <榜单名> : 例如 ##rank 在线榜(可不带“榜”字)\n"
+        "- ##rank <metric1> [metric2] ... : 自定义指标总量榜\n"
+        "- ##rank limit <数量> : 设置榜单人数上限(1~100,默认 15)\n"
+        "内置榜单:" + "，".join(boards.list_board_names())
+    )
+
+
+def _build_rank_sync(server_ids: list[int], args: list[str], limit: int) -> tuple[bool, str]:
+    """阻塞:开 DB、查库、PIL 出图、拉头像。放线程池里跑,别堵事件循环。"""
+    from .qqimg.rank_builder import build_rank_png
+
+    db = SessionLocal()
+    try:
+        return build_rank_png(db, server_ids, args, limit)
+    finally:
+        db.close()
+
+
+async def _handle_rank_command(qq_group: int, server_ids: list[int], text: str) -> bool:
+    """处理 ## 前缀指令。命中并已回复返回 True(调用方随后 return,不转发到 MC)。"""
+    from .qqimg import boards
+
+    body = text[2:].strip()
+    tokens = body.split()
+    if not tokens or tokens[0].lower() != "rank":
+        client.send_group(qq_group, "个人统计卡暂未上线。查排行榜请用:\n##rank 挖掘榜 / ##rank list / ##rank help")
+        return True
+
+    args = tokens[1:]
+    low0 = args[0].lower() if args else ""
+    if low0 in ("help", "h", "?"):
+        client.send_group(qq_group, _rank_help())
+        return True
+    if low0 == "list":
+        client.send_group(qq_group, "可用榜单:" + "，".join(boards.list_board_names()) + "\n也支持自定义指标:##rank <metric1> [metric2] ...")
+        return True
+    if low0 == "limit":
+        if len(args) < 2:
+            client.send_group(qq_group, f"当前 limit={_rank_limit.get(qq_group, 15)}(用法:##rank limit <数量>)")
+            return True
+        try:
+            n = int(args[1])
+        except Exception:  # noqa: BLE001
+            client.send_group(qq_group, "limit 必须是整数")
+            return True
+        if n < 1 or n > 100:
+            client.send_group(qq_group, "limit 范围:1~100")
+            return True
+        _rank_limit[qq_group] = n
+        client.send_group(qq_group, f"已设置 limit={n}")
+        return True
+
+    limit = _rank_limit.get(qq_group, 15)
+    loop = asyncio.get_running_loop()
+    try:
+        ok, payload = await loop.run_in_executor(None, _build_rank_sync, server_ids, args, limit)
+    except Exception as e:  # noqa: BLE001
+        client.send_group(qq_group, f"出榜失败:{e}")
+        return True
+    if ok:
+        client.send_group(qq_group, f"[CQ:image,file=base64://{payload}]")
+    else:
+        client.send_group(qq_group, payload)
+    return True
