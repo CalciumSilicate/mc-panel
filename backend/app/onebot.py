@@ -333,11 +333,12 @@ async def _process_group_message(payload: dict) -> None:
     if not base_url:
         base_url = f"http://localhost:{API_PORT}"
 
-    # ## 前缀:QQ 群指令(排行榜出图,照搬 asPanel);命中则回图/回文,不再转发到 MC
+    # QQ 群指令(照搬 asPanel):## 出图 / # 在线出图 / % 重启 / & 状态 / ^ 踢人
+    # 命中则回图/回文,不再转发到 MC
     _cmd_plain = _plain(message).strip()
-    if _cmd_plain.startswith("##"):
+    if _cmd_plain[:1] in ("#", "%", "&", "^"):
         server_ids = [sid for sid, _v in targets]
-        if await _handle_rank_command(qq_group, server_ids, _cmd_plain):
+        if await _maybe_handle_command(qq_group, server_ids, _cmd_plain):
             return
 
     # 先把图片下载到本地缓存(原始 url -> /api/chat/img/<name>),feed 与游戏内共用
@@ -393,6 +394,192 @@ async def _process_group_message(payload: dict) -> None:
         for p in bridge.online_players(sid):
             if f"@{p}".lower() in plain_low:
                 loop.create_task(bridge._safe_send(sid, f"execute at {p} run playsound minecraft:entity.experience_orb.pickup player {p}"))
+
+
+# ---------- QQ 群指令派发(照搬 asPanel 的 _maybe_handle_command) ----------
+async def _maybe_handle_command(qq_group: int, server_ids: list[int], text: str) -> bool:
+    """命中并处理返回 True(调用方随后 return,不转发到 MC)。触发条件与 asPanel 一致。"""
+    if not text:
+        return False
+    if text.startswith("##"):
+        return await _handle_rank_command(qq_group, server_ids, text)
+
+    split_text = text.split()
+    cmd = text[0]
+    if cmd not in ("#", "%", "&", "^"):
+        return False
+    body = text[1:].strip()
+    if cmd == "#" and len(text) == 1:
+        await _cmd_show_players(qq_group, server_ids)
+    elif cmd == "%" and len(split_text) in (1, 2, 3):
+        await _cmd_restart_server(qq_group, server_ids, body)
+    elif cmd == "&" and len(text) == 1:
+        await _cmd_show_status(qq_group, server_ids)
+    elif cmd == "^" and len(split_text) >= 2:
+        await _cmd_kick_player(qq_group, server_ids, body)
+    elif cmd == "^":
+        client.send_group(qq_group, "用法:^ <玩家名> [reason]")
+    # 首字符是保留前缀:一律吞掉不转发(与 asPanel 一致)
+    return True
+
+
+def _group_name_for(db, server_ids: list[int]) -> str:
+    rows = db.scalars(select(Server).where(Server.id.in_(server_ids))).all()
+    gid = next((s.group_id for s in rows if s.group_id), None)
+    if gid:
+        g = db.get(ServerGroup, gid)
+        if g and g.name:
+            return g.name
+    return "服务器组"
+
+
+def _build_playerlist_sync(server_ids: list[int]) -> tuple[bool, str]:
+    """阻塞:在线玩家列表出图(照搬 asPanel #)。放线程池里跑。"""
+    from io import BytesIO
+
+    from . import bridge, stats
+    from .mcdr import manager
+    from .qqimg.player_list_image import render_player_list_image
+
+    db = SessionLocal()
+    try:
+        group_name = _group_name_for(db, server_ids)
+        rows = db.scalars(select(Server).where(Server.id.in_(server_ids))).all()
+        servers_data: list[dict] = []
+        for s in rows:
+            online = sorted(bridge.online_players(s.id))
+            if not online:
+                continue
+            try:
+                uuid_by_name = {v.lower(): k for k, v in stats._usercache(manager.instance_dir(s) / "server").items() if v}
+            except Exception:  # noqa: BLE001
+                uuid_by_name = {}
+            players = [{"name": n, "uuid": uuid_by_name.get(n.lower()), "login_time": bridge.online_since(s.id, n)} for n in online]
+            servers_data.append({"name": s.name or s.dir_name, "players": players})
+    finally:
+        db.close()
+
+    if not servers_data:
+        return False, f"{group_name}:当前无人在线"
+    img = render_player_list_image(group_name, servers_data)
+    buf = BytesIO()
+    img.convert("RGB").save(buf, format="PNG")
+    return True, base64.b64encode(buf.getvalue()).decode()
+
+
+async def _cmd_show_players(qq_group: int, server_ids: list[int]) -> None:
+    loop = asyncio.get_running_loop()
+    try:
+        ok, payload = await loop.run_in_executor(None, _build_playerlist_sync, server_ids)
+    except Exception as e:  # noqa: BLE001
+        client.send_group(qq_group, f"出图失败:{e}")
+        return
+    client.send_group(qq_group, f"[CQ:image,file=base64://{payload}]" if ok else payload)
+
+
+async def _cmd_show_status(qq_group: int, server_ids: list[int]) -> None:
+    from .mcdr import manager
+
+    db = SessionLocal()
+    try:
+        rows = db.scalars(select(Server).where(Server.id.in_(server_ids))).all()
+    finally:
+        db.close()
+    lines = [f"{'✅' if manager.is_running(s.id) else '❌'} {s.name or s.dir_name}" for s in rows]
+    client.send_group(qq_group, "\n".join(lines) if lines else "该组未绑定服务器")
+
+
+async def _cmd_kick_player(qq_group: int, server_ids: list[int], body: str) -> None:
+    from . import bridge
+    from .mcdr import manager
+
+    tokens = body.split()
+    if not tokens:
+        client.send_group(qq_group, "用法:^ <玩家名> [reason]")
+        return
+    player = tokens[0]
+    reason = " ".join(tokens[1:]).strip()
+    db = SessionLocal()
+    try:
+        rows = db.scalars(select(Server).where(Server.id.in_(server_ids))).all()
+        targets = [s for s in rows if player in bridge.online_players(s.id)]
+    finally:
+        db.close()
+    if not targets:
+        client.send_group(qq_group, f"未在该服务器组内找到玩家 {player}")
+        return
+    command = f"kick {player}" + (f" {reason}" if reason else "")
+    executed: list[str] = []
+    for s in targets:
+        try:
+            await manager.send_cmd(s.id, command, s.rcon_port, s.rcon_password)
+            executed.append(s.name or s.dir_name)
+        except Exception:  # noqa: BLE001
+            pass
+    client.send_group(qq_group, f"已在 {', '.join(executed)} 执行:{command}" if executed else f"踢出 {player} 失败")
+
+
+async def _cmd_restart_server(qq_group: int, server_ids: list[int], body: str) -> None:
+    from . import bridge
+    from .deps import get_settings_row
+    from .java import choose_java, detect_installs, get_java_paths
+    from .mcdr import manager
+
+    tokens = body.split()
+    if not tokens:
+        client.send_group(qq_group, "用法:% <服务器名称> [-f]")
+        return
+    force = False
+    filtered: list[str] = []
+    for t in tokens:
+        if t.lower() in ("-f", "--force"):
+            force = True
+        else:
+            filtered.append(t)
+    if not filtered:
+        client.send_group(qq_group, "请指定服务器名称")
+        return
+    target = filtered[0]
+
+    db = SessionLocal()
+    try:
+        rows = db.scalars(select(Server).where(Server.id.in_(server_ids))).all()
+        server = next(
+            (s for s in rows if (s.name or "").lower() == target.lower() or (s.dir_name or "").lower() == target.lower()),
+            None,
+        )
+        if not server:
+            client.send_group(qq_group, f"未找到服务器:{target}")
+            return
+        settings = get_settings_row(db)
+        if server.java_path_override:
+            java_path = server.java_path_override
+        else:
+            installs = detect_installs(get_java_paths(settings))
+            java_path, _err = choose_java(server.mc_version, installs, settings.java_command)
+        python_exe = settings.python_executable
+        running = manager.is_running(server.id)
+        online = list(bridge.online_players(server.id))
+    finally:
+        db.close()
+
+    if running and online and not force:
+        client.send_group(qq_group, f"{server.name} 当前在线 {len(online)} 人,发 % {target} -f 可强制重启")
+        return
+    try:
+        if running:
+            await manager.stop(server)
+            for _ in range(60):
+                if not manager.is_running(server.id):
+                    break
+                await asyncio.sleep(1)
+            await manager.start(server, python_exe, java_path)
+            client.send_group(qq_group, f"{server.name} 已执行重启")
+        else:
+            await manager.start(server, python_exe, java_path)
+            client.send_group(qq_group, f"{server.name} 已执行启动")
+    except Exception as e:  # noqa: BLE001
+        client.send_group(qq_group, f"{server.name} 操作失败:{e}")
 
 
 # ---------- ## 群指令:排行榜出图(照搬 asPanel) ----------

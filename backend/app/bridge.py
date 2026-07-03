@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 
 from sqlalchemy import select
 
@@ -35,10 +36,17 @@ _MC_TYPES = ("vanilla", "fabric", "forge")
 _BOTS: dict[int, set[str]] = {}
 # server_id -> 当前在线的真人名集合(用于 QQ @ 提示音)
 _ONLINE: dict[int, set[str]] = {}
+# (server_id, name) -> 上线时刻(epoch 秒),用于 QQ # 在线列表出图显示在线时长
+_JOIN_TS: dict[tuple[int, str], float] = {}
 
 
 def online_players(server_id: int) -> set[str]:
     return _ONLINE.get(server_id, set())
+
+
+def online_since(server_id: int, name: str) -> float | None:
+    """玩家在该实例的上线时刻(epoch 秒);未知返回 None。"""
+    return _JOIN_TS.get((server_id, name))
 
 
 def _group_online_count(server_id: int) -> int:
@@ -169,6 +177,7 @@ def handle_line(server_id: int, line: str) -> None:
         _BOTS[server_id].discard(name)
         before = _group_online_count(server_id)
         _ONLINE[server_id].add(name)
+        _JOIN_TS[(server_id, name)] = time.time()
         after = _group_online_count(server_id)
         _broadcast(
             server_id,
@@ -185,6 +194,7 @@ def handle_line(server_id: int, line: str) -> None:
             return  # 假人退服不广播
         before = _group_online_count(server_id)
         _ONLINE.get(server_id, set()).discard(name)
+        _JOIN_TS.pop((server_id, name), None)
         after = _group_online_count(server_id)
         _broadcast(
             server_id,
