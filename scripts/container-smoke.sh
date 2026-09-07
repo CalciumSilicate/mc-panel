@@ -28,6 +28,7 @@ curl -fsS -H 'Content-Type: application/json' -d '{"username":"smokeowner","pass
 docker exec "$name" java -version
 docker exec "$name" /opt/java/openjdk/bin/java -version
 docker exec "$name" python -c 'import mcdreforged, pip, scipy; from pathlib import Path; Path("/data/persistence-check").write_text("keep")'
+docker exec "$name" python -c 'import httpx; client = httpx.Client(proxy="socks5://127.0.0.1:7891"); client.close()'
 test -s "$data/panel.db"
 test -s "$data/secret.key"
 docker stop -t 90 "$name" >/dev/null
