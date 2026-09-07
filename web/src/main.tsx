@@ -2,7 +2,6 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import { nsKey } from '@/config'
-import { FontLoadCoordinator } from '@/components/font-load-coordinator'
 import { ThemeProvider } from '@/components/theme'
 import { GlobalToastProvider } from '@/components/ui/global-toast'
 import { DialogProvider } from '@/components/ui/dialog-provider'
@@ -49,7 +48,6 @@ createRoot(document.getElementById('root')!).render(
       <I18nProvider>
         <GlobalToastProvider>
           <DialogProvider>
-            <FontLoadCoordinator />
             <App />
           </DialogProvider>
         </GlobalToastProvider>

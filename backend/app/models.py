@@ -205,6 +205,26 @@ class Server(Base):
     rcon_enabled: Mapped[bool] = mapped_column(default=False)
     rcon_port: Mapped[int] = mapped_column(Integer, default=0)  # 0 = 未分配
     rcon_password: Mapped[str] = mapped_column(String(64), default="")
+    # 列表拖拽排序:越小越靠前;0 = 未手动排序,按创建顺序(id)兜底
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class ProxyCustomBackend(Base):
+    """代理网络下的自定义子服(外部服务器:名字 / host / 端口)。
+
+    不是本面板托管的 MC 实例:一键接线时只写入 velocity.toml 路由,跳过
+    online-mode 改写与转发 mod 安装(转发配置需在对端自行处理)。
+    """
+
+    __tablename__ = "proxy_custom_backends"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # 归属的 velocity 代理实例 id
+    proxy_id: Mapped[int] = mapped_column(Integer, index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    host: Mapped[str] = mapped_column(String(255), default="127.0.0.1")
+    port: Mapped[int] = mapped_column(Integer, default=25565)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 

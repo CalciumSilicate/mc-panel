@@ -14,6 +14,8 @@ import {
   installPresetTo,
   listPresets,
   refreshPresetStatus,
+  reloadChangedPlugins,
+  reloadPreset,
   updatePresetConfig,
 } from '@/api/configs'
 import { type ServerSummary, listServers } from '@/api/servers'
@@ -103,10 +105,12 @@ function PresetCard({ preset, serverId, servers, installed, onInstalled }: {
   const [loaded, setLoaded] = useState(false)
   const [values, setValues] = useState<Record<string, unknown>>({})
   const [busy, setBusy] = useState(false)
+  const [reloading, setReloading] = useState(false)
   const [picker, setPicker] = useState<'copy' | 'install' | null>(null)
   const [pickerBusy, setPickerBusy] = useState(false)
 
   const others = useMemo(() => servers.filter((s) => s.id !== serverId), [servers, serverId])
+  const running = servers.find((s) => s.id === serverId)?.status === 'running'
 
   // 切换服务器/安装态变化时重置已加载的配置
   useEffect(() => { setOpen(false); setLoaded(false); setValues({}) }, [serverId, installed])
@@ -160,6 +164,19 @@ function PresetCard({ preset, serverId, servers, installed, onInstalled }: {
       showToast('error', err instanceof ApiError ? err.message : '安装失败')
     } finally {
       setBusy(false)
+    }
+  }
+
+  const reload = async () => {
+    if (!running || reloading) return
+    setReloading(true)
+    try {
+      await reloadPreset(preset.key, serverId)
+      showToast('success', `已发送 ${preset.name} 重载命令`)
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : '发送重载命令失败')
+    } finally {
+      setReloading(false)
     }
   }
 
@@ -234,6 +251,10 @@ function PresetCard({ preset, serverId, servers, installed, onInstalled }: {
                 </div>
               ))}
               <div className="flex flex-wrap justify-end gap-2 pt-1">
+                <Button type="button" variant="outline" className="gap-1.5" title={`重载当前插件 (${preset.plugin_id}),仅运行时可用;未保存的编辑不会生效`} onClick={reload} disabled={!running || reloading}>
+                  <RefreshCw className={cn('h-4 w-4', reloading && 'animate-spin')} />
+                  重载
+                </Button>
                 <Button type="button" variant="outline" className="gap-1.5" onClick={() => setPicker('copy')}>
                   <Copy className="h-4 w-4" />
                   配置到其他
@@ -267,13 +288,20 @@ function PresetCard({ preset, serverId, servers, installed, onInstalled }: {
 
 export default function PluginConfig() {
   const { showToast } = useGlobalToast()
-  const { data: servers } = useResource(() => listServers(), [])
+  const { data: servers, refresh: refreshServers } = useResource(() => listServers(), [])
   const [serverId, setServerId] = useState<number | null>(null)
   const { data: presets, loading } = useResource(() => listPresets(), [])
   const [status, setStatus] = useState<PresetStatus | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  const [reloading, setReloading] = useState(false)
 
   const mcServers = useMemo<ServerSummary[]>(() => (servers ?? []).filter((s) => MC_TYPES.includes(s.server_type)), [servers])
+  const running = mcServers.find((s) => s.id === serverId)?.status === 'running'
+
+  useEffect(() => {
+    const timer = window.setInterval(refreshServers, 5000)
+    return () => window.clearInterval(timer)
+  }, [refreshServers])
 
   useEffect(() => {
     if (serverId === null && mcServers.length > 0) setServerId(mcServers[0].id)
@@ -283,6 +311,19 @@ export default function PluginConfig() {
     if (serverId !== null) getPresetStatus(serverId).then(setStatus).catch(() => undefined)
   }
   useEffect(() => { setStatus(null); loadStatus() }, [serverId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const doReload = async () => {
+    if (serverId === null || !running || reloading) return
+    setReloading(true)
+    try {
+      await reloadChangedPlugins(serverId)
+      showToast('success', '已发送变更插件刷新命令')
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : '发送重载命令失败')
+    } finally {
+      setReloading(false)
+    }
+  }
 
   const doRefresh = async () => {
     if (serverId === null) return
@@ -301,10 +342,10 @@ export default function PluginConfig() {
     <PageShell
       title="插件配置"
       description="一批推荐 MCDR 插件:一键安装 + 套用默认配置 + 表单化修改。"
-      width="4xl"
+      width="6xl"
       actions={
         mcServers.length > 0 ? (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="hidden text-xs text-muted-foreground sm:inline">{fmtRefreshed(status?.scanned_at)}</span>
             <Select value={serverId === null ? undefined : String(serverId)} onValueChange={(v) => setServerId(Number(v))}>
               <SelectTrigger className="w-52"><SelectValue placeholder="选择服务器" /></SelectTrigger>
@@ -312,8 +353,11 @@ export default function PluginConfig() {
                 {mcServers.map((s) => (<SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>))}
               </SelectContent>
             </Select>
-            <Button type="button" variant="outline" className="gap-2" onClick={doRefresh} disabled={refreshing}>
+            <Button type="button" variant="outline" className="gap-2" title="重新扫描磁盘上的插件安装状态" onClick={doRefresh} disabled={refreshing}>
               <RefreshCw className={refreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />刷新
+            </Button>
+            <Button type="button" variant="outline" className="gap-2" title="刷新发生变化的插件 (!!MCDR r plg),仅运行时可用" onClick={doReload} disabled={!running || reloading}>
+              <RefreshCw className={cn('h-4 w-4', reloading && 'animate-spin')} />重载
             </Button>
           </div>
         ) : null

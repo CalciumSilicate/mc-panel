@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Archive as ArchiveIcon, Download, Loader2, Pencil, RefreshCw, RotateCcw, Save, Trash2, Upload } from 'lucide-react'
 
 import { ApiError } from '@/api/client'
@@ -20,6 +20,7 @@ import { InlineLoader } from '@/components/PageLoader'
 import { PageShell, PageSurface } from '@/components/layout/PageScaffold'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import {
   Dialog,
   DialogContent,
@@ -106,7 +107,7 @@ export default function Archives() {
   return (
     <PageShell
       title="存档管理"
-      description="把实例的世界打包成存档,或恢复到任意实例。创建/恢复需先停止目标实例。"
+      description="把实例的世界打包成存档,或恢复到任意实例。默认需先停止，也可选择强制停止后创建/恢复。"
       width="7xl"
       actions={
         <>
@@ -200,12 +201,12 @@ export default function Archives() {
       <ServerPickDialog
         open={createOpen}
         title="从服务器创建存档"
-        description="选择要打包世界的实例(需已停止)。"
+        description="选择要打包世界的实例；默认需已停止，可选强制创建。"
         confirmLabel="创建"
         servers={servers ?? []}
         onClose={() => setCreateOpen(false)}
-        run={(serverId, onProgress) =>
-          createArchiveFromServer(serverId).then(({ job_id }) => pollJob(job_id, onProgress))
+        run={(serverId, force, onProgress) =>
+          createArchiveFromServer(serverId, force).then(({ job_id }) => pollJob(job_id, onProgress))
         }
         onDone={() => {
           setCreateOpen(false)
@@ -216,13 +217,13 @@ export default function Archives() {
       <ServerPickDialog
         open={restoreFor !== null}
         title={`恢复存档 —— ${restoreFor?.name ?? ''}`}
-        description="选择要恢复到的实例(需已停止);会先备份其现有世界。"
+        description="选择要恢复到的实例；默认需已停止，可选强制恢复。恢复前会备份其现有世界。"
         confirmLabel="恢复"
         servers={servers ?? []}
         blockProtected
         onClose={() => setRestoreFor(null)}
-        run={(serverId, onProgress) =>
-          restoreArchive(restoreFor!.id, serverId).then(({ job_id }) => pollJob(job_id, onProgress))
+        run={(serverId, force, onProgress) =>
+          restoreArchive(restoreFor!.id, serverId, force).then(({ job_id }) => pollJob(job_id, onProgress))
         }
         onDone={() => setRestoreFor(null)}
       />
@@ -318,35 +319,49 @@ function ServerPickDialog({
   confirmLabel: string
   servers: ServerSummary[]
   onClose: () => void
-  run: (serverId: number, onProgress: (pct: number | null) => void) => Promise<{ status: string; message: string }>
+  run: (serverId: number, force: boolean, onProgress: (pct: number | null) => void) => Promise<{ status: string; message: string }>
   onDone: () => void
   blockProtected?: boolean
 }) {
   const { showToast } = useGlobalToast()
+  const { roleAtLeast } = useAuth()
+  const canStopProtected = roleAtLeast('admin')
   const [serverId, setServerId] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
   const [pct, setPct] = useState<number | null>(null)
+  const [force, setForce] = useState(false)
 
-  const selectable = (s: ServerSummary) =>
-    s.status !== 'running' &&
-    s.status !== 'starting' &&
+  const selectable = useCallback((s: ServerSummary) =>
     s.status !== 'installing' &&
-    (!blockProtected || !s.protected)
+    s.status !== 'queued' &&
+    (!blockProtected || !s.protected) &&
+    (!(s.status === 'running' || s.status === 'starting') ||
+      (force && (!s.protected || canStopProtected))),
+  [force, blockProtected, canStopProtected])
 
   useEffect(() => {
     if (open) {
-      setServerId(servers.find(selectable)?.id ?? null)
+      setForce(false)
+      setServerId(null)
       setPct(null)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, servers])
+  }, [open])
+
+  useEffect(() => {
+    if (open) {
+      setServerId((current) => servers.some((s) => s.id === current && selectable(s))
+        ? current : servers.find(selectable)?.id ?? null)
+    }
+  }, [open, servers, selectable])
+
+  const selectedValid = servers.some((s) => s.id === serverId && selectable(s))
 
   const confirm = async () => {
-    if (serverId === null) return
+    if (serverId === null || !selectedValid) return
     setBusy(true)
     setPct(null)
     try {
-      const final = await run(serverId, setPct)
+      const final = await run(serverId, force, setPct)
       if (final.status === 'error') showToast('error', final.message || '操作失败')
       else {
         showToast('success', '完成')
@@ -367,37 +382,44 @@ function ServerPickDialog({
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
         <div className="py-2">
-          <Select value={serverId === null ? undefined : String(serverId)} onValueChange={(v) => setServerId(Number(v))}>
+          <Select value={serverId === null ? '' : String(serverId)} disabled={busy} onValueChange={(v) => setServerId(Number(v))}>
             <SelectTrigger><SelectValue placeholder="选择服务器" /></SelectTrigger>
             <SelectContent>
               {servers.map((s) => (
                 <SelectItem key={s.id} value={String(s.id)} disabled={!selectable(s)}>
                   {s.name}
-                  {s.status === 'running'
-                    ? '(运行中,不可选)'
-                    : s.status === 'starting'
-                      ? '(启动中,不可选)'
-                      : s.status === 'installing'
-                        ? '(安装中,不可选)'
-                        : blockProtected && s.protected
-                          ? '(受保护,不可选)'
-                          : ''}
+                  {s.status === 'installing' ? '(安装中,不可选)'
+                    : s.status === 'queued' ? '(启动队列中,不可选)'
+                      : s.protected && !selectable(s) ? '(受保护,不可选)'
+                        : s.status === 'running' ? (selectable(s) ? '(运行中,将强制停止)' : '(运行中,不可选)')
+                          : s.status === 'starting' ? (selectable(s) ? '(启动中,将强制停止)' : '(启动中,不可选)')
+                            : ''}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
-          <p className="mt-2 text-xs text-muted-foreground">运行中的实例不可选,请先停止。</p>
+          <label className="mt-4 flex items-center gap-2 text-sm">
+            <Switch checked={force} disabled={busy} onCheckedChange={setForce} aria-label={`强制${confirmLabel}`} />
+            强制{confirmLabel}
+          </label>
+          {force ? (
+            <p role="alert" className="mt-2 text-sm text-destructive">
+              将先强制停止目标实例再{confirmLabel}存档。强制停止可能导致未保存的数据丢失或世界损坏，建议优先正常停止。操作后不会自动启动实例。
+            </p>
+          ) : (
+            <p className="mt-2 text-xs text-muted-foreground">运行中或启动中的实例需先停止，或勾选强制{confirmLabel}。</p>
+          )}
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={onClose} disabled={busy}>取消</Button>
-          <Button type="button" className="min-w-24 gap-2" onClick={confirm} disabled={busy || serverId === null}>
+          <Button type="button" className="min-w-24 gap-2" onClick={confirm} disabled={busy || !selectedValid}>
             {busy ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" />
                 {pct != null ? `${pct}%` : '处理中'}
               </>
             ) : (
-              confirmLabel
+              force ? `强制${confirmLabel}` : confirmLabel
             )}
           </Button>
         </DialogFooter>

@@ -322,14 +322,12 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                   <VerifyPanel />
                 </div>
               ) : null}
-              <ChunkLoadBoundary scopeLabel={currentItem.label}>
+              <ChunkLoadBoundary key={currentPage} scopeLabel={currentItem.label}>
                 <Suspense fallback={<PageLoader />}>
-                  <AnimatePresence mode="wait">
                     <motion.div
                       key={currentPage}
                       initial={{ opacity: 0, y: 20, scale: 0.99 }}
                       animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: -12, scale: 0.99 }}
                       transition={{ type: 'spring', bounce: 0.15, duration: 0.4 }}
                     >
                       {currentPage === 'overview' ? <Overview /> : null}
@@ -351,7 +349,6 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                       {currentPage === 'users' ? <UsersPage /> : null}
                       {currentPage === 'settings' ? <SettingsPage /> : null}
                     </motion.div>
-                  </AnimatePresence>
                 </Suspense>
               </ChunkLoadBoundary>
             </main>

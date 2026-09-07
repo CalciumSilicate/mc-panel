@@ -15,6 +15,7 @@ import {
 } from '@/api/modconfigs'
 import { type ServerSummary, listServers } from '@/api/servers'
 import { InlineLoader } from '@/components/PageLoader'
+import { ServerLifecycleButton } from '@/components/ServerLifecycleButton'
 import { PageShell, PageSurface } from '@/components/layout/PageScaffold'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -164,11 +165,16 @@ function PresetCard({ preset, serverId, serverType, installed, onInstalled }: {
 
 export default function ModConfig() {
   const { showToast } = useGlobalToast()
-  const { data: servers } = useResource(() => listServers(), [])
+  const { data: servers, refresh: refreshServers } = useResource(() => listServers(), [])
   const [serverId, setServerId] = useState<number | null>(null)
   const { data: presets, loading } = useResource(() => listModPresets(), [])
   const [status, setStatus] = useState<ModPresetStatus | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+
+  useEffect(() => {
+    const timer = window.setInterval(refreshServers, 5000)
+    return () => window.clearInterval(timer)
+  }, [refreshServers])
 
   const all = useMemo<ServerSummary[]>(() => servers ?? [], [servers])
   const sel = all.find((s) => s.id === serverId) ?? null
@@ -202,8 +208,9 @@ export default function ModConfig() {
       width="4xl"
       actions={
         all.length > 0 ? (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="hidden text-xs text-muted-foreground sm:inline">{fmtRefreshed(status?.scanned_at)}</span>
+            {sel ? <ServerLifecycleButton server={sel} onChanged={refreshServers} /> : null}
             <Select value={serverId === null ? undefined : String(serverId)} onValueChange={(v) => setServerId(Number(v))}>
               <SelectTrigger className="w-52"><SelectValue placeholder="选择服务器" /></SelectTrigger>
               <SelectContent>

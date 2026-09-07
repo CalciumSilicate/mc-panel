@@ -63,7 +63,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
     <DialogContext.Provider value={api}>
       {children}
       <Dialog open={state !== null} onOpenChange={(o) => (!o ? finish(cancelValue) : undefined)}>
-        <DialogContent>
+        <DialogContent data-global-dialog="true">
           <DialogHeader>
             <DialogTitle>{opts?.title}</DialogTitle>
             {opts?.description ? <DialogDescription>{opts.description}</DialogDescription> : null}

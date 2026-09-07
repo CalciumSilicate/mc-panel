@@ -125,6 +125,24 @@ class ServerUpdate(BaseModel):
     autostart_priority: int | None = None
 
 
+# ---------- 代理网络:自定义子服 ----------
+class CustomBackendCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    host: str = Field(default="127.0.0.1", min_length=1, max_length=255)
+    port: int = Field(default=25565, ge=1, le=65535)
+
+
+class CustomBackendOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    proxy_id: int
+    name: str
+    host: str
+    port: int
+    created_at: datetime
+
+
 class PropertiesResponse(BaseModel):
     properties: dict[str, str]
 
@@ -163,6 +181,7 @@ class ServerSummary(BaseModel):
     autostart_priority: int = 0
     rcon_enabled: bool = False
     rcon_port: int = 0  # 仅供展示;密码不回传前端
+    sort_order: int = 0
     created_at: datetime
     # 运行时派生字段
     status: str = "stopped"

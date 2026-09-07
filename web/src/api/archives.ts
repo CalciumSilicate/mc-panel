@@ -17,10 +17,10 @@ export function listArchives(): Promise<Archive[]> {
   return apiRequest<Archive[]>('/archives')
 }
 
-export function createArchiveFromServer(serverId: number): Promise<{ job_id: string }> {
+export function createArchiveFromServer(serverId: number, force = false): Promise<{ job_id: string }> {
   return apiRequest<{ job_id: string }>(`/archives/from-server/${serverId}`, {
     method: 'POST',
-    body: '{}',
+    body: JSON.stringify({ force }),
   })
 }
 
@@ -72,10 +72,10 @@ export function uploadArchiveWithVersion(file: File, mcVersion: string): Promise
   return apiUpload<Archive>('/archives/upload', fd)
 }
 
-export function restoreArchive(id: number, serverId: number): Promise<{ job_id: string }> {
+export function restoreArchive(id: number, serverId: number, force = false): Promise<{ job_id: string }> {
   return apiRequest<{ job_id: string }>(`/archives/${id}/restore/${serverId}`, {
     method: 'POST',
-    body: '{}',
+    body: JSON.stringify({ force }),
   })
 }
 

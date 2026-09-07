@@ -1,13 +1,13 @@
 import { KeyboardEvent, useEffect, useRef, useState } from 'react'
-import { Loader2, Play, SendHorizonal, Square, Terminal } from 'lucide-react'
+import { SendHorizonal, Terminal } from 'lucide-react'
 
 import { getAuthToken } from '@/api/client'
-import { ApiError } from '@/api/client'
-import { type ServerSummary, startServer, stopServer } from '@/api/servers'
+import { type ServerSummary } from '@/api/servers'
+import { useAuth } from '@/components/auth-context'
+import { ServerLifecycleButton } from '@/components/ServerLifecycleButton'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
-import { useGlobalToast } from '@/components/ui/use-global-toast'
 import { parseAnsi } from '@/lib/ansi'
 import { cn } from '@/lib/utils'
 
@@ -32,16 +32,17 @@ interface ServerConsoleDialogProps {
 }
 
 export function ServerConsoleDialog({ server, onClose, onChanged }: ServerConsoleDialogProps) {
-  const { showToast } = useGlobalToast()
+  const { roleAtLeast, canOperate } = useAuth()
+  const canAdmin = roleAtLeast('admin')
   const [lines, setLines] = useState<string[]>([])
   const [connected, setConnected] = useState(false)
   const [input, setInput] = useState('')
-  const [actionBusy, setActionBusy] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
   const logRef = useRef<HTMLDivElement>(null)
 
   const serverId = server?.id ?? null
   const status = server?.status
+  const canStop = server?.protected ? canAdmin : canOperate
 
   useEffect(() => {
     if (serverId === null) return
@@ -84,12 +85,12 @@ export function ServerConsoleDialog({ server, onClose, onChanged }: ServerConsol
     if (el) el.scrollTop = el.scrollHeight
   }, [lines])
 
-  const canSend = connected && status === 'running'
+  const canSend = canStop && connected && status === 'running'
 
   const sendCommand = () => {
     const command = input.trim()
     const ws = wsRef.current
-    if (!command || !ws || ws.readyState !== WebSocket.OPEN) return
+    if (!canSend || !command || !ws || ws.readyState !== WebSocket.OPEN) return
     ws.send(JSON.stringify({ command }))
     setLines((prev) => [...prev, ...command.split('\n').map((l) => `> ${l}`)])
     setInput('')
@@ -102,27 +103,6 @@ export function ServerConsoleDialog({ server, onClose, onChanged }: ServerConsol
       sendCommand()
     }
   }
-
-  const runLifecycle = async (action: 'start' | 'stop') => {
-    if (serverId === null) return
-    setActionBusy(true)
-    try {
-      if (action === 'start') {
-        await startServer(serverId)
-        showToast('success', '已启动')
-      } else {
-        await stopServer(serverId)
-        showToast('success', '已发送停止命令')
-      }
-      onChanged()
-    } catch (err) {
-      showToast('error', err instanceof ApiError ? err.message : '操作失败')
-    } finally {
-      setActionBusy(false)
-    }
-  }
-
-  const installing = status === 'installing' || status === 'new_setup'
 
   return (
     <Dialog open={server !== null} onOpenChange={(open) => (!open ? onClose() : undefined)}>
@@ -146,31 +126,7 @@ export function ServerConsoleDialog({ server, onClose, onChanged }: ServerConsol
             </DialogTitle>
 
             <div className="flex items-center gap-2">
-              {status === 'running' ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="gap-1.5"
-                  disabled={actionBusy}
-                  onClick={() => runLifecycle('stop')}
-                >
-                  {actionBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Square className="h-3.5 w-3.5" />}
-                  停止
-                </Button>
-              ) : (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="gap-1.5"
-                  disabled={actionBusy || installing || status !== 'stopped'}
-                  onClick={() => runLifecycle('start')}
-                >
-                  {actionBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-                  启动
-                </Button>
-              )}
+              {server ? <ServerLifecycleButton key={server.id} server={server} onChanged={onChanged} /> : null}
             </div>
           </div>
         </DialogHeader>

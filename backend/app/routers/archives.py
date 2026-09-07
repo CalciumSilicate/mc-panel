@@ -26,6 +26,45 @@ class ArchiveUpdate(BaseModel):
     mc_version: str | None = None
 
 
+class ArchiveOperation(BaseModel):
+    force: bool = False
+
+
+async def _prepare_server(server: Server, force: bool, user: User, message: str) -> None:
+    status = mcdr_manager.get_status(server)
+    # 不取消自动启动队列:排队实例可能随时启动,不能安全操作世界文件。
+    if status in ("installing", "queued"):
+        raise HTTPException(status_code=400, detail="安装中或启动队列中的实例不可操作存档")
+    if status not in ("running", "starting"):
+        return
+    if not force:
+        raise HTTPException(status_code=400, detail=message)
+    if server.protected and not role_at_least(user, "admin"):
+        raise HTTPException(status_code=403, detail="实例受保护,仅管理员可停止")
+
+    # force_stop 会移除 _procs,但不等待退出;提前保留句柄并确认子进程退出。
+    import psutil
+
+    proc = mcdr_manager._procs.get(server.id)
+    if proc is None:
+        raise HTTPException(status_code=409, detail="无法确认实例进程,请稍后重试")
+    try:
+        parent = psutil.Process(proc.pid)
+        processes = [parent, *parent.children(recursive=True)]
+    except psutil.Error as exc:
+        raise HTTPException(status_code=409, detail="无法确认实例子进程,请手动停止后重试") from exc
+    try:
+        await mcdr_manager.force_stop(server)
+        await asyncio.wait_for(proc.wait(), timeout=10)
+        _, alive = await asyncio.to_thread(psutil.wait_procs, processes, timeout=10)
+        if alive:
+            raise RuntimeError("实例子进程尚未退出")
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=409, detail="强制停止失败或超时,未执行存档操作,请确认实例已完全停止") from exc
+    if mcdr_manager.get_status(server) in ("running", "starting", "installing", "queued"):
+        raise HTTPException(status_code=409, detail="实例状态已变化,未执行存档操作")
+
+
 def _get_server(db: Session, server_id: int) -> Server:
     server = db.get(Server, server_id)
     if server is None:
@@ -88,11 +127,11 @@ async def _do_create(server_id: int, filename: str, job_id: str, owner_user_id: 
 
 @router.post("/from-server/{server_id}")
 async def create_from_server(
-    server_id: int, user: User = Depends(require_helper), db: Session = Depends(get_db)
+    server_id: int, user: User = Depends(require_helper), db: Session = Depends(get_db),
+    body: ArchiveOperation | None = None,
 ) -> dict:
     server = _get_server(db, server_id)
-    if mcdr_manager.get_status(server) in ("running", "starting", "installing"):
-        raise HTTPException(status_code=400, detail="请先停止实例再创建存档")
+    await _prepare_server(server, bool(body and body.force), user, "请先停止实例再创建存档")
     job_id = jobstore.create()
     asyncio.create_task(_do_create(server_id, am.new_archive_filename(), job_id, user.id))
     return {"job_id": job_id}
@@ -199,13 +238,13 @@ async def _do_restore(archive_id: int, server_id: int, job_id: str) -> None:
 
 @router.post("/{archive_id}/restore/{server_id}")
 async def restore_archive(
-    archive_id: int, server_id: int, _: object = Depends(require_operate), db: Session = Depends(get_db)
+    archive_id: int, server_id: int, user: User = Depends(require_operate), db: Session = Depends(get_db),
+    body: ArchiveOperation | None = None,
 ) -> dict:
     _get_archive(db, archive_id)
     server = _get_server(db, server_id)
     ensure_not_protected(server)
-    if mcdr_manager.get_status(server) in ("running", "starting", "installing"):
-        raise HTTPException(status_code=400, detail="请先停止目标实例再恢复存档")
+    await _prepare_server(server, bool(body and body.force), user, "请先停止目标实例再恢复存档")
     job_id = jobstore.create()
     asyncio.create_task(_do_restore(archive_id, server_id, job_id))
     return {"job_id": job_id}

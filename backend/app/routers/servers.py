@@ -14,7 +14,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..database import SessionLocal, get_db
@@ -29,10 +29,12 @@ from ..deps import (
 )
 from ..java import choose_java, detect_installs, get_java_paths, required_java_major
 from ..mcdr import manager
-from ..models import Server, ServerGroup, User
+from ..models import ProxyCustomBackend, Server, ServerGroup, User
 from ..security import decode_token
 from ..schemas import (
     CreateServerResponse,
+    CustomBackendCreate,
+    CustomBackendOut,
     InstallProgress,
     JavaInfo,
     PropertiesResponse,
@@ -103,6 +105,55 @@ def proxy_secret(proxy_id: int, _: str = Depends(require_admin), db: Session = D
 
 class WireBody(BaseModel):
     secret: str = ""
+    force: bool = False
+
+
+@router.get("/proxy/{proxy_id}/wiring-status")
+def proxy_wiring_status(proxy_id: int, _: str = Depends(require_admin), db: Session = Depends(get_db)) -> dict:
+    proxy = _get_proxy_or_404(db, proxy_id)
+    backends = list(db.scalars(select(Server).where(Server.proxy_id == proxy_id)).all())
+    customs = list(db.scalars(select(ProxyCustomBackend).where(ProxyCustomBackend.proxy_id == proxy_id)).all())
+    return {"results": proxy_mod.wiring_status(proxy, backends, customs)}
+
+
+async def _prepare_wiring(servers: list[Server], force: bool) -> None:
+    # Validate the entire network before stopping even the first process.
+    active = []
+    for server in servers:
+        ensure_not_protected(server)
+        status = manager.get_status(server)
+        if status in ("installing", "queued"):
+            raise HTTPException(status_code=409, detail=f"{server.name}: 安装中或启动排队中,不可接线")
+        if status in ("running", "starting"):
+            if not force:
+                raise HTTPException(status_code=400, detail=f"请先停止:{server.name}; 强制接线需明确确认 force=true")
+            active.append(server)
+
+    import psutil
+
+    snapshots = []
+    for server in active:
+        proc = manager._procs.get(server.id)
+        if proc is None:
+            raise HTTPException(status_code=409, detail="无法确认实例进程,请手动停止后重试")
+        try:
+            parent = psutil.Process(proc.pid)
+            snapshots.append((server, proc, [parent, *parent.children(recursive=True)]))
+        except psutil.Error as exc:
+            raise HTTPException(status_code=409, detail="无法确认实例子进程,请手动停止后重试") from exc
+    for server, proc, processes in snapshots:
+        try:
+            # force_stop removes the handle without waiting; retain it and the Java children.
+            await manager.force_stop(server)
+            await asyncio.wait_for(proc.wait(), timeout=10)
+            _, alive = await asyncio.to_thread(psutil.wait_procs, processes, timeout=10)
+            if alive:
+                raise RuntimeError("子进程尚未退出")
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=409, detail="强停失败或超时,未写入接线配置;请确认所有进程已退出") from exc
+    for server in servers:
+        if manager.get_status(server) in ("running", "starting", "installing", "queued"):
+            raise HTTPException(status_code=409, detail="实例状态已变化,未执行接线")
 
 
 @router.post("/proxy/{proxy_id}/wire")
@@ -114,13 +165,76 @@ async def wire_proxy(
     if proxy.server_type != "velocity":
         raise HTTPException(status_code=400, detail="只有 Velocity 实例可作为代理主服")
     backends = list(db.scalars(select(Server).where(Server.proxy_id == proxy_id)).all())
-    if not backends:
+    customs = list(
+        db.scalars(select(ProxyCustomBackend).where(ProxyCustomBackend.proxy_id == proxy_id)).all()
+    )
+    if not backends and not customs:
         raise HTTPException(status_code=400, detail="该代理下还没有子服")
-    busy = [s.name for s in [proxy, *backends] if manager.get_status(s) in ("running", "starting", "installing")]
-    if busy:
-        raise HTTPException(status_code=400, detail=f"请先停止:{', '.join(busy)}")
-    results = await proxy_mod.wire(proxy, backends, body.secret)
+    keys = [proxy_mod._key(s.name) for s in [*backends, *customs]]
+    if len(keys) != len(set(keys)) or "try" in keys:
+        raise HTTPException(status_code=400, detail="子服路由名冲突或使用保留名称 try,请先重命名")
+    if any(c in body.secret for c in ('"', '\\', '\n', '\r')):
+        raise HTTPException(status_code=400, detail="转发密钥不可包含引号、反斜杠或换行")
+    await _prepare_wiring([proxy, *backends], body.force)
+    results = await proxy_mod.wire(proxy, backends, body.secret, customs)
     return {"results": results}
+
+
+def _get_proxy_or_404(db: Session, proxy_id: int) -> Server:
+    proxy = _get_server_or_404(db, proxy_id)
+    if proxy.server_type != "velocity":
+        raise HTTPException(status_code=400, detail="只有 Velocity 实例可作为代理主服")
+    return proxy
+
+
+@router.get("/proxy/{proxy_id}/custom-backends", response_model=list[CustomBackendOut])
+def list_custom_backends(
+    proxy_id: int, _: str = Depends(require_admin), db: Session = Depends(get_db)
+) -> list[ProxyCustomBackend]:
+    _get_proxy_or_404(db, proxy_id)
+    return list(
+        db.scalars(
+            select(ProxyCustomBackend)
+            .where(ProxyCustomBackend.proxy_id == proxy_id)
+            .order_by(ProxyCustomBackend.id)
+        ).all()
+    )
+
+
+@router.post("/proxy/{proxy_id}/custom-backends", response_model=CustomBackendOut)
+def add_custom_backend(
+    proxy_id: int,
+    body: CustomBackendCreate,
+    _: str = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> ProxyCustomBackend:
+    _get_proxy_or_404(db, proxy_id)
+    name = body.name.strip()
+    key = proxy_mod._key(name)
+    # 与该代理下的托管子服 / 已有自定义子服重名(按 velocity key 归一后)都会导致路由冲突
+    for s in db.scalars(select(Server).where(Server.proxy_id == proxy_id)).all():
+        if proxy_mod._key(s.name) == key:
+            raise HTTPException(status_code=400, detail=f"子服名与托管子服「{s.name}」冲突")
+    for c in db.scalars(select(ProxyCustomBackend).where(ProxyCustomBackend.proxy_id == proxy_id)).all():
+        if proxy_mod._key(c.name) == key:
+            raise HTTPException(status_code=400, detail=f"子服名与已有自定义子服「{c.name}」冲突")
+    row = ProxyCustomBackend(proxy_id=proxy_id, name=name, host=body.host.strip(), port=body.port)
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@router.delete("/proxy/custom-backends/{backend_id}")
+def delete_custom_backend(
+    backend_id: int, _: str = Depends(require_admin), db: Session = Depends(get_db)
+) -> dict:
+    row = db.get(ProxyCustomBackend, backend_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="自定义子服不存在")
+    db.delete(row)
+    db.commit()
+    return {"ok": True}
 
 
 @router.get("/suggest-port")
@@ -137,8 +251,27 @@ def list_servers(
     _: str = Depends(require_auth), db: Session = Depends(get_db)
 ) -> list[ServerSummary]:
     names = {g.id: g.name for g in db.scalars(select(ServerGroup)).all()}
-    servers = db.scalars(select(Server).order_by(Server.id)).all()
+    # 手动排序优先(sort_order 越小越前),未排序过的按 id(创建顺序)兜底
+    servers = db.scalars(select(Server).order_by(Server.sort_order, Server.id)).all()
     return [_to_summary(s, names.get(s.group_id, "")) for s in servers]
+
+
+class ReorderBody(BaseModel):
+    ids: list[int]
+
+
+@router.post("/reorder")
+def reorder_servers(
+    body: ReorderBody, _: str = Depends(require_admin), db: Session = Depends(get_db)
+) -> dict:
+    """按前端给的 id 顺序整体重排:sort_order 依次赋 1..N。未列出的实例保持不动。"""
+    by_id = {s.id: s for s in db.scalars(select(Server)).all()}
+    for idx, sid in enumerate(body.ids, start=1):
+        s = by_id.get(sid)
+        if s is not None:
+            s.sort_order = idx
+    db.commit()
+    return {"ok": True}
 
 
 @router.get("/versions", response_model=VersionList)
@@ -269,6 +402,8 @@ async def create_server(
         raise HTTPException(status_code=400, detail="互联组不存在")
     if _port_in_use(db, payload.port):
         raise HTTPException(status_code=409, detail=f"端口 {payload.port} 已被其它实例使用")
+    # 新实例排到列表末尾(取现有最大 sort_order + 1)
+    max_order = db.scalar(select(func.max(Server.sort_order))) or 0
     server = Server(
         name=payload.name,
         dir_name=dir_name,
@@ -279,6 +414,7 @@ async def create_server(
         max_memory=payload.max_memory or settings.default_max_memory,
         port=payload.port,
         group_id=payload.group_id,
+        sort_order=max_order + 1,
     )
     db.add(server)
     db.commit()
@@ -294,6 +430,21 @@ def _get_server_or_404(db: Session, server_id: int) -> Server:
     if server is None:
         raise HTTPException(status_code=404, detail="服务器不存在")
     return server
+
+
+@router.post("/{server_id}/start-command-preview")
+def preview_start_command(
+    server_id: int, payload: ServerUpdate,
+    _: object = Depends(require_admin), db: Session = Depends(get_db),
+) -> dict:
+    server = _get_server_or_404(db, server_id)
+    settings = get_settings_row(db)
+    java = payload.java_path_override if payload.java_path_override is not None else server.java_path_override
+    if not java:
+        java, error = choose_java(server.mc_version, detect_installs(get_java_paths(settings)), settings.java_command)
+        if error:
+            raise HTTPException(status_code=400, detail=error)
+    return {"command": manager.preview_start_command(server, java, payload.min_memory, payload.max_memory, payload.extra_jvm_args)}
 
 
 @router.patch("/{server_id}", response_model=ServerSummary)
@@ -507,11 +658,36 @@ def update_properties(
     return PropertiesResponse(properties={k: current.get(k, "") for k in COMMON_PROPERTY_KEYS})
 
 
+class VelocityServerEntry(BaseModel):
+    key: str
+    addr: str
+
+
 class VelocityConfig(BaseModel):
     motd: str = ""
     show_max_players: int = 500
     online_mode: bool = True
     forwarding_mode: str = "NONE"
+    # [servers] 表里的子服(key→地址),只读:由「一键接线」维护
+    servers: list[VelocityServerEntry] = []
+    # try 回退顺序(玩家进服时按序尝试第一个可用的子服),可编辑
+    try_servers: list[str] = []
+
+
+def _velocity_config_payload(db: Session, server: Server) -> VelocityConfig:
+    """读 velocity.toml,但把「可用子服」替换为真实接线的子服(DB proxy_id 归属),
+    避免默认模板里的占位 lobby 被当成子服显示/可加入 try。"""
+    cfg = manager.read_velocity_config(server)
+    backends = db.scalars(select(Server).where(Server.proxy_id == server.id)).all()
+    customs = db.scalars(
+        select(ProxyCustomBackend).where(ProxyCustomBackend.proxy_id == server.id)
+    ).all()
+    cfg["servers"] = [
+        {"key": proxy_mod._key(b.name), "addr": f"127.0.0.1:{b.port}"} for b in backends
+    ] + [
+        {"key": proxy_mod._key(c.name), "addr": f"{c.host}:{c.port}"} for c in customs
+    ]
+    return VelocityConfig(**cfg)
 
 
 @router.get("/{server_id}/velocity-config", response_model=VelocityConfig)
@@ -521,7 +697,7 @@ def get_velocity_config(
     server = _get_server_or_404(db, server_id)
     if server.server_type != "velocity":
         raise HTTPException(status_code=400, detail="非 Velocity 实例")
-    return VelocityConfig(**manager.read_velocity_config(server))
+    return _velocity_config_payload(db, server)
 
 
 @router.patch("/{server_id}/velocity-config", response_model=VelocityConfig)
@@ -536,7 +712,7 @@ def update_velocity_config(
         raise HTTPException(status_code=400, detail="非 Velocity 实例")
     ensure_not_protected(server)
     manager.write_velocity_config(server, payload.model_dump())
-    return VelocityConfig(**manager.read_velocity_config(server))
+    return _velocity_config_payload(db, server)
 
 
 @router.post("/{server_id}/reinstall")

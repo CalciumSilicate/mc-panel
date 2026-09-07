@@ -15,6 +15,7 @@ export function ServerPickerDialog({
   title,
   description,
   servers,
+  disabledReason,
   busy,
   confirmLabel,
   onClose,
@@ -24,12 +25,14 @@ export function ServerPickerDialog({
   title: string
   description: string
   servers: ServerSummary[]
+  disabledReason?: (server: ServerSummary) => string | undefined
   busy: boolean
   confirmLabel?: string
   onClose: () => void
   onConfirm: (ids: number[]) => void
 }) {
   const [sel, setSel] = useState<Set<number>>(new Set())
+  const selected = new Set(servers.filter((s) => sel.has(s.id) && !disabledReason?.(s)).map((s) => s.id))
   useEffect(() => { if (open) setSel(new Set()) }, [open])
   const toggle = (id: number) => setSel((cur) => {
     const n = new Set(cur)
@@ -52,13 +55,14 @@ export function ServerPickerDialog({
               <button
                 key={s.id}
                 type="button"
-                className="flex w-full items-center gap-2 rounded-lg border border-border/70 px-3 py-2 text-left text-sm hover:bg-muted"
+                disabled={Boolean(disabledReason?.(s))}
+                className="flex w-full items-center gap-2 rounded-lg border border-border/70 px-3 py-2 text-left text-sm hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                 onClick={() => toggle(s.id)}
               >
-                <span className={cn('flex h-4 w-4 shrink-0 items-center justify-center rounded border', sel.has(s.id) ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground/40')}>
-                  {sel.has(s.id) ? <Check className="h-3 w-3" /> : null}
+                <span className={cn('flex h-4 w-4 shrink-0 items-center justify-center rounded border', selected.has(s.id) ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground/40')}>
+                  {selected.has(s.id) ? <Check className="h-3 w-3" /> : null}
                 </span>
-                <span className="min-w-0 flex-1 truncate">{s.name}</span>
+                <span className="min-w-0 flex-1 truncate">{s.name}{disabledReason?.(s) ? `（${disabledReason(s)}）` : ''}</span>
                 <Badge variant="outline" className="text-[11px]">{TYPE_LABEL[s.server_type] ?? s.server_type}</Badge>
               </button>
             ))
@@ -66,9 +70,9 @@ export function ServerPickerDialog({
         </div>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={onClose} disabled={busy}>取消</Button>
-          <Button type="button" className="gap-1.5" disabled={busy || sel.size === 0} onClick={() => onConfirm([...sel])}>
+          <Button type="button" className="gap-1.5" disabled={busy || selected.size === 0} onClick={() => onConfirm([...selected])}>
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-            {confirmLabel ?? `应用到 ${sel.size} 个`}
+            {confirmLabel ?? `应用到 ${selected.size} 个`}
           </Button>
         </DialogFooter>
       </DialogContent>

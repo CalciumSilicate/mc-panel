@@ -37,6 +37,14 @@ export function refreshPresetStatus(serverId: number): Promise<PresetStatus> {
   return apiRequest<PresetStatus>(`/configs/refresh/${serverId}`, { method: 'POST', body: '{}' })
 }
 
+export function reloadChangedPlugins(serverId: number): Promise<{ ok: boolean }> {
+  return apiRequest(`/configs/reload/${serverId}`, { method: 'POST', body: '{}' })
+}
+
+export function reloadPreset(key: string, serverId: number): Promise<{ ok: boolean }> {
+  return apiRequest(`/configs/${key}/${serverId}/reload`, { method: 'POST', body: '{}' })
+}
+
 export function getPresetConfig(key: string, serverId: number): Promise<PresetConfig> {
   return apiRequest<PresetConfig>(`/configs/${key}/${serverId}`)
 }

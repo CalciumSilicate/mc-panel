@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
@@ -43,6 +45,14 @@ def _refresh_preset_status(server: Server) -> None:
     mod_presets.scan_status(server)
 
 
+def _ensure_modifiable(server: Server) -> None:
+    ensure_not_protected(server)
+    if server.server_type == "vanilla":
+        raise HTTPException(status_code=409, detail="原版服务器不支持模组")
+    if mcdr_manager.get_status(server) not in ("stopped", "error"):
+        raise HTTPException(status_code=409, detail="请先停止服务器再修改模组")
+
+
 def _copy_all(src_dir, dst_dir) -> int:
     import shutil
 
@@ -82,6 +92,7 @@ def copy_to(server_id: int, body: CopyToBody, _: str = Depends(require_helper), 
             results.append({"name": t.name, "status": "error", "detail": "server protected"})
             continue
         try:
+            _ensure_modifiable(t)
             n = _copy_all(src_dir, mods.managed_dir(mcdr_manager.instance_dir(t), t.server_type))
             _refresh_preset_status(t)
             mcdr_manager.mark_needs_restart(t.id)
@@ -100,7 +111,7 @@ def switch_mod(
     db: Session = Depends(get_db),
 ) -> dict:
     server = _get_server(db, server_id)
-    ensure_not_protected(server)
+    _ensure_modifiable(server)
     try:
         new_name = mods.switch_mod(mcdr_manager.instance_dir(server), file_name, enable, server.server_type)
     except FileNotFoundError as exc:
@@ -115,7 +126,7 @@ def delete_mod(
     server_id: int, file_name: str, _: str = Depends(require_helper), db: Session = Depends(get_db)
 ) -> dict:
     server = _get_server(db, server_id)
-    ensure_not_protected(server)
+    _ensure_modifiable(server)
     mods.delete_mod(mcdr_manager.instance_dir(server), file_name, server.server_type)
     _refresh_preset_status(server)
     mcdr_manager.mark_needs_restart(server.id)
@@ -130,8 +141,9 @@ async def upload_mod(
     db: Session = Depends(get_db),
 ) -> dict:
     server = _get_server(db, server_id)
-    ensure_not_protected(server)
+    _ensure_modifiable(server)
     content = await file.read()
+    _ensure_modifiable(server)
     try:
         name = mods.save_upload(mcdr_manager.instance_dir(server), file.filename or "mod.jar", content, server.server_type)
     except ValueError as exc:
@@ -170,7 +182,7 @@ def install_from_library(
     db: Session = Depends(get_db),
 ) -> dict:
     server = _get_server(db, server_id)
-    ensure_not_protected(server)
+    _ensure_modifiable(server)
     try:
         name = mods.install_from_library(MOD_LIBRARY, mcdr_manager.instance_dir(server), body.file_name, server.server_type)
     except FileNotFoundError as exc:
@@ -206,7 +218,7 @@ async def replace_library(
     old_id = old["id"]
     old_stripped = _strip_disabled(file_name)
     for server in db.scalars(select(Server)).all():
-        if server.protected:
+        if server.protected or server.server_type == "vanilla" or mcdr_manager.get_status(server) not in ("stopped", "error"):
             continue
         inst = mcdr_manager.instance_dir(server)
         replaced = False
@@ -256,19 +268,25 @@ async def install_mod(
     db: Session = Depends(get_db),
 ) -> dict:
     server = _get_server(db, server_id)
-    ensure_not_protected(server)
+    _ensure_modifiable(server)
     inst = mcdr_manager.instance_dir(server)
     job_id = jobstore.create()
 
     async def task() -> None:
         try:
-            name = await mods.install_from_modrinth(
-                inst,
-                body.version_id,
-                progress=lambda d, t: jobstore.update(job_id, d, t),
-                mc_version=server.mc_version,
-                server_type=server.server_type,
-            )
+            # Downloads may take minutes. Stage them away from the live server
+            # and recheck state before copying any jars into its mod directory.
+            with TemporaryDirectory(prefix="mc-panel-mods-") as temp:
+                staging = Path(temp)
+                name = await mods.install_from_modrinth(
+                    staging,
+                    body.version_id,
+                    progress=lambda d, t: jobstore.update(job_id, d, t),
+                    mc_version=server.mc_version,
+                    server_type=server.server_type,
+                )
+                _ensure_modifiable(server)
+                _copy_all(mods.managed_dir(staging, server.server_type), mods.managed_dir(inst, server.server_type))
             jobstore.finish(job_id, name)
             _refresh_preset_status(server)
             mcdr_manager.mark_needs_restart(server.id)

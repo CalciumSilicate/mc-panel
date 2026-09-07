@@ -33,6 +33,8 @@ mc-panel/
 
 ## 快速开始(统一入口)
 
+**Docker 部署：** 已提供 [Compose、GHCR 镜像构建和迁移说明](docs/docker.md)。面板与运行环境打包进镜像，实例/世界/数据库等通过宿主机目录挂载保存。
+
 一条命令同时托管 API 与前端页面,无需分别启动前后端:
 
 ```bash
@@ -52,7 +54,7 @@ uv run python run.py
 
 说明:
 - 健康检查:`GET http://localhost:16824/api/health` → `{"status":"ok"}`
-- 默认管理员密码:`admin`(可用环境变量 `MCPANEL_ADMIN_PASSWORD` 覆盖,或登录后在「设置 → 安全」修改)
+- 首次打开页面创建 owner 账号，没有预置账号密码；初始化前不要直接开放公网访问。
 - 运行参数:`MCPANEL_DATA_DIR`(数据目录)、`MCPANEL_API_PORT`(端口)、`MCPANEL_WEB_DIST`(前端产物目录)
 
 > 仅调试前端、需要热更新时,才单独 `cd web && npm run dev`(:5278,已代理 `/api` 到 16824);日常运行用上面的统一入口即可。
@@ -79,7 +81,7 @@ uv run python run.py
 
 ## 前置依赖
 
-- Python 3.10+(后端)
+- Python 3.14+(后端，以 pyproject.toml 为准)
 - Node.js 18+(前端)
 - 被启动的实例需要:目标 `python` 环境已安装 `mcdreforged`,以及可用的 `java`
 
@@ -102,7 +104,7 @@ uv run python run.py
 uv run python run.py --build            # 构建前端并启动(:16824 同时提供页面与 API)
 ```
 
-如需多 worker / 反代,可单独跑 `uvicorn app.main:app --host 0.0.0.0 --port 16824`(前端产物须已 `npm run build`);此时前端由后端托管,Nginx 仅做反代与 TLS 即可。同源部署可收紧后端 CORS。
+如需反代,可单独跑 `uvicorn app.main:app --host 0.0.0.0 --port 16824 --workers 1`(前端产物须已 `npm run build`);此时前端由后端托管,Nginx 仅做反代与 TLS 即可。同源部署可收紧后端 CORS。必须单 worker：实例进程句柄保存在内存中，不能多进程或多副本同时管理同一个数据目录。
 
 ## 数据备份与恢复(换电脑搬家)
 

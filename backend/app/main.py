@@ -22,6 +22,7 @@ from . import bridge, onebot, verification
 from .mcdr import manager
 from .models import Server
 from .routers import archives, auth, chat, configs, groups, jobs, litematica, modconfigs, mods, pb, pcrc, players as players_router, plugins, servers, settings, stats as stats_router, system, tools, users, worldmap as worldmap_router
+from .routers import server_files as server_files_router
 
 # 在模块加载时就建表,确保无论以何种方式启动(uvicorn / TestClient / 直接 import)
 # 数据库都已就绪。
@@ -124,12 +125,20 @@ async def lifespan(_: FastAPI):
     try:
         yield
     finally:
-        autostart_task.cancel()
-        scan_task.cancel()
-        pb_task.cancel()
-        mod_task.cancel()
-        stats_task.cancel()
-        map_task.cancel()
+        tasks = (autostart_task, scan_task, pb_task, mod_task, stats_task, map_task)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        # Docker stop sends SIGTERM: save worlds before its grace period expires.
+        from . import pcrc
+
+        with SessionLocal() as db:
+            instances = list(db.scalars(select(Server)).all())
+        await asyncio.gather(
+            manager.shutdown(instances),
+            *(asyncio.to_thread(pcrc.manager.stop, inst_id) for inst_id in list(pcrc.manager._procs)),
+        )
+        print("[shutdown] Instance shutdown complete", flush=True)
 
 
 app = FastAPI(title="mc-panel API", lifespan=lifespan)
@@ -180,6 +189,7 @@ for r in (
     stats_router.router,
     worldmap_router.router,
     players_router.router,
+    server_files_router.router,
 ):
     app.include_router(r, prefix="/api")
 

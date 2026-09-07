@@ -20,7 +20,8 @@ import {
   uploadToLibrary,
 } from '@/api/mods'
 import { pollJob } from '@/api/jobs'
-import { listServers } from '@/api/servers'
+import { type ServerSummary, listServers } from '@/api/servers'
+import { ServerLifecycleButton } from '@/components/ServerLifecycleButton'
 import { InlineLoader } from '@/components/PageLoader'
 import { Pagination } from '@/components/Pagination'
 import { usePaged } from '@/lib/use-paged'
@@ -41,6 +42,9 @@ const LOADERS = ['fabric', 'forge', 'neoforge', 'quilt', 'velocity']
 
 const stripDisabled = (n: string) => (n.endsWith('.disabled') ? n.slice(0, -'.disabled'.length) : n)
 
+const modReadOnlyReason = (s: ServerSummary) => s.server_type === 'vanilla' ? '不支持'
+  : s.protected ? '受保护' : s.status !== 'stopped' && s.status !== 'error' ? '请先停止服务器' : undefined
+
 function InstalledChip() {
   return (
     <span className="inline-flex items-center gap-1.5 px-2 text-sm text-emerald-600 dark:text-emerald-400">
@@ -52,16 +56,25 @@ function InstalledChip() {
 export default function Mods() {
   const confirm = useConfirm()
   const { showToast } = useGlobalToast()
-  const { data: servers } = useResource(() => listServers(), [])
+  const { data: servers, refresh: refreshServers } = useResource(() => listServers(), [])
   const [serverId, setServerId] = useState<number | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    if (serverId === null && servers && servers.length > 0) setServerId(servers[0].id)
+    const timer = window.setInterval(refreshServers, 2000)
+    return () => window.clearInterval(timer)
+  }, [refreshServers])
+
+  useEffect(() => {
+    if (!servers) return
+    if (!servers.some((s) => s.id === serverId && s.server_type !== 'vanilla')) {
+      setServerId(servers.find((s) => s.server_type !== 'vanilla')?.id ?? null)
+    }
   }, [servers, serverId])
 
   const server = useMemo(() => (servers ?? []).find((s) => s.id === serverId), [servers, serverId])
+  const readOnly = !server || Boolean(modReadOnlyReason(server))
   const installed = useResource(
     () => (serverId === null ? Promise.resolve([]) : listMods(serverId)),
     [serverId],
@@ -77,7 +90,7 @@ export default function Mods() {
   const installedPaged = usePaged(installed.data ?? [], 20)
 
   const uninstall = async (match: { id?: string; file?: string }) => {
-    if (serverId === null) return
+    if (serverId === null || readOnly) return
     const files = (installed.data ?? [])
       .filter(
         (m) =>
@@ -96,6 +109,7 @@ export default function Mods() {
   }
 
   const run = async (key: string, fn: () => Promise<unknown>, ok: string) => {
+    if (readOnly) return
     setBusy(key)
     try {
       await fn()
@@ -138,7 +152,8 @@ export default function Mods() {
       description="管理实例的模组,或从 Modrinth 在线安装。注意:vanilla 服务端需 Fabric/Forge 等加载器才会加载模组。"
       width="7xl"
       actions={
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {server ? <ServerLifecycleButton key={server.id} server={server} onChanged={refreshServers} /> : null}
           <Button type="button" variant="outline" className="gap-1.5" disabled={serverId === null} onClick={() => setCopyOpen(true)}>
             <Copy className="h-4 w-4" />
             复制到服务器
@@ -149,8 +164,8 @@ export default function Mods() {
             </SelectTrigger>
             <SelectContent>
               {(servers ?? []).map((s) => (
-                <SelectItem key={s.id} value={String(s.id)}>
-                  {s.name}{s.protected ? '(受保护)' : ''}
+                <SelectItem key={s.id} value={String(s.id)} disabled={s.server_type === 'vanilla'}>
+                  {s.name}{s.server_type === 'vanilla' ? '（不支持）' : s.protected ? '(受保护)' : ''}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -164,6 +179,9 @@ export default function Mods() {
         </PageSurface>
       ) : (
         <div className="space-y-4">
+          {server && server.status !== 'stopped' && server.status !== 'error' ? (
+            <p className="rounded-lg border border-border/70 px-4 py-3 text-sm text-muted-foreground">请先停止服务器再修改、安装或删除模组；当前仅可查看。</p>
+          ) : null}
           {(servers ?? []).find((s) => s.id === serverId)?.protected ? (
             <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">
               该实例受保护:模组变更已禁用(仅查看)。如需修改请先在「服务器实例 → 编辑 → 高级」取消保护。
@@ -186,7 +204,7 @@ export default function Mods() {
                     <RefreshCw className={cn('h-4 w-4', installed.loading && 'animate-spin')} />
                     刷新
                   </Button>
-                  <Button type="button" className="gap-2" onClick={() => fileRef.current?.click()} disabled={busy === 'upload'}>
+                  <Button type="button" className="gap-2" onClick={() => fileRef.current?.click()} disabled={readOnly || busy === 'upload'}>
                     {busy === 'upload' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
                     上传
                   </Button>
@@ -222,7 +240,7 @@ export default function Mods() {
                           <TableCell>
                             <Switch
                               checked={m.enabled}
-                              disabled={busy === m.file_name}
+                              disabled={readOnly || busy === m.file_name}
                               onCheckedChange={(c) => run(m.file_name, () => switchMod(serverId, m.file_name, c), c ? '已启用' : '已禁用')}
                             />
                           </TableCell>
@@ -232,7 +250,7 @@ export default function Mods() {
                               variant="ghost"
                               size="icon"
                               className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                              disabled={busy === m.file_name}
+                              disabled={readOnly || busy === m.file_name}
                               onClick={async () => {
                                 if (await confirm({ title: `删除模组「${m.name}」?`, confirmText: '删除', destructive: true })) run(m.file_name, () => deleteMod(serverId, m.file_name), '已删除')
                               }}
@@ -251,11 +269,11 @@ export default function Mods() {
           </TabsContent>
 
           <TabsContent value="modrinth" className="pt-4">
-            <ModrinthTab serverId={serverId} serverType={server?.server_type ?? ''} mcVersion={server?.mc_version ?? ''} installedIds={installedIds} onInstalled={() => installed.refresh()} onUninstall={uninstall} />
+            <ModrinthTab readOnly={readOnly} serverId={serverId} serverType={server?.server_type ?? ''} mcVersion={server?.mc_version ?? ''} installedIds={installedIds} onInstalled={() => installed.refresh()} onUninstall={uninstall} />
           </TabsContent>
 
           <TabsContent value="library" className="pt-4">
-            <LibraryTab serverId={serverId} installedFiles={installedFiles} installedIds={installedIds} onInstalled={() => installed.refresh()} onUninstall={uninstall} />
+            <LibraryTab readOnly={readOnly} serverId={serverId} installedFiles={installedFiles} installedIds={installedIds} onInstalled={() => installed.refresh()} onUninstall={uninstall} />
           </TabsContent>
           </Tabs>
         </div>
@@ -266,6 +284,7 @@ export default function Mods() {
         title="复制模组到其他服务器"
         description="把当前所选服务器的全部模组复制到下列实例(同名覆盖)。"
         servers={(servers ?? []).filter((s) => s.id !== serverId)}
+        disabledReason={modReadOnlyReason}
         busy={copyBusy}
         confirmLabel="复制"
         onClose={() => setCopyOpen(false)}
@@ -276,12 +295,14 @@ export default function Mods() {
 }
 
 function LibraryTab({
+  readOnly,
   serverId,
   installedFiles,
   installedIds,
   onInstalled,
   onUninstall,
 }: {
+  readOnly: boolean
   serverId: number
   installedFiles: Set<string>
   installedIds: Set<string>
@@ -339,7 +360,7 @@ function LibraryTab({
     setBusy(fn)
     try {
       await replaceLibraryFile(fn, file)
-      showToast('success', '已替换(含已安装的服务器)')
+      showToast('success', '已替换，仅同步已停止且未受保护的服务器')
       refresh()
       onInstalled()
     } catch (err) {
@@ -405,7 +426,7 @@ function LibraryTab({
                               size="icon"
                               className="h-8 w-8 text-muted-foreground hover:text-destructive"
                               title="从服务器卸载"
-                              disabled={busy === m.file_name}
+                              disabled={readOnly || busy === m.file_name}
                               onClick={async () => {
                                 setBusy(m.file_name)
                                 try {
@@ -423,7 +444,7 @@ function LibraryTab({
                             type="button"
                             size="sm"
                             className="gap-1.5"
-                            disabled={busy === m.file_name}
+                            disabled={readOnly || busy === m.file_name}
                             onClick={() => act(m, () => installFromLibrary(serverId, m.file_name), '已安装到服务器', onInstalled)}
                           >
                             {busy === m.file_name ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
@@ -435,8 +456,8 @@ function LibraryTab({
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                          title="上传新文件替换(含已安装的服务器)"
-                          disabled={busy === m.file_name}
+                          title="上传新文件替换（仅同步已停止且未受保护的服务器）"
+                          disabled={readOnly || busy === m.file_name}
                           onClick={() => startReplace(m.file_name)}
                         >
                           {busy === m.file_name ? <Loader2 className="h-4 w-4 animate-spin" /> : <Replace className="h-4 w-4" />}
@@ -469,6 +490,7 @@ function LibraryTab({
 }
 
 function ModrinthTab({
+  readOnly,
   serverId,
   serverType,
   mcVersion,
@@ -476,6 +498,7 @@ function ModrinthTab({
   onInstalled,
   onUninstall,
 }: {
+  readOnly: boolean
   serverId: number
   serverType: string
   mcVersion: string
@@ -513,6 +536,7 @@ function ModrinthTab({
   }, [serverType]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const install = async (hit: ModrinthHit) => {
+    if (readOnly) return
     setProgress((prev) => ({ ...prev, [hit.project_id]: null }))
     try {
       const versions = await modVersions(hit.project_id, filterMc ? mcVersion : undefined, loader)
@@ -595,12 +619,12 @@ function ModrinthTab({
                     {installedIds.has(h.slug.toLowerCase()) ? (
                       <div className="flex items-center justify-end gap-1">
                         <InstalledChip />
-                        <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" title="卸载" onClick={() => onUninstall({ id: h.slug })}>
+                        <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" title="卸载" disabled={readOnly} onClick={() => onUninstall({ id: h.slug })}>
                           <X className="h-4 w-4" />
                         </Button>
                       </div>
                     ) : (
-                      <Button type="button" size="sm" className="min-w-28 gap-1.5" disabled={h.project_id in progress} onClick={() => install(h)}>
+                      <Button type="button" size="sm" className="min-w-28 gap-1.5" disabled={readOnly || h.project_id in progress} onClick={() => install(h)}>
                         {h.project_id in progress ? (
                           <>
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />

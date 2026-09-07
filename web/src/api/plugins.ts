@@ -34,6 +34,17 @@ export function listPlugins(serverId: number): Promise<InstalledPlugin[]> {
   return apiRequest<InstalledPlugin[]>(`/plugins/server/${serverId}`)
 }
 
+export function reloadChangedPlugins(serverId: number) {
+  return apiRequest<{ ok: boolean }>(`/plugins/server/${serverId}/reload`, { method: 'POST' })
+}
+
+export function reloadPlugin(serverId: number, fileName: string) {
+  return apiRequest<{ ok: boolean }>(`/plugins/server/${serverId}/reload-plugin`, {
+    method: 'POST',
+    body: JSON.stringify({ file_name: fileName }),
+  })
+}
+
 export function getCatalogue(force = false): Promise<CataloguePlugin[]> {
   return apiRequest<CataloguePlugin[]>(`/plugins/catalogue${force ? '?refresh=true' : ''}`)
 }

@@ -53,6 +53,7 @@ _COLUMN_MIGRATIONS = {
         "rcon_enabled": "BOOLEAN DEFAULT 0",
         "rcon_port": "INTEGER DEFAULT 0",
         "rcon_password": "VARCHAR(64) DEFAULT ''",
+        "sort_order": "INTEGER DEFAULT 0",
     },
     "system_settings": {
         "download_proxy": "VARCHAR(255) DEFAULT ''",

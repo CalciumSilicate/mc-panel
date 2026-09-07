@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
@@ -31,6 +32,50 @@ class InstallPluginBody(BaseModel):
 
 class CopyToBody(BaseModel):
     targets: list[int]
+
+
+class ReloadPluginBody(BaseModel):
+    file_name: str
+
+
+async def _send_reload(db: Session, server_id: int, file_name: str | None = None) -> dict:
+    server = db.get(Server, server_id)
+    if server is None:
+        raise HTTPException(status_code=404, detail="server not found")
+    ensure_not_protected(server)
+    if server.server_type not in ("vanilla", "fabric", "forge"):
+        raise HTTPException(status_code=400, detail="该操作仅适用于 MC 服务器实例")
+    if mcdr_manager.get_status(server) != "running":
+        raise HTTPException(status_code=400, detail="实例未在运行")
+    command = "!!MCDR r plg"
+    if file_name is not None:
+        installed = plugins.list_plugins(mcdr_manager.instance_dir(server))
+        plugin = next((p for p in installed if p["file_name"] == file_name), None)
+        if plugin is None:
+            raise HTTPException(status_code=404, detail="插件未安装")
+        plugin_id = plugin.get("id")
+        if not isinstance(plugin_id, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", plugin_id):
+            raise HTTPException(status_code=400, detail="插件 ID 无效,无法重载")
+        if not plugin.get("enabled"):
+            raise HTTPException(status_code=400, detail="插件已禁用,无法重载")
+        command = f"!!MCDR plugin reload {plugin_id}"
+    try:
+        await mcdr_manager.send_command(server, command)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@router.post("/server/{server_id}/reload")
+async def reload_changed(server_id: int, _: str = Depends(require_helper), db: Session = Depends(get_db)) -> dict:
+    return await _send_reload(db, server_id)
+
+
+@router.post("/server/{server_id}/reload-plugin")
+async def reload_plugin(
+    server_id: int, body: ReloadPluginBody, _: str = Depends(require_helper), db: Session = Depends(get_db)
+) -> dict:
+    return await _send_reload(db, server_id, body.file_name)
 
 
 def _instance_dir(db: Session, server_id: int):

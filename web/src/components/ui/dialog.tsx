@@ -30,7 +30,7 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => (
+>(({ className, children, onInteractOutside, onEscapeKeyDown, ...props }, ref) => (
   <DialogPortal>
     <DialogOverlay />
     <DialogPrimitive.Content
@@ -40,6 +40,22 @@ const DialogContent = React.forwardRef<
         className
       )}
       {...props}
+      onInteractOutside={(event) => {
+        const prompt = document.querySelector('[data-global-dialog="true"][data-state="open"]')
+        const target = event.detail.originalEvent.target
+        // Outside events may arrive after the prompt has begun closing. The
+        // original target still identifies that interaction as belonging to it.
+        if (!(props as Record<string, unknown>)['data-global-dialog'] &&
+          (prompt || (target instanceof Element && target.closest('[data-global-dialog="true"]')))) {
+          event.preventDefault()
+        }
+        onInteractOutside?.(event)
+      }}
+      onEscapeKeyDown={(event) => {
+        const prompt = document.querySelector('[data-global-dialog="true"][data-state="open"]')
+        if (prompt && !(props as Record<string, unknown>)['data-global-dialog']) event.preventDefault()
+        onEscapeKeyDown?.(event)
+      }}
     >
       {children}
       <DialogPrimitive.Close className="absolute right-4 top-4 rounded-full border border-transparent p-1.5 opacity-70 ring-offset-background transition-[opacity,background-color,border-color] hover:opacity-100 hover:bg-accent/80 hover:border-border/70 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground dark:hover:border-white/[0.06]">

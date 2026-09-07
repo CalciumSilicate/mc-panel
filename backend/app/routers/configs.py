@@ -67,6 +67,31 @@ def refresh(server_id: int, _: str = Depends(require_helper), db: Session = Depe
     }
 
 
+async def _send_reload(server: Server, command: str) -> dict:
+    ensure_not_protected(server)
+    if server.server_type not in _MC_TYPES:
+        raise HTTPException(status_code=400, detail="该操作仅适用于 MC 服务器实例")
+    if manager.get_status(server) != "running":
+        raise HTTPException(status_code=400, detail="实例未在运行")
+    try:
+        await manager.send_command(server, command)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True}
+
+
+@router.post("/reload/{server_id}")
+async def reload_changed(server_id: int, _: str = Depends(require_helper), db: Session = Depends(get_db)) -> dict:
+    """仅刷新发生变化的 MCDR 插件,不重载全部插件。"""
+    return await _send_reload(_server(db, server_id), "!!MCDR r plg")
+
+
+@router.post("/{key}/{server_id}/reload")
+async def reload_preset(key: str, server_id: int, _: str = Depends(require_helper), db: Session = Depends(get_db)) -> dict:
+    preset = _preset(key)
+    return await _send_reload(_server(db, server_id), f"!!MCDR plugin reload {preset.plugin_id}")
+
+
 @router.get("/{key}/{server_id}")
 def get_config(key: str, server_id: int, _: str = Depends(require_helper), db: Session = Depends(get_db)) -> dict:
     preset = _preset(key)

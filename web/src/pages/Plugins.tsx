@@ -13,6 +13,8 @@ import {
   installPlugin,
   listLibrary,
   listPlugins,
+  reloadChangedPlugins,
+  reloadPlugin,
   replaceLibraryFile,
   switchPlugin,
   uploadPlugin,
@@ -50,10 +52,34 @@ function InstalledChip() {
 export default function Plugins() {
   const confirm = useConfirm()
   const { showToast } = useGlobalToast()
-  const { data: servers } = useResource(() => listServers(), [])
+  const { data: servers, refresh: refreshServers } = useResource(() => listServers(), [])
   const [serverId, setServerId] = useState<number | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  const [reloading, setReloading] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const selectedServer = servers?.find((s) => s.id === serverId)
+  const canReload = selectedServer?.status === 'running' && !selectedServer.protected
+    && ['vanilla', 'fabric', 'forge'].includes(selectedServer.server_type)
+
+  useEffect(() => {
+    const timer = window.setInterval(refreshServers, 5000)
+    return () => window.clearInterval(timer)
+  }, [refreshServers])
+
+  const reload = async (plugin?: InstalledPlugin) => {
+    if (serverId === null || !canReload || reloading !== null) return
+    setReloading(plugin?.file_name ?? '*')
+    try {
+      if (plugin) await reloadPlugin(serverId, plugin.file_name)
+      else await reloadChangedPlugins(serverId)
+      showToast('success', plugin ? `已发送 ${plugin.name} 重载命令` : '已发送变更插件刷新命令')
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : '发送重载命令失败')
+    } finally {
+      setReloading(null)
+      refreshServers()
+    }
+  }
 
   useEffect(() => {
     if (serverId === null && servers && servers.length > 0) setServerId(servers[0].id)
@@ -136,9 +162,13 @@ export default function Plugins() {
       width="7xl"
       actions={
         <div className="flex items-center gap-2">
-          <Button type="button" variant="outline" className="gap-1.5" disabled={serverId === null} onClick={() => setCopyOpen(true)}>
+          <Button type="button" variant="outline" className="gap-1.5 px-3 sm:px-4" title="刷新发生变化的插件 (!!MCDR r plg),仅运行且未受保护时可用" disabled={!canReload || reloading !== null} onClick={() => reload()}>
+            <RefreshCw className={cn('h-4 w-4', reloading === '*' && 'animate-spin')} />
+            <span className="sr-only sm:not-sr-only">重载</span>
+          </Button>
+          <Button type="button" variant="outline" className="gap-1.5 px-3 sm:px-4" title="复制到服务器" disabled={serverId === null} onClick={() => setCopyOpen(true)}>
             <Copy className="h-4 w-4" />
-            复制到服务器
+            <span className="sr-only sm:not-sr-only">复制到服务器</span>
           </Button>
           <Select
             value={serverId === null ? undefined : String(serverId)}
@@ -203,7 +233,7 @@ export default function Plugins() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>名称</TableHead>
+                        <TableHead className="w-1/2">名称</TableHead>
                         <TableHead>版本</TableHead>
                         <TableHead>启用</TableHead>
                         <TableHead className="text-right">操作</TableHead>
@@ -213,8 +243,8 @@ export default function Plugins() {
                       {installedPaged.pageItems.map((p) => (
                         <TableRow key={p.file_name}>
                           <TableCell>
-                            <div className="font-medium">{p.name}</div>
-                            <div className="text-xs text-muted-foreground">{p.file_name}</div>
+                            <div className="truncate font-medium" title={p.name}>{p.name}</div>
+                            <div className="truncate text-xs text-muted-foreground" title={p.file_name}>{p.file_name}</div>
                           </TableCell>
                           <TableCell className="text-muted-foreground">{p.version || '—'}</TableCell>
                           <TableCell>
@@ -227,6 +257,18 @@ export default function Plugins() {
                             />
                           </TableCell>
                           <TableCell className="text-right">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                              title={`重载插件 (${p.id || '无有效 ID'}),仅运行且未受保护时可用`}
+                              aria-label={`重载插件 ${p.name}`}
+                              disabled={!canReload || reloading !== null || busy === p.file_name || !p.enabled || !/^[a-z][a-z0-9_]{0,63}$/.test(p.id)}
+                              onClick={() => reload(p)}
+                            >
+                              <RefreshCw className={cn('h-4 w-4', reloading === p.file_name && 'animate-spin')} />
+                            </Button>
                             <Button
                               type="button"
                               variant="ghost"
@@ -379,7 +421,7 @@ function LibraryTab({
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>名称</TableHead>
+                  <TableHead className="w-1/2">名称</TableHead>
                   <TableHead>版本</TableHead>
                   <TableHead className="text-right">操作</TableHead>
                 </TableRow>
@@ -388,12 +430,36 @@ function LibraryTab({
                 {libPaged.pageItems.map((p) => (
                   <TableRow key={p.file_name}>
                     <TableCell>
-                      <div className="font-medium">{p.name}</div>
-                      <div className="text-xs text-muted-foreground">{p.file_name}</div>
+                      <div className="truncate font-medium" title={p.name}>{p.name}</div>
+                      <div className="truncate text-xs text-muted-foreground" title={p.file_name}>{p.file_name}</div>
                     </TableCell>
                     <TableCell className="text-muted-foreground">{p.version || '—'}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1.5">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                          title="上传新文件替换(含已安装的服务器)"
+                          disabled={busy === p.file_name}
+                          onClick={() => startReplace(p.file_name)}
+                        >
+                          {busy === p.file_name ? <Loader2 className="h-4 w-4 animate-spin" /> : <Replace className="h-4 w-4" />}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                          title="从库删除"
+                          disabled={busy === p.file_name}
+                          onClick={async () => {
+                            if (await confirm({ title: `从本地库删除「${p.name}」?`, confirmText: '删除', destructive: true })) act(p, () => deleteFromLibrary(p.file_name), '已删除', refresh)
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
                         {installedFiles.has(stripDisabled(p.file_name)) || (p.id && installedIds.has(p.id)) ? (
                           <>
                             <InstalledChip />
@@ -428,30 +494,6 @@ function LibraryTab({
                             安装到此服务器
                           </Button>
                         )}
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                          title="上传新文件替换(含已安装的服务器)"
-                          disabled={busy === p.file_name}
-                          onClick={() => startReplace(p.file_name)}
-                        >
-                          {busy === p.file_name ? <Loader2 className="h-4 w-4 animate-spin" /> : <Replace className="h-4 w-4" />}
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                          title="从库删除"
-                          disabled={busy === p.file_name}
-                          onClick={async () => {
-                            if (await confirm({ title: `从本地库删除「${p.name}」?`, confirmText: '删除', destructive: true })) act(p, () => deleteFromLibrary(p.file_name), '已删除', refresh)
-                          }}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -539,7 +581,7 @@ function CatalogueTab({
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>插件</TableHead>
+                <TableHead className="w-1/2">插件</TableHead>
                 <TableHead>最新版本</TableHead>
                 <TableHead className="text-right">操作</TableHead>
               </TableRow>
@@ -548,7 +590,7 @@ function CatalogueTab({
               {catPaged.pageItems.map((p) => (
                 <TableRow key={p.id}>
                   <TableCell>
-                    <div className="font-medium">{p.name}</div>
+                    <div className="truncate font-medium" title={p.name}>{p.name}</div>
                     <div className="line-clamp-1 max-w-md text-xs text-muted-foreground">{p.description || p.id}</div>
                   </TableCell>
                   <TableCell><Badge variant="outline" className="text-[11px]">{p.version || '—'}</Badge></TableCell>

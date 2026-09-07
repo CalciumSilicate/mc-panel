@@ -497,6 +497,18 @@ class MCDRManager:
         )
 
     # ---------- 编辑:把改动落到实例文件 ----------
+    def preview_start_command(
+        self, server: Server, java: str, min_memory: str | None = None,
+        max_memory: str | None = None, extra_jvm_args: str | None = None,
+    ) -> list[str]:
+        """只读预览默认命令，与实际写入配置使用同一构建路径。"""
+        return build_start_command(
+            java, server.min_memory if min_memory is None else min_memory,
+            server.max_memory if max_memory is None else max_memory,
+            server.extra_jvm_args if extra_jvm_args is None else extra_jvm_args,
+            server.server_type, _resolve_launch(self.instance_dir(server), server.server_type),
+        )
+
     def apply_start_command(self, server: Server, java: str | None = None) -> None:
         """按 server 的内存/额外 JVM 参数重建 config.yml 的 start_command。
         java 为 None 时沿用现有 start_command[0](默认 'java')。"""
@@ -514,11 +526,7 @@ class MCDRManager:
             if java is None:
                 cmd = data.get("start_command")
                 java = cmd[0] if isinstance(cmd, list) and cmd else "java"
-            launch = _resolve_launch(self.instance_dir(server), server.server_type)
-            data["start_command"] = build_start_command(
-                java, server.min_memory, server.max_memory, server.extra_jvm_args,
-                server.server_type, launch,
-            )
+            data["start_command"] = self.preview_start_command(server, java)
         lang = (getattr(server, "mcdr_language", "") or "").strip()
         if lang:
             data["language"] = lang
@@ -627,11 +635,25 @@ class MCDRManager:
                 data = tomllib.loads(path.read_text(encoding="utf-8"))
             except Exception:  # noqa: BLE001
                 data = {}
+        srv = data.get("servers", {})
+        if not isinstance(srv, dict):
+            srv = {}
+        servers = [
+            {"key": k, "addr": str(v)}
+            for k, v in srv.items()
+            if k != "try" and isinstance(v, str)
+        ]
+        try_raw = srv.get("try", [])
+        try_servers = [str(x) for x in try_raw if isinstance(x, str)] if isinstance(try_raw, list) else []
         return {
             "motd": str(data.get("motd", "")),
             "show_max_players": int(data.get("show-max-players", 500) or 500),
             "online_mode": bool(data.get("online-mode", True)),
-            "forwarding_mode": str(data.get("player-info-forwarding-mode", "NONE")),
+            # Velocity 对该枚举大小写不敏感,文件里可能是 "modern"(见 proxy.py 一键接线);
+            # 前端 Select 选项是大写,故统一转大写,避免读出后匹配不到选项显示空白。
+            "forwarding_mode": str(data.get("player-info-forwarding-mode", "NONE")).upper(),
+            "servers": servers,
+            "try_servers": try_servers,
         }
 
     def write_velocity_config(self, server: Server, updates: dict) -> None:
@@ -658,6 +680,25 @@ class MCDRManager:
             text = set_raw(text, "online-mode", "true" if updates["online_mode"] else "false")
         if "forwarding_mode" in updates:
             text = set_str(text, "player-info-forwarding-mode", str(updates["forwarding_mode"]))
+        if "try_servers" in updates:
+            keys = [str(k) for k in (updates["try_servers"] or [])]
+            if keys:
+                inner = ",\n".join(f'    "{k}"' for k in keys)
+                block = f"try = [\n{inner}\n]"
+            else:
+                block = "try = []"
+            # 替换 [servers] 表内已有的 try 数组(可能跨多行,取到第一个 ] 为止)
+            try_re = re.compile(r"(?ms)^try\s*=\s*\[.*?\]")
+            if try_re.search(text):
+                text = try_re.sub(lambda _m: block, text, count=1)
+            else:
+                # 没有 try:插到 [servers] 表头之后
+                text = re.sub(
+                    r"(?m)^(\[servers\][^\n]*\n)",
+                    lambda m: m.group(1) + block + "\n",
+                    text,
+                    count=1,
+                )
         path.write_text(text, encoding="utf-8")
 
     async def redownload_jar(self, server: Server, java_command: str = "java") -> None:
@@ -786,6 +827,30 @@ class MCDRManager:
             except Exception:  # noqa: BLE001
                 pass
         self._procs.pop(server.id, None)
+
+    async def shutdown(self, servers: list[Server], timeout: float = 60) -> None:
+        """Drain instances concurrently before the container's SIGKILL deadline."""
+        installs = list(self._install_tasks.values())
+        for task in installs:
+            task.cancel()
+        await asyncio.gather(*installs, return_exceptions=True)
+
+        async def drain(server: Server) -> None:
+            proc = self._procs.get(server.id)
+            if proc is None or proc.returncode is not None:
+                return
+            try:
+                async with asyncio.timeout(timeout):
+                    await self.stop(server)
+                    await proc.wait()
+            except (TimeoutError, OSError):
+                await self.force_stop(server)
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=10)
+                except TimeoutError:
+                    pass
+
+        await asyncio.gather(*(drain(server) for server in servers))
 
     async def delete_instance(self, server: Server) -> None:
         await self.stop(server)

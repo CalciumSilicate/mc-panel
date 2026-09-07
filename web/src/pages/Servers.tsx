@@ -1,5 +1,10 @@
-import { useEffect, useState } from 'react'
-import { Ban, Download, Loader2, MessageSquare, Network, Pencil, Play, Plus, RefreshCw, Server, Square, Terminal, Trash2, Zap } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { DndContext, KeyboardSensor, MouseSensor, TouchSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
+import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+import { useReducedMotion } from 'motion/react'
+import type { ReactNode } from 'react'
+import { Ban, ChevronDown, ChevronUp, Download, FolderOpen, GripVertical, Loader2, MessageSquare, Network, Pencil, Plus, RefreshCw, Server, Terminal, Trash2, X } from 'lucide-react'
 
 import {
   type JavaInfo,
@@ -17,22 +22,19 @@ import {
   getSuggestedPort,
   getVelocityConfig,
   listServers,
-  forceStopServer,
+  reorderServers,
   reinstallServer,
   getRconInfo,
   type RconInfo,
   setRcon,
-  startServer,
-  stopServer,
   updateProperties,
   updateServer,
+  previewStartCommand,
   updateVelocityConfig,
 } from '@/api/servers'
 import { type JavaInstall, getSettings } from '@/api/settings'
 import { type ServerGroup, createGroup, deleteGroup, listGroups, updateGroup } from '@/api/groups'
 import { useAuth } from '@/components/auth-context'
-import { Pagination } from '@/components/Pagination'
-import { usePaged } from '@/lib/use-paged'
 import { useConfirm, usePrompt } from '@/components/ui/dialog-context'
 import { InlineLoader } from '@/components/PageLoader'
 import { PageShell, PageSurface } from '@/components/layout/PageScaffold'
@@ -49,6 +51,8 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ServerConsoleDialog } from '@/components/ServerConsoleDialog'
+import { ServerFilesDialog } from '@/components/ServerFilesDialog'
+import { ServerLifecycleButton } from '@/components/ServerLifecycleButton'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -67,10 +71,186 @@ const TYPE_LABEL: Record<string, string> = {
   velocity: 'Velocity',
 }
 
+// 类型 badge 配色:各类型一眼可辨(明暗两套)
+const TYPE_BADGE: Record<string, string> = {
+  vanilla: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
+  fabric: 'border-sky-500/40 bg-sky-500/10 text-sky-600 dark:text-sky-400',
+  forge: 'border-orange-500/40 bg-orange-500/10 text-orange-600 dark:text-orange-400',
+  velocity: 'border-violet-500/40 bg-violet-500/10 text-violet-600 dark:text-violet-400',
+}
+
 const CHANNEL_LABEL: Record<VersionChannel, string> = {
   release: '正式版',
   snapshot: '快照版',
   experimental: '实验版',
+}
+
+function SortableServerRow({ server, canSort, disabled, children }: {
+  server: ServerSummary
+  canSort: boolean
+  disabled: boolean
+  children: ReactNode
+}) {
+  const reducedMotion = useReducedMotion()
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
+    id: server.id,
+    disabled: !canSort || disabled,
+    transition: { duration: reducedMotion ? 0 : 240, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' },
+  })
+
+  return (
+    <TableRow
+      ref={setNodeRef}
+      data-dragging={isDragging || undefined}
+      style={{ transform: CSS.Transform.toString(transform), transition, position: 'relative', zIndex: isDragging ? 10 : undefined }}
+      className={cn(isDragging && 'bg-card shadow-xl ring-1 ring-primary/50 hover:bg-card [&_td]:bg-primary/10')}
+    >
+      <TableCell className="w-8 px-1">
+        {canSort ? (
+          <button
+            ref={setActivatorNodeRef}
+            type="button"
+            {...attributes}
+            {...listeners}
+            disabled={disabled}
+            aria-label={`调整 ${server.name} 的位置`}
+            title="拖拽排序；也可按空格选中、方向键移动、空格放下、Esc 取消"
+            className={cn('flex h-8 w-7 touch-none select-none items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-wait', isDragging ? 'cursor-grabbing text-primary' : 'cursor-grab')}
+          >
+            <GripVertical className="h-4 w-4" />
+          </button>
+        ) : null}
+      </TableCell>
+      {children}
+    </TableRow>
+  )
+}
+
+function ServerQuickEdit({ server, field, groups, editable, onSaved }: {
+  server: ServerSummary
+  field: 'group' | 'memory' | 'port' | 'priority' | 'auto'
+  groups: ServerGroup[]
+  editable: boolean
+  onSaved: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [group, setGroup] = useState('none')
+  const [min, setMin] = useState('')
+  const [max, setMax] = useState('')
+  const [port, setPort] = useState('')
+  const [saved, setSaved] = useState<ServerSummary | null>(null)
+  const saving = useRef(false)
+  const { showToast } = useGlobalToast()
+  const label = { group: '互联组', memory: '内存', port: '端口', priority: '自启优先级', auto: '开机自启' }[field]
+  const current = saved ?? server
+  const value = field === 'group' ? current.group_name || '—' : field === 'memory' ? `${current.min_memory} ~ ${current.max_memory}` : field === 'priority' ? String(current.autostart_priority ?? 0) : field === 'auto' ? (current.auto_start ? '已开启' : '已关闭') : String(current.port)
+  const locked = !editable || server.protected || server.status === 'installing'
+
+  // Keep the acknowledged value visible until polling catches up, including
+  // when an already in-flight list request returns the pre-save snapshot.
+  useEffect(() => {
+    if (!saved) return
+    const caughtUp = field === 'memory' ? server.min_memory === saved.min_memory && server.max_memory === saved.max_memory
+      : field === 'group' ? server.group_id === saved.group_id
+      : field === 'priority' ? server.autostart_priority === saved.autostart_priority
+      : field === 'auto' ? server.auto_start === saved.auto_start : server.port === saved.port
+    if (caughtUp) setSaved(null)
+  }, [server, saved, field])
+
+  const changeOpen = (next: boolean) => {
+    if (saving.current) return
+    if (next) {
+      setGroup(current.group_id === null ? 'none' : String(current.group_id))
+      setMin(current.min_memory)
+      setMax(current.max_memory)
+      setPort(field === 'priority' ? String(current.autostart_priority ?? 0) : String(current.port))
+      setError('')
+    }
+    setOpen(next)
+  }
+
+  const save = async (selectedGroup = group) => {
+    if (saving.current || locked) return
+    const low = min.trim().toUpperCase()
+    const high = max.trim().toUpperCase()
+    if (field === 'memory') {
+      const memory = (v: string) => {
+        const match = /^([1-9]\d*)([KMG]?)$/.exec(v)
+        return match ? Number(match[1]) * (1024 ** (match[2] ? 'KMG'.indexOf(match[2]) + 1 : 0)) : NaN
+      }
+      if (!Number.isFinite(memory(low)) || !Number.isFinite(memory(high)) || memory(low) > memory(high)) {
+        setError('请输入有效内存（如 512M、2G），且最小内存不能大于最大内存。')
+        return
+      }
+    }
+    if (field === 'port' && (!/^\d+$/.test(port.trim()) || Number(port) < 1 || Number(port) > 65535)) {
+      setError('端口须为 1–65535 的整数。')
+      return
+    }
+    if (field === 'priority' && (!/^-?\d+$/.test(port.trim()) || !Number.isSafeInteger(Number(port)))) {
+      setError('优先级须为整数，数值越小越先启动。')
+      return
+    }
+    saving.current = true
+    setBusy(true)
+    setError('')
+    try {
+      const updated = await updateServer(server.id, field === 'group' ? { group_id: selectedGroup === 'none' ? null : Number(selectedGroup) } : field === 'memory' ? { min_memory: low, max_memory: high } : field === 'priority' ? { autostart_priority: Number(port) } : field === 'auto' ? { auto_start: !current.auto_start } : { port: Number(port) })
+      setSaved(updated)
+      setOpen(false)
+      showToast('success', `${label}已保存`)
+      onSaved()
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : '保存失败，请重试')
+    } finally {
+      saving.current = false
+      setBusy(false)
+    }
+  }
+
+  if (locked) return <span title={server.protected ? '实例受保护，请先取消保护' : undefined}>{value}</span>
+
+  if (!open || field === 'auto') return (
+    <span className="inline-flex w-max max-w-full flex-col">
+      <button type="button" disabled={busy} aria-label={`修改 ${server.name} 的${label}`} aria-pressed={field === 'auto' ? current.auto_start : undefined} title={`点击修改${label}`} onClick={() => field === 'auto' ? void save() : changeOpen(true)} className={cn('inline-flex w-max shrink-0 items-center whitespace-nowrap rounded px-1 py-1 -mx-1 text-left transition-colors hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary', field === 'auto' && current.auto_start && 'text-primary')}>
+        {value}
+        {busy ? <Loader2 className="ml-1 h-3 w-3 animate-spin" /> : null}
+      </button>
+      {error ? <span role="alert" className="whitespace-normal text-xs text-destructive">{error}</span> : null}
+    </span>
+  )
+
+  return (
+        <form aria-label={`修改${label}`} title="Enter 或移出输入框保存，Esc 取消" className="relative w-max font-sans"
+          onBlur={(e) => { if (field !== 'group' && !e.currentTarget.contains(e.relatedTarget)) void save() }}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); changeOpen(false) }
+            if (e.key === 'Enter' && field !== 'group' && !e.nativeEvent.isComposing) { e.preventDefault(); void save() }
+          }}
+          onSubmit={(e) => { e.preventDefault(); void save() }}>
+          <fieldset disabled={busy} className="flex items-center gap-1">
+            {field === 'group' ? (
+              <Select value={group} onValueChange={(next) => { setGroup(next); void save(next) }} disabled={busy}>
+                <SelectTrigger autoFocus aria-label="互联组" className="h-8 w-32"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">不加入互联组</SelectItem>
+                  {groups.map((g) => <SelectItem key={g.id} value={String(g.id)}>{g.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            ) : field === 'memory' ? (
+              <div className="flex items-center gap-1">
+                <Input autoFocus aria-label="最小内存" title="最小内存" className="h-8 w-[7ch] px-1.5" value={min} onChange={(e) => setMin(e.target.value)} placeholder="512M" />
+                <span aria-hidden="true">~</span>
+                <Input aria-label="最大内存" title="最大内存" className="h-8 w-[7ch] px-1.5" value={max} onChange={(e) => setMax(e.target.value)} placeholder="2G" />
+              </div>
+            ) : <Input autoFocus aria-label={label} className="h-8 w-[8ch] px-1.5" value={port} onChange={(e) => setPort(e.target.value)} inputMode="numeric" />}
+            {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+          </fieldset>
+          {error ? <p role="alert" className="max-w-48 whitespace-normal text-xs text-destructive">{error}</p> : null}
+        </form>
+  )
 }
 
 /**
@@ -78,7 +258,7 @@ const CHANNEL_LABEL: Record<VersionChannel, string> = {
  * 列表每 4s 自动刷新一次,以便反映「安装中 → 已停止」的状态变化。
  */
 export default function Servers() {
-  const { roleAtLeast, canOperate } = useAuth()
+  const { roleAtLeast } = useAuth()
   const canAdmin = roleAtLeast('admin')
   const canHelper = roleAtLeast('helper')
   const { data, loading, error, refresh } = useResource(() => listServers(), [])
@@ -88,60 +268,69 @@ export default function Servers() {
   const [manageGroupsOpen, setManageGroupsOpen] = useState(false)
   const [busyId, setBusyId] = useState<number | null>(null)
   const [consoleServer, setConsoleServer] = useState<ServerSummary | null>(null)
+  const [filesServer, setFilesServer] = useState<ServerSummary | null>(null)
   const [editServer, setEditServer] = useState<ServerSummary | null>(null)
-  const [stoppingIds, setStoppingIds] = useState<Set<number>>(new Set())
-  const [restartingIds, setRestartingIds] = useState<Set<number>>(new Set())
-  const confirm = useConfirm()
-  const paged = usePaged(data ?? [], 20)
+  const [commandsServer, setCommandsServer] = useState<ServerSummary | null>(null)
+  const [commandsDraft, setCommandsDraft] = useState('')
+  const [commandsBusy, setCommandsBusy] = useState(false)
+  // 拖拽排序:localOrder 为乐观顺序(拖完立即生效,后台持久化);null=用后端返回顺序
+  const [localOrder, setLocalOrder] = useState<number[] | null>(null)
+  const [dragId, setDragId] = useState<number | null>(null)
+  const [savingOrder, setSavingOrder] = useState(false)
+  const [sort, setSort] = useState<{ key: keyof ServerSummary; direction: 1 | -1 } | null>(null)
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  )
+
+  const displayed = useMemo(() => {
+    const list = data ?? []
+    const byId = new Map(list.map((s) => [s.id, s]))
+    const ordered = (localOrder ?? list.map((s) => s.id)).map((id) => byId.get(id)).filter(Boolean) as ServerSummary[]
+    // localOrder 里没有的(新建 / 其它来源)追加到末尾
+    for (const s of list) if (localOrder && !localOrder.includes(s.id)) ordered.push(s)
+    if (sort) ordered.sort((a, b) => {
+      const left = a[sort.key] ?? 0
+      const right = b[sort.key] ?? 0
+      if (sort.key === 'max_memory') {
+        const size = (v: unknown) => { const m = /^(\d+)([KMG]?)$/i.exec(String(v)); return m ? Number(m[1]) * 1024 ** (m[2] ? 'KMG'.indexOf(m[2].toUpperCase()) + 1 : 0) : 0 }
+        return (size(left) - size(right)) * sort.direction
+      }
+      return (typeof left === 'number' || typeof left === 'boolean' ? Number(left) - Number(right) : String(left).localeCompare(String(right), 'zh-CN', { numeric: true })) * sort.direction
+    })
+    return ordered
+  }, [data, localOrder, sort])
+
+  const persistOrder = async (ids: number[]) => {
+    setLocalOrder(ids)
+    setSavingOrder(true)
+    try {
+      await reorderServers(ids)
+    } catch (err) {
+      setLocalOrder(null)
+      showToast('error', err instanceof ApiError ? err.message : '排序保存失败')
+    } finally {
+      setSavingOrder(false)
+      refresh()
+    }
+  }
+
+  const handleDrop = ({ active, over }: DragEndEvent) => {
+    setDragId(null)
+    if (!over || active.id === over.id) return
+    const ids = displayed.map((s) => s.id)
+    const from = ids.indexOf(Number(active.id))
+    const to = ids.indexOf(Number(over.id))
+    if (from === -1 || to === -1) return
+    void persistOrder(arrayMove(ids, from, to))
+  }
 
   useEffect(() => {
+    if (dragId !== null || savingOrder) return
     const timer = window.setInterval(refresh, 2000)
     return () => window.clearInterval(timer)
-  }, [refresh])
-
-  // 服务器已停/出错后,清掉「停止中」标记
-  useEffect(() => {
-    setStoppingIds((prev) => {
-      if (prev.size === 0) return prev
-      const next = new Set(prev)
-      for (const s of data ?? []) {
-        if (s.status === 'stopped' || s.status === 'error') next.delete(s.id)
-      }
-      return next.size === prev.size ? prev : next
-    })
-  }, [data])
-
-  const onStop = (id: number) => {
-    setStoppingIds((p) => new Set(p).add(id))
-    runAction(id, () => stopServer(id), '已发送停止命令')
-  }
-
-  const onForceStop = async (server: ServerSummary) => {
-    if (!(await confirm({ title: `强制停止「${server.name}」?`, description: '将直接杀死进程,未保存的世界改动可能丢失。', confirmText: '强制停止', destructive: true }))) return
-    runAction(server.id, () => forceStopServer(server.id), '已强制停止')
-  }
-
-  // 重启:先停,待其停止后自动再启;等待期间按钮变「强制重启」
-  const onRestart = (id: number) => {
-    setRestartingIds((p) => new Set(p).add(id))
-    runAction(id, () => stopServer(id), '重启中:正在停止…')
-  }
-  const onForceRestart = async (server: ServerSummary) => {
-    if (!(await confirm({ title: `强制重启「${server.name}」?`, description: '将直接杀死进程后重新启动,未保存的世界改动可能丢失。', confirmText: '强制重启', destructive: true }))) return
-    runAction(server.id, () => forceStopServer(server.id), '正在强杀,稍后自动启动…')
-  }
-
-  // 重启流程中的实例一旦停止,自动再启动
-  useEffect(() => {
-    const stopped = (data ?? []).filter((s) => restartingIds.has(s.id) && s.status === 'stopped')
-    if (stopped.length === 0) return
-    setRestartingIds((prev) => {
-      const next = new Set(prev)
-      for (const s of stopped) next.delete(s.id)
-      return next
-    })
-    for (const s of stopped) startServer(s.id).catch(() => undefined)
-  }, [data, restartingIds])
+  }, [refresh, dragId, savingOrder])
 
   const runAction = async (id: number, action: () => Promise<unknown>, okText: string) => {
     setBusyId(id)
@@ -160,23 +349,23 @@ export default function Servers() {
     <PageShell
       title="服务器实例"
       description="管理由本面板托管的 MCDR 实例。"
-      width="7xl"
+      width="full"
       actions={
         <>
-          <Button type="button" variant="outline" className="gap-2" onClick={refresh} disabled={loading}>
+          <Button type="button" variant="outline" className="gap-2 px-3 sm:px-4" title="刷新" onClick={refresh} disabled={loading}>
             <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
-            刷新
+            <span className="sr-only sm:not-sr-only">刷新</span>
           </Button>
           {canAdmin ? (
-            <Button type="button" variant="outline" className="gap-2" onClick={() => setManageGroupsOpen(true)}>
+            <Button type="button" variant="outline" className="gap-2 px-3 sm:px-4" title="互联组" onClick={() => setManageGroupsOpen(true)}>
               <Network className="h-4 w-4" />
-              互联组
+              <span className="sr-only sm:not-sr-only">互联组</span>
             </Button>
           ) : null}
           {canAdmin ? (
             <Button type="button" className="gap-2" onClick={() => setCreateOpen(true)}>
               <Plus className="h-4 w-4" />
-              新建服务器
+              <span className="sm:hidden">新建</span><span className="hidden sm:inline">新建服务器</span>
             </Button>
           ) : null}
         </>
@@ -210,40 +399,77 @@ export default function Servers() {
             </div>
           ) : (
             <div className="ops-table-shell border-0">
-              <Table>
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                modifiers={[({ transform, draggingNodeRect, containerNodeRect }) => ({
+                  ...transform,
+                  x: 0,
+                  // The row's parent is tbody: exclude the header and keep
+                  // the entire dragged row inside the first/last data rows.
+                  y: draggingNodeRect && containerNodeRect
+                    ? Math.min(
+                      Math.max(transform.y, containerNodeRect.top - draggingNodeRect.top),
+                      containerNodeRect.bottom - draggingNodeRect.bottom,
+                    )
+                    : transform.y,
+                })]}
+                onDragStart={({ active }) => setDragId(Number(active.id))}
+                onDragCancel={() => setDragId(null)}
+                onDragEnd={handleDrop}
+              >
+              <SortableContext items={displayed.map((server) => server.id)} strategy={verticalListSortingStrategy}>
+              <Table className="min-w-[1300px]">
                 <TableHeader>
                   <TableRow>
-                    <TableHead>名称</TableHead>
-                    <TableHead>类型</TableHead>
-                    <TableHead>版本</TableHead>
-                    <TableHead>加载器/核心</TableHead>
-                    <TableHead>互联组</TableHead>
-                    <TableHead>内存</TableHead>
-                    <TableHead>端口</TableHead>
-                    <TableHead>状态</TableHead>
+                    <TableHead className="w-8 px-1" />
+                    {([
+                      ['名称', 'name'], ['类型', 'server_type'], ['版本', 'mc_version'], ['加载器/核心', 'loader_version'],
+                      ['互联组', 'group_name'], ['内存', 'max_memory'], ['端口', 'port'], ['开机自启', 'auto_start'], ['自启优先级', 'autostart_priority'], ['状态', 'status'],
+                    ] as const).map(([label, key]) => (
+                      <TableHead key={key} aria-sort={sort?.key === key ? sort.direction === 1 ? 'ascending' : 'descending' : 'none'}>
+                        <button type="button" disabled={dragId !== null} className="inline-flex items-center gap-1 hover:text-foreground" title="点击切换升序、降序、原始顺序；排序时暂停拖拽" onClick={() => setSort(sort?.key !== key ? { key, direction: 1 } : sort.direction === 1 ? { key, direction: -1 } : null)}>
+                          {label}{sort?.key === key ? sort.direction === 1 ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" /> : null}
+                        </button>
+                      </TableHead>
+                    ))}
                     <TableHead className="text-right">操作</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {paged.pageItems.map((server) => {
+                  {displayed.map((server) => {
                     const meta = SERVER_STATUS_META[server.status]
                     const busy = busyId === server.id
                     const installing = server.status === 'installing'
                     const starting = server.status === 'starting'
-                    const active = server.status === 'running' || starting
                     return (
-                      <TableRow key={server.id}>
-                        <TableCell className="font-medium">{server.name}</TableCell>
+                      <SortableServerRow
+                        key={server.id}
+                        server={server}
+                        canSort={canAdmin}
+                        disabled={savingOrder || sort !== null}
+                      >
+                        <TableCell className="max-w-52 truncate font-medium" title={server.name}>{server.name}</TableCell>
                         <TableCell>
-                          <Badge variant="outline" className="text-[11px]">{TYPE_LABEL[server.server_type] ?? server.server_type}</Badge>
+                          <Badge variant="outline" className={cn('text-[11px]', TYPE_BADGE[server.server_type])}>{TYPE_LABEL[server.server_type] ?? server.server_type}</Badge>
                         </TableCell>
-                        <TableCell className="text-muted-foreground">{server.mc_version || '—'}</TableCell>
-                        <TableCell className="font-mono text-xs text-muted-foreground">{server.loader_version || '—'}</TableCell>
-                        <TableCell className="text-muted-foreground">{server.group_name || '—'}</TableCell>
+                        <TableCell className="max-w-40 truncate text-muted-foreground" title={server.mc_version}>{server.mc_version || '—'}</TableCell>
+                        <TableCell className="max-w-52 truncate font-mono text-xs text-muted-foreground" title={server.loader_version}>{server.loader_version || '—'}</TableCell>
+                        <TableCell className="text-muted-foreground">
+                          <ServerQuickEdit server={server} field="group" groups={groups ?? []} editable={canAdmin} onSaved={refresh} />
+                        </TableCell>
                         <TableCell className="font-mono text-xs text-muted-foreground">
-                          {server.min_memory} ~ {server.max_memory}
+                          <ServerQuickEdit server={server} field="memory" groups={groups ?? []} editable={canAdmin} onSaved={refresh} />
                         </TableCell>
-                        <TableCell className="font-mono text-muted-foreground">{server.port}</TableCell>
+                        <TableCell className="font-mono text-muted-foreground">
+                          <ServerQuickEdit server={server} field="port" groups={groups ?? []} editable={canAdmin} onSaved={refresh} />
+                        </TableCell>
+                        <TableCell>
+                          <ServerQuickEdit server={server} field="auto" groups={groups ?? []} editable={canAdmin} onSaved={refresh} />
+                        </TableCell>
+                        <TableCell>
+                          <ServerQuickEdit server={server} field="priority" groups={groups ?? []} editable={canAdmin} onSaved={refresh} />
+                        </TableCell>
                         <TableCell>
                           <div className="flex flex-wrap items-center gap-1">
                             <Badge variant="outline" className={cn('gap-1 text-[11px]', meta.tone)}>
@@ -258,6 +484,8 @@ export default function Servers() {
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center justify-end gap-1.5">
+                            {canAdmin ? <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" title="浏览服务器文件" aria-label="浏览服务器文件" onClick={() => setFilesServer(server)}><FolderOpen className="h-4 w-4" /></Button> : null}
+                            {canAdmin ? <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" title="编辑开服自动执行指令" aria-label="编辑开服自动执行指令" disabled={server.protected || installing} onClick={() => { setCommandsServer(server); setCommandsDraft((server.startup_commands ?? []).join('\n')) }}><MessageSquare className="h-4 w-4" /></Button> : null}
                             {canAdmin ? (
                               <Button
                                 type="button"
@@ -284,42 +512,7 @@ export default function Servers() {
                                 <Terminal className="h-4 w-4" />
                               </Button>
                             ) : null}
-                            {active && (server.protected ? canAdmin : canOperate) ? (
-                              restartingIds.has(server.id) ? (
-                                <Button type="button" variant="destructive" size="sm" className="gap-1.5" disabled={busy} onClick={() => onForceRestart(server)}>
-                                  {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
-                                  强制重启
-                                </Button>
-                              ) : stoppingIds.has(server.id) ? (
-                                <Button type="button" variant="destructive" size="sm" className="gap-1.5" disabled={busy} onClick={() => onForceStop(server)}>
-                                  {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
-                                  强制停止
-                                </Button>
-                              ) : server.needs_restart ? (
-                                <Button type="button" variant="outline" size="sm" className="gap-1.5 border-amber-500/50 text-amber-600 dark:text-amber-400" disabled={busy} onClick={() => onRestart(server.id)}>
-                                  {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-                                  重启
-                                </Button>
-                              ) : (
-                                <Button type="button" variant="outline" size="sm" className="gap-1.5" disabled={busy} onClick={() => onStop(server.id)}>
-                                  {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Square className="h-3.5 w-3.5" />}
-                                  停止
-                                </Button>
-                              )
-                            ) : null}
-                            {canOperate && !active ? (
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                className="gap-1.5"
-                                disabled={busy || (server.status !== 'stopped' && server.status !== 'queued')}
-                                onClick={() => runAction(server.id, () => startServer(server.id), '已启动')}
-                              >
-                                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-                                启动
-                              </Button>
-                            ) : null}
+                            <ServerLifecycleButton server={server} onChanged={refresh} />
                             {canAdmin && installing ? (
                               <Button
                                 type="button"
@@ -348,12 +541,13 @@ export default function Servers() {
                             ) : null}
                           </div>
                         </TableCell>
-                      </TableRow>
+                      </SortableServerRow>
                     )
                   })}
                 </TableBody>
               </Table>
-              <Pagination page={paged.page} pageCount={paged.pageCount} total={paged.total} onPage={paged.setPage} />
+              </SortableContext>
+              </DndContext>
             </div>
           )}
         </PageSurface>
@@ -368,6 +562,27 @@ export default function Servers() {
           refresh()
         }}
       />
+
+      <Dialog open={commandsServer !== null} onOpenChange={(open) => { if (!open && !commandsBusy) setCommandsServer(null) }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>开服自动执行指令 · {commandsServer?.name}</DialogTitle><DialogDescription>每行一条，实例加载完成（Done）后依次执行；不会立即执行。</DialogDescription></DialogHeader>
+          <Textarea aria-label="开服自动执行指令" rows={8} value={commandsDraft} disabled={commandsBusy} onChange={(e) => setCommandsDraft(e.target.value)} />
+          <DialogFooter>
+            <Button variant="outline" disabled={commandsBusy} onClick={() => setCommandsServer(null)}>取消</Button>
+            <Button disabled={commandsBusy} onClick={async () => {
+              if (!commandsServer) return
+              setCommandsBusy(true)
+              try {
+                await updateServer(commandsServer.id, { startup_commands: commandsDraft.split('\n').map((s) => s.trim()).filter(Boolean) })
+                setCommandsServer(null)
+                refresh()
+                showToast('success', '开服指令已保存')
+              } catch (err) { showToast('error', err instanceof ApiError ? err.message : '保存失败') }
+              finally { setCommandsBusy(false) }
+            }}>{commandsBusy ? '保存中…' : '保存'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <EditServerDialog
         server={editServer}
@@ -400,6 +615,9 @@ export default function Servers() {
         onClose={() => setConsoleServer(null)}
         onChanged={refresh}
       />
+      {filesServer && canAdmin ? <ServerFilesDialog key={filesServer.id}
+        server={data?.find((s) => s.id === filesServer.id) ?? filesServer}
+        onClose={() => setFilesServer(null)} /> : null}
     </PageShell>
   )
 }
@@ -741,16 +959,16 @@ function EditServerDialog({
   const [maxMemory, setMaxMemory] = useState('2G')
   const [port, setPort] = useState('25565')
   const [extraJvm, setExtraJvm] = useState('')
-  const [autoStart, setAutoStart] = useState(false)
   const [protectedFlag, setProtectedFlag] = useState(false)
   const [groupId, setGroupId] = useState<number | null>(null)
   const [javaOverride, setJavaOverride] = useState('')
   const [startCmd, setStartCmd] = useState('')
   const [mcdrLang, setMcdrLang] = useState('')
   const [startupCmds, setStartupCmds] = useState('')
-  const [autostartPriority, setAutostartPriority] = useState('0')
+  const [commandPreview, setCommandPreview] = useState('')
+  const [commandPreviewError, setCommandPreviewError] = useState('')
   const [props, setProps] = useState<Record<string, string>>({})
-  const [velCfg, setVelCfg] = useState<VelocityConfig>({ motd: '', show_max_players: 500, online_mode: true, forwarding_mode: 'NONE' })
+  const [velCfg, setVelCfg] = useState<VelocityConfig>({ motd: '', show_max_players: 500, online_mode: true, forwarding_mode: 'NONE', servers: [], try_servers: [] })
   const [versions, setVersions] = useState<string[]>([])
   const [versionsLoading, setVersionsLoading] = useState(false)
   const [loaders, setLoaders] = useState<string[]>([])
@@ -784,17 +1002,29 @@ function EditServerDialog({
     setMaxMemory(server.max_memory)
     setPort(String(server.port))
     setExtraJvm(server.extra_jvm_args)
-    setAutoStart(server.auto_start)
     setProtectedFlag(server.protected)
     setGroupId(server.group_id)
     setJavaOverride(server.java_path_override)
     setStartCmd(server.start_command_override ?? '')
     setMcdrLang(server.mcdr_language ?? '')
     setStartupCmds((server.startup_commands ?? []).join('\n'))
-    setAutostartPriority(String(server.autostart_priority ?? 0))
     // 仅在打开/切换实例时初始化,避免列表刷新覆盖正在编辑的内容
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [server?.id])
+
+  const previewId = server?.id
+  useEffect(() => {
+    if (!previewId || tab !== 'advanced') return
+    let cancelled = false
+    setCommandPreview('')
+    setCommandPreviewError('')
+    const timer = window.setTimeout(() => {
+      previewStartCommand(previewId, { min_memory: minMemory.trim() || '1G', max_memory: maxMemory.trim() || '2G', extra_jvm_args: extraJvm, java_path_override: javaOverride })
+        .then(({ command }) => { if (!cancelled) setCommandPreview(command.map((arg) => /[\s"]/.test(arg) ? `"${arg.replace(/"/g, '\\"')}"` : arg).join(' ')) })
+        .catch((err) => { if (!cancelled) setCommandPreviewError(err instanceof ApiError ? err.message : '生成命令失败') })
+    }, 250)
+    return () => { cancelled = true; window.clearTimeout(timer) }
+  }, [previewId, tab, minMemory, maxMemory, extraJvm, javaOverride])
 
   useEffect(() => {
     if (!open || !server) return
@@ -959,14 +1189,12 @@ function EditServerDialog({
         mc_version: needsMc ? version : '',
         loader_version: needsLoader ? loaderVersion : undefined,
         extra_jvm_args: extraJvm,
-        auto_start: autoStart,
         java_path_override: javaOverride,
         protected: protectedFlag,
         group_id: groupId,
         start_command_override: startCmd,
         mcdr_language: mcdrLang,
         startup_commands: startupCmds.split('\n').map((c) => c.trim()).filter(Boolean),
-        autostart_priority: Number(autostartPriority) || 0,
       })
       if (isVelocity) {
         await updateVelocityConfig(server.id, velCfg)
@@ -1121,6 +1349,45 @@ function EditServerDialog({
                   <span className="text-sm font-medium">在线模式(正版验证)</span>
                   <Switch checked={velCfg.online_mode} onCheckedChange={(v) => setVelCfg((c) => ({ ...c, online_mode: v }))} />
                 </label>
+                <div className="space-y-2">
+                  <Label>默认连接顺序(try)</Label>
+                  <p className="text-xs text-muted-foreground">玩家进入代理时,按此顺序尝试连接第一个可用的子服。子服需先在「代理网络」一键接线后才会出现。</p>
+                  {velCfg.try_servers.length === 0 ? (
+                    <p className="rounded-md border border-dashed border-border/70 px-3 py-2 text-xs text-muted-foreground">try 列表为空。{velCfg.servers.length === 0 ? '还没有已接线的子服。' : '从下方添加子服。'}</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {velCfg.try_servers.map((key, i) => {
+                        const addr = velCfg.servers.find((s) => s.key === key)?.addr
+                        return (
+                          <div key={key} className="flex items-center gap-2 rounded-md border border-border/70 bg-background/60 px-3 py-1.5">
+                            <span className="w-5 shrink-0 text-center text-xs text-muted-foreground">{i + 1}</span>
+                            <span className="min-w-0 flex-1 truncate text-sm font-medium">{key}</span>
+                            {addr ? <span className="shrink-0 font-mono text-xs text-muted-foreground">{addr}</span> : <span className="shrink-0 text-xs text-amber-600 dark:text-amber-400">未接线</span>}
+                            <Button type="button" variant="ghost" size="icon" className="h-7 w-7" disabled={i === 0} title="上移" onClick={() => setVelCfg((c) => { const t = [...c.try_servers]; [t[i - 1], t[i]] = [t[i], t[i - 1]]; return { ...c, try_servers: t } })}>
+                              <ChevronUp className="h-4 w-4" />
+                            </Button>
+                            <Button type="button" variant="ghost" size="icon" className="h-7 w-7" disabled={i === velCfg.try_servers.length - 1} title="下移" onClick={() => setVelCfg((c) => { const t = [...c.try_servers]; [t[i + 1], t[i]] = [t[i], t[i + 1]]; return { ...c, try_servers: t } })}>
+                              <ChevronDown className="h-4 w-4" />
+                            </Button>
+                            <Button type="button" variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" title="移出 try" onClick={() => setVelCfg((c) => ({ ...c, try_servers: c.try_servers.filter((k) => k !== key) }))}>
+                              <X className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                  {velCfg.servers.some((s) => !velCfg.try_servers.includes(s.key)) ? (
+                    <Select value="" onValueChange={(v) => setVelCfg((c) => (c.try_servers.includes(v) ? c : { ...c, try_servers: [...c.try_servers, v] }))}>
+                      <SelectTrigger className="h-8"><SelectValue placeholder="添加子服到 try…" /></SelectTrigger>
+                      <SelectContent>
+                        {velCfg.servers.filter((s) => !velCfg.try_servers.includes(s.key)).map((s) => (
+                          <SelectItem key={s.key} value={s.key}>{s.key}（{s.addr}）</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : null}
+                </div>
                 <p className="text-xs text-muted-foreground">改动保存后,重启 Velocity 生效。后端服务器请在「高级」或直接编辑 velocity.toml 配置。</p>
               </>
             ) : (
@@ -1180,20 +1447,6 @@ function EditServerDialog({
             </div>
             </>
             )}
-          </TabsContent>
-
-          {/* 高级 */}
-          <TabsContent value="advanced" className="space-y-4 py-2">
-            <div className="space-y-2">
-              <Label htmlFor="edit-jvm">额外 JVM 参数</Label>
-              <Textarea
-                id="edit-jvm"
-                value={extraJvm}
-                onChange={(e) => setExtraJvm(e.target.value)}
-                rows={2}
-                className="font-mono"
-              />
-            </div>
             <div className="space-y-2">
               <Label>指定 Java</Label>
               <Select
@@ -1218,10 +1471,6 @@ function EditServerDialog({
               </Select>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="edit-startcmd">自定义启动命令</Label>
-              <Input id="edit-startcmd" value={startCmd} onChange={(e) => setStartCmd(e.target.value)} placeholder="留空=按内存/Java 自动生成" className="font-mono" />
-            </div>
-            <div className="space-y-2">
               <Label>MCDR 语言</Label>
               <Select value={mcdrLang || 'auto'} onValueChange={(v) => setMcdrLang(v === 'auto' ? '' : v)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
@@ -1236,16 +1485,24 @@ function EditServerDialog({
               <Label htmlFor="edit-startup">开服自动执行指令</Label>
               <Textarea id="edit-startup" value={startupCmds} onChange={(e) => setStartupCmds(e.target.value)} rows={3} placeholder="每行一条,服务器加载完成(Done)后依次发送" className="font-mono" />
             </div>
-            <label className="flex items-center justify-between gap-4 rounded-md border border-border/70 px-3 py-2.5">
-              <span>
-                <span className="block text-sm font-medium">开机自启</span>
-                <span className="block text-xs text-muted-foreground">面板启动时自动拉起该实例</span>
-              </span>
-              <Switch checked={autoStart} onCheckedChange={setAutoStart} />
-            </label>
+          </TabsContent>
+
+          {/* 高级 */}
+          <TabsContent value="advanced" className="space-y-4 py-2">
             <div className="space-y-2">
-              <Label htmlFor="edit-priority">自启优先级</Label>
-              <Input id="edit-priority" type="number" value={autostartPriority} onChange={(e) => setAutostartPriority(e.target.value)} placeholder="0" />
+              <Label htmlFor="edit-jvm">额外 JVM 参数</Label>
+              <Textarea
+                id="edit-jvm"
+                value={extraJvm}
+                onChange={(e) => setExtraJvm(e.target.value)}
+                rows={2}
+                className="font-mono"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-startcmd">自定义启动命令</Label>
+              <Textarea id="edit-startcmd" value={startCmd} onChange={(e) => setStartCmd(e.target.value)} placeholder={commandPreview || '正在生成默认启动命令…'} title={commandPreview} rows={3} className="font-mono" />
+              {commandPreviewError ? <p role="alert" className="text-xs text-destructive">{commandPreviewError}</p> : null}
             </div>
             {!isVelocity ? (
               <div className="space-y-2 rounded-md border border-border/70 px-3 py-2.5">

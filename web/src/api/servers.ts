@@ -42,6 +42,7 @@ export interface ServerSummary {
   autostart_priority?: number
   rcon_enabled?: boolean
   rcon_port?: number
+  sort_order?: number
   created_at: string
   status: ServerStatus
   needs_restart?: boolean
@@ -65,13 +66,30 @@ export function listServers(): Promise<ServerSummary[]> {
   return apiRequest<ServerSummary[]>('/servers')
 }
 
+/** 按给定 id 顺序整体重排列表(拖拽排序后持久化)。 */
+export function reorderServers(ids: number[]): Promise<{ ok: boolean }> {
+  return apiRequest<{ ok: boolean }>('/servers/reorder', {
+    method: 'POST',
+    body: JSON.stringify({ ids }),
+  })
+}
+
 export type VersionChannel = 'release' | 'snapshot' | 'experimental'
+
+export interface VelocityServerEntry {
+  key: string
+  addr: string
+}
 
 export interface VelocityConfig {
   motd: string
   show_max_players: number
   online_mode: boolean
   forwarding_mode: string
+  /** [servers] 里的子服(只读,由「一键接线」维护) */
+  servers: VelocityServerEntry[]
+  /** try 回退顺序(可编辑) */
+  try_servers: string[]
 }
 
 export function getVelocityConfig(id: number): Promise<VelocityConfig> {
@@ -87,16 +105,52 @@ export function updateVelocityConfig(id: number, cfg: VelocityConfig): Promise<V
 
 export interface WireResult {
   name: string
-  status: 'ok' | 'unsupported' | 'error'
+  status: 'ok' | 'unsupported' | 'error' | 'skipped'
   detail: string
+}
+
+export interface WiringStatus extends WireResult {
+  id: number
+  custom: boolean
+}
+
+export function getWiringStatus(proxyId: number): Promise<{ results: WiringStatus[] }> {
+  return apiRequest(`/servers/proxy/${proxyId}/wiring-status`)
+}
+
+export interface CustomBackend {
+  id: number
+  proxy_id: number
+  name: string
+  host: string
+  port: number
+  created_at: string
+}
+
+export function listCustomBackends(proxyId: number): Promise<CustomBackend[]> {
+  return apiRequest<CustomBackend[]>(`/servers/proxy/${proxyId}/custom-backends`)
+}
+
+export function addCustomBackend(
+  proxyId: number,
+  input: { name: string; host: string; port: number },
+): Promise<CustomBackend> {
+  return apiRequest<CustomBackend>(`/servers/proxy/${proxyId}/custom-backends`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+}
+
+export function deleteCustomBackend(backendId: number): Promise<{ ok: boolean }> {
+  return apiRequest<{ ok: boolean }>(`/servers/proxy/custom-backends/${backendId}`, { method: 'DELETE' })
 }
 
 export function getProxySecret(proxyId: number): Promise<string> {
   return apiRequest<{ secret: string }>(`/servers/proxy/${proxyId}/secret`).then((r) => r.secret)
 }
 
-export function wireProxy(proxyId: number, secret = ''): Promise<{ results: WireResult[] }> {
-  return apiRequest<{ results: WireResult[] }>(`/servers/proxy/${proxyId}/wire`, { method: 'POST', body: JSON.stringify({ secret }) })
+export function wireProxy(proxyId: number, secret = '', force = false): Promise<{ results: WireResult[] }> {
+  return apiRequest<{ results: WireResult[] }>(`/servers/proxy/${proxyId}/wire`, { method: 'POST', body: JSON.stringify({ secret, force }) })
 }
 
 export function getSuggestedPort(): Promise<number> {
@@ -163,6 +217,10 @@ export function updateServer(id: number, patch: ServerUpdateInput): Promise<Serv
     method: 'PATCH',
     body: JSON.stringify(patch),
   })
+}
+
+export function previewStartCommand(id: number, draft: ServerUpdateInput): Promise<{ command: string[] }> {
+  return apiRequest(`/servers/${id}/start-command-preview`, { method: 'POST', body: JSON.stringify(draft) })
 }
 
 export interface RconInfo {

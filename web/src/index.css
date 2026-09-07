@@ -31,7 +31,6 @@
     --radius: 0.625rem;
     --sidebar-bg: 270 44% 98%;
     --sidebar-active: 268 78% 78%;
-    --font-ui-cjk: "Noto Sans SC UI Subset";
   }
   .dark {
     --background: 270 18% 8%;
@@ -63,20 +62,12 @@
   }
 }
 
-html[data-noto-sc-full="1"] {
-  --font-ui-cjk: "Noto Sans SC", "Noto Sans SC UI Subset";
-}
-
 @layer base {
   * {
     @apply border-border;
   }
   body {
-    @apply bg-background text-foreground antialiased;
-    font-family:
-      "Outfit", var(--font-ui-cjk), "SF Pro Text", "PingFang SC",
-      "Hiragino Sans GB", "Noto Sans CJK SC", "Microsoft YaHei", "Segoe UI",
-      system-ui, sans-serif;
+    @apply bg-background text-foreground antialiased font-sans;
     letter-spacing: 0;
   }
 
@@ -105,7 +96,7 @@ html[data-noto-sc-full="1"] {
   }
 
   .ops-page-header {
-    @apply flex items-start justify-between gap-4 border-b border-border/70 pb-5;
+    @apply flex flex-wrap items-start justify-between gap-4 border-b border-border/70 pb-5;
   }
 
   .ops-subnav {

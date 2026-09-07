@@ -6,7 +6,8 @@ try {
   $uv = (Get-Command uv -ErrorAction SilentlyContinue).Source;  if (-not $uv)  { $uv  = "C:\Users\89366\.local\bin\uv.exe" }
   $npm = (Get-Command npm.cmd -ErrorAction SilentlyContinue).Source; if (-not $npm) { $npm = "npm.cmd" }
   Write-Host "repo=$repo"; Write-Host "uv=$uv"; Write-Host "npm=$npm"
-  function Test-Port($p){ try{ $c=New-Object Net.Sockets.TcpClient; $c.Connect('127.0.0.1',$p); $c.Close(); $true }catch{ $false } }
+  # 用 localhost 而非 127.0.0.1:vite 可能只绑 IPv6 的 ::1,只探 IPv4 会误判没起而重复拉起
+  function Test-Port($p){ try{ $c=New-Object Net.Sockets.TcpClient; $c.Connect('localhost',$p); $c.Close(); $true }catch{ $false } }
 
   if (Test-Port 16824) { Write-Host "[skip] 后端 16824 已在运行" -ForegroundColor Yellow }
   else {
@@ -15,7 +16,8 @@ try {
     # Windows 上 uvicorn 的 --reload 会强制 SelectorEventLoop,而它无法 create_subprocess_exec,
     # 导致启动 MCDR 实例时抛空异常(前端见 {"error":""})。无 --reload 的 uvicorn 用 ProactorEventLoop,
     # 可正常拉起子进程;watchfiles 负责监听 backend/ 改动后重启,兼得热重载与子进程管理。
-    $be = Start-Process -FilePath $uv -ArgumentList 'run','watchfiles','--filter','python','--target-type','command','uvicorn app.main:app --port 16824','backend' `
+    # ArgumentList 用单字符串,避免数组拼接时丢引号(否则 --port 16824 会被 watchfiles 吃掉)
+    $be = Start-Process -FilePath $uv -ArgumentList 'run watchfiles --filter python --target-type command "uvicorn app.main:app --port 16824" backend' `
       -WorkingDirectory $repo -PassThru -WindowStyle Hidden `
       -RedirectStandardOutput "$repo\logs\backend.out.log" -RedirectStandardError "$repo\logs\backend.err.log"
     Write-Host "后端已启动 PID=$($be.Id)  日志: logs\backend.err.log" -ForegroundColor Cyan
