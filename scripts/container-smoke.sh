@@ -26,6 +26,7 @@ curl -fsS "$url/" | grep -q '/assets/'
 curl -fsS "$url/api/auth/bootstrap" | python3 -c 'import json,sys; assert json.load(sys.stdin)["needs_setup"]'
 curl -fsS -H 'Content-Type: application/json' -d '{"username":"smokeowner","password":"smoke-test-password"}' "$url/api/auth/setup" >/dev/null
 docker exec "$name" java -version
+docker exec "$name" /opt/java/openjdk/bin/java -version
 docker exec "$name" python -c 'import mcdreforged, pip, scipy; from pathlib import Path; Path("/data/persistence-check").write_text("keep")'
 test -s "$data/panel.db"
 test -s "$data/secret.key"

@@ -17,6 +17,7 @@ RUN uv export --frozen --no-dev --no-emit-project --output-file requirements.txt
     && python -m pip install --no-cache-dir -r requirements.txt
 
 FROM eclipse-temurin:21-jre-jammy AS java
+FROM eclipse-temurin:25-jre-jammy AS java25
 FROM python:3.14-slim-bookworm
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates libstdc++6 libfontconfig1 libfreetype6 \
@@ -25,13 +26,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && useradd --uid 1000 --gid 1000 --no-create-home mcpanel \
     && mkdir /data && chown 1000:1000 /data
 COPY --from=java /opt/java/openjdk /opt/java/openjdk
+COPY --from=java25 /opt/java/openjdk /opt/java/jre25
 COPY --from=dependencies /usr/local/lib/python3.14/site-packages /usr/local/lib/python3.14/site-packages
 WORKDIR /app
 COPY backend/app ./backend/app
 COPY backend/default_config ./backend/default_config
 COPY --from=web /build/web/dist ./web/dist
-ENV JAVA_HOME=/opt/java/openjdk \
-    PATH="/opt/java/openjdk/bin:${PATH}" \
+ENV JAVA_HOME=/opt/java/jre25 \
+    PATH="/opt/java/jre25/bin:${PATH}" \
     MCPANEL_DATA_DIR=/data \
     MCPANEL_WEB_DIST=/app/web/dist \
     PYTHONPATH=/app/backend:/data/python-packages \

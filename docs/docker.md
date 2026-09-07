@@ -1,6 +1,6 @@
 # Docker Compose 部署
 
-面板、Python 3.14 / MCDReforged、Java 21 JRE 和已构建的前端放在一个镜像中。
+面板、Python 3.14 / MCDReforged、Java 21/25 JRE 和已构建的前端放在一个镜像中。
 Minecraft 是容器内由面板管理的子进程，不会为每个实例创建 Docker 容器；无需挂载 Docker socket，也不需要 privileged。
 当前 CI 产物为 **linux/amd64**。生产推荐 Linux Docker Engine + Compose v2；Docker Desktop 请用 Linux containers。
 
@@ -56,7 +56,7 @@ docker-data/
 镜像构建上下文使用白名单，不会把本机 `data/`、日志、`.env`、虚拟环境打入镜像或上传构建端。
 插件所需 pip 包写入 `/data/python-packages`，容器重建后仍可用；Python 大版本升级时应备份并重新安装其中的二进制依赖，避免 ABI 不兼容。
 
-Java 默认命令为 `java`，实际路径 `/opt/java/openjdk/bin/java`（Java 21）。
+Java 默认命令为 `java`，实际路径 `/opt/java/jre25/bin/java`（Java 25，支持现有 26.2 实例）。Java 21 同时保留在 `/opt/java/openjdk/bin/java`。建议在 Java 安装池登记这两条路径，以便按 MC 版本选择运行环境。
 需要 Java 8/17 等版本的旧服，请派生镜像安装对应 Linux Java，或挂载兼容 Linux 的 JRE，并在 Java 安装池登记容器内路径。
 Windows 的 Java/Python 可执行文件不能在 Linux 容器中使用。Minecraft 内存总额还需为面板、MCDR 和 JVM 非堆内存预留空间。
 
