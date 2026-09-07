@@ -336,9 +336,10 @@ class MCDRManager:
                 progress=lambda d, t: prog(d, size or t),
             )
         elif st == "fabric":
-            info = await ver.get_fabric_download(server.mc_version, server.loader_version)
+            from . import fabric
+
             self._install_progress[server.id] = (0, 0)
-            await ver.download_file(info["url"], dest, progress=prog)
+            await fabric.install(server_dir, server.mc_version, server.loader_version, progress=prog)
         elif st == "velocity":
             info = await ver.get_velocity_download(server.loader_version)
             size = info.get("size", 0) or 0
