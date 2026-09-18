@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import shutil
 import stat
 import tempfile
 import threading
@@ -19,10 +20,11 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from .config import SERVERS_ROOT
+from .config import DATA_DIR, SERVERS_ROOT
 from .mcdr import manager
 
 MAX_BYTES = 1024 * 1024
+TRASH_ROOT = DATA_DIR / "file-trash"
 _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
 _RESERVED = re.compile(r"^(CON|PRN|AUX|NUL|CONIN\$|CONOUT\$|COM[1-9¹²³]|LPT[1-9¹²³])$", re.I)
@@ -97,7 +99,7 @@ def _target(server, path: str, kind: str) -> tuple[Path, os.stat_result]:
         if i < len(parts) - 1 and found != "directory":
             _error(400, "路径组件不是目录")
     st = target.lstat()
-    if _check(st) != kind:
+    if kind != "entry" and _check(st) != kind:
         _error(400, "文件类型不匹配")
     if not target.resolve().is_relative_to(root.resolve()):
         _error(400, "路径超出实例目录")
@@ -108,17 +110,23 @@ def _timestamp(st: os.stat_result) -> str:
     return datetime.fromtimestamp(st.st_mtime, timezone.utc).isoformat()
 
 
+def _entry_revision(st: os.stat_result) -> str:
+    # NTFS change time can settle after an atomic rename; use stable identity
+    # and content metadata so a freshly saved file is immediately actionable.
+    return hashlib.sha256(f"{st.st_dev}:{st.st_ino}:{st.st_mode}:{st.st_size}:{st.st_mtime_ns}".encode()).hexdigest()
+
+
 @_io_errors
 def list_directory(server, path: str = "") -> dict:
     directory, _ = _target(server, path, "directory")
     entries = []
     for child in directory.iterdir():
         entry = {"name": child.name, "path": f"{path}/{child.name}" if path else child.name,
-                 "kind": "blocked", "size_bytes": None, "modified_at": None}
+                 "kind": "blocked", "size_bytes": None, "modified_at": None, "revision": None}
         try:
             _parts(child.name)
             st = child.lstat()
-            entry.update(kind=_check(st), size_bytes=st.st_size, modified_at=_timestamp(st))
+            entry.update(kind=_check(st), size_bytes=st.st_size, modified_at=_timestamp(st), revision=_entry_revision(st))
         except HTTPException as exc:
             entry["reason"] = exc.detail
         except OSError:
@@ -144,6 +152,7 @@ def _content(path: str, raw: bytes, st: os.stat_result) -> dict:
     result = {"path": path, "text": text.replace("\r\n", "\n").replace("\r", "\n"),
               "revision": hashlib.sha256(raw).hexdigest(), "editable": newline != "mixed",
               "bom": raw.startswith(b"\xef\xbb\xbf"), "newline": newline,
+              "entry_revision": _entry_revision(st),
               "size_bytes": len(raw), "modified_at": _timestamp(st)}
     if newline == "mixed":
         result["reason"] = "混合换行符文件仅支持查看"
@@ -215,3 +224,106 @@ def save_content(server, path: str, text: str, revision: str) -> dict:
         finally:
             if temporary is not None:
                 os.unlink(temporary)
+
+
+@_io_errors
+def upload_target(server, directory: str, name: str) -> tuple[Path, list[int] | None]:
+    if len(_parts(name)) != 1:
+        _error(400, "文件名不能包含目录")
+    parent, _ = _target(server, directory, "directory")
+    target = parent / name
+    if not target.exists() and not target.is_symlink():
+        return target, None
+    target, st = _target(server, f"{directory}/{name}" if directory else name, "file")
+    return target, [st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns]
+
+
+@_io_errors
+def publish_upload(server, directory: str, name: str, source: Path, expected: list[int] | None) -> None:
+    """Replace only the file version accepted at upload creation."""
+    from .deps import ensure_not_protected
+
+    ensure_not_protected(server)
+    key = str(_root(server))
+    with _locks_guard:
+        lock = _locks.setdefault(key, threading.Lock())
+    with lock:
+        target, current = upload_target(server, directory, name)
+        if current != expected:
+            _error(409, "目标文件已变化，请重新上传")
+        if current is not None and os.name != "nt":
+            source.chmod(stat.S_IMODE(target.stat().st_mode))
+        os.replace(source, target)
+        manager.mark_needs_restart(server.id)
+
+
+@_io_errors
+def rename_entry(server, path: str, name: str, revision: str) -> dict:
+    from .deps import ensure_not_protected
+
+    ensure_not_protected(server)
+    if len(_parts(name)) != 1:
+        _error(400, "名称不能包含目录")
+    with _locks_guard:
+        lock = _locks.setdefault(str(_root(server)), threading.Lock())
+    with lock:
+        source, st = _target(server, path, "entry")
+        if _entry_revision(st) != revision:
+            _error(409, "文件或目录已变化，请刷新后重试")
+        target = source.with_name(name)
+        if target.exists() or target.is_symlink():
+            # Permit case-only renames on case-insensitive filesystems.
+            if not os.path.samestat(st, target.lstat()):
+                _error(409, "已存在同名文件或目录")
+        if target.resolve().parent != source.resolve().parent:
+            _error(400, "目标路径不合法")
+        os.rename(source, target)
+        manager.mark_needs_restart(server.id)
+        parent = path.rsplit("/", 1)[0] if "/" in path else ""
+        return {"path": f"{parent}/{name}" if parent else name}
+
+
+@_io_errors
+def detach_entry(server, path: str, revision: str, job_id: str) -> Path:
+    """Move out of the instance atomically; recursive cleanup follows in a job."""
+    from .deps import ensure_not_protected
+
+    ensure_not_protected(server)
+    if not re.fullmatch(r"[0-9a-f]{32}", job_id):
+        _error(400, "任务 ID 不合法")
+    with _locks_guard:
+        lock = _locks.setdefault(str(_root(server)), threading.Lock())
+    with lock:
+        source, st = _target(server, path, "entry")
+        if _entry_revision(st) != revision:
+            _error(409, "文件或目录已变化，请刷新后重试")
+        TRASH_ROOT.mkdir(parents=True, exist_ok=True)
+        for node in reversed((TRASH_ROOT, *TRASH_ROOT.parents)):
+            if _check(node.lstat()) != "directory":
+                _error(400, "清理目录不合法")
+        target = TRASH_ROOT / job_id
+        if target.exists() or target.resolve().parent != TRASH_ROOT.resolve():
+            _error(409, "清理目录冲突")
+        # _target rejects the instance root, links and paths outside it.
+        if not source.resolve().is_relative_to(_root(server).resolve()):
+            _error(400, "路径超出实例目录")
+        os.rename(source, target)
+        manager.mark_needs_restart(server.id)
+        return target
+
+
+def clean_detached(target: Path, job_id: str) -> None:
+    from . import jobs
+
+    try:
+        if target.resolve().parent != TRASH_ROOT.resolve() or target.name != job_id:
+            _error(400, "清理路径不合法")
+        kind = _check(target.lstat())
+        if kind == "directory":
+            # shutil.rmtree removes nested links/junctions without following them.
+            shutil.rmtree(target)
+        else:
+            target.unlink()
+        jobs.finish(job_id)
+    except Exception:
+        jobs.fail(job_id, "已从实例移除，但后台清理失败")

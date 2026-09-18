@@ -38,6 +38,37 @@ _BOTS: dict[int, set[str]] = {}
 _ONLINE: dict[int, set[str]] = {}
 # (server_id, name) -> 上线时刻(epoch 秒),用于 QQ # 在线列表出图显示在线时长
 _JOIN_TS: dict[tuple[int, str], float] = {}
+# Delayed exits preserve logical presence during Velocity hand-offs.
+TRANSFER_GRACE_SECONDS = 5.0
+_PENDING_LEAVES: dict[tuple, dict] = {}
+
+
+def _presence_scope(server_id: int) -> tuple[tuple, list[int]]:
+    with SessionLocal() as db:
+        server = db.get(Server, server_id)
+        if server is None or not server.proxy_id:
+            return ("server", server_id), [server_id]
+        siblings = list(db.scalars(select(Server.id).where(
+            Server.proxy_id == server.proxy_id, Server.group_id == server.group_id,
+            Server.server_type.in_(_MC_TYPES),
+        )).all())
+        return ("proxy", server.proxy_id, server.group_id), siblings
+
+
+def _finish_leave(key: tuple) -> None:
+    pending = _PENDING_LEAVES.get(key)
+    if pending is None:
+        return
+    server_id, name = pending["server_id"], pending["name"]
+    before = _group_online_count(server_id)
+    _PENDING_LEAVES.pop(key, None)
+    after = _group_online_count(server_id)
+    _broadcast(
+        server_id,
+        lambda src, modern: _leave_components(src, name, False, modern),
+        f"-{name} ({before}→{after})",
+        {"source": "system", "text": f"{name} 离开了服务器"},
+    )
 
 
 def online_players(server_id: int) -> set[str]:
@@ -56,9 +87,7 @@ def _group_online_count(server_id: int) -> int:
         src = db.get(Server, server_id)
         if src is None:
             return 0
-        if not src.group_id:
-            return len(_ONLINE.get(server_id, set()))
-        sids = [
+        sids = [server_id] if not src.group_id else [
             s.id
             for s in db.scalars(select(Server).where(Server.group_id == src.group_id)).all()
             if s.server_type in _MC_TYPES
@@ -67,7 +96,8 @@ def _group_online_count(server_id: int) -> int:
         db.close()
     names: set[str] = set()
     for sid in sids:
-        names |= _ONLINE.get(sid, set())
+        names |= {name.casefold() for name in _ONLINE.get(sid, set())}
+    names |= {p["name"].casefold() for p in _PENDING_LEAVES.values() if p["server_id"] in sids}
     return len(names)
 
 
@@ -175,9 +205,19 @@ def handle_line(server_id: int, line: str) -> None:
             _BOTS[server_id].add(name)
             return  # 假人进服不广播
         _BOTS[server_id].discard(name)
+        scope, siblings = _presence_scope(server_id)
+        key = (scope, name.casefold())
+        was_online = any(name.casefold() == p.casefold() for sid in siblings for p in _ONLINE.get(sid, set()))
         before = _group_online_count(server_id)
+        pending = _PENDING_LEAVES.pop(key, None)
+        if pending:
+            pending["timer"].cancel()
+        prior_times = [ts for (sid, player), ts in _JOIN_TS.items()
+                       if sid in siblings and player.casefold() == name.casefold()]
         _ONLINE[server_id].add(name)
-        _JOIN_TS[(server_id, name)] = time.time()
+        _JOIN_TS[(server_id, name)] = pending["joined_at"] if pending else min(prior_times, default=time.time())
+        if pending or was_online:
+            return
         after = _group_online_count(server_id)
         _broadcast(
             server_id,
@@ -192,16 +232,22 @@ def handle_line(server_id: int, line: str) -> None:
         if name in _BOTS.get(server_id, set()):
             _BOTS[server_id].discard(name)
             return  # 假人退服不广播
-        before = _group_online_count(server_id)
+        if name not in _ONLINE.get(server_id, set()):
+            return  # Ignore duplicate exits and players not observed online.
+        scope, siblings = _presence_scope(server_id)
         _ONLINE.get(server_id, set()).discard(name)
-        _JOIN_TS.pop((server_id, name), None)
-        after = _group_online_count(server_id)
-        _broadcast(
-            server_id,
-            lambda src, modern: _leave_components(src, name, False, modern),
-            f"-{name} ({before}→{after})",
-            {"source": "system", "text": f"{name} 离开了服务器"},
-        )
+        joined_at = _JOIN_TS.pop((server_id, name), time.time())
+        if any(name.casefold() == p.casefold() for sid in siblings for p in _ONLINE.get(sid, set())):
+            return  # Target join arrived before the source exit.
+        key = (scope, name.casefold())
+        previous = _PENDING_LEAVES.pop(key, None)
+        if previous:
+            previous["timer"].cancel()
+        loop = asyncio.get_running_loop()
+        _PENDING_LEAVES[key] = {
+            "server_id": server_id, "name": name, "joined_at": joined_at,
+            "timer": loop.call_later(TRANSFER_GRACE_SECONDS, _finish_leave, key),
+        }
 
 
 def _broadcast(server_id: int, builder, qq_text: str = "", feed: dict | None = None) -> None:

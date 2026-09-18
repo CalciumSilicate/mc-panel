@@ -173,7 +173,7 @@ export default function ProxyNet() {
   return (
     <PageShell
       title="代理网络"
-      description="把 MC 子服挂到 Velocity 主服下,一键配置 modern 转发(Fabric/Forge 自动装转发 mod);自定义子服(外部服务器)仅加入路由,接线时跳过。"
+      description="管理主服与子服连接"
       width="6xl"
       actions={
         <Button type="button" variant="outline" className="gap-2" onClick={refresh} disabled={loading}>

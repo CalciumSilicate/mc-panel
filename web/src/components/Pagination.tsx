@@ -10,11 +10,11 @@ export function Pagination({ page, pageCount, total, onPage }: { page: number; p
       <span>共 {total} 条</span>
       {pageCount > 1 ? (
         <div className="flex items-center gap-2">
-          <Button type="button" variant="outline" size="icon" className="h-7 w-7" disabled={page <= 1} onClick={() => onPage(page - 1)}>
+          <Button type="button" variant="outline" size="icon" aria-label="上一页" className="h-7 w-7" disabled={page <= 1} onClick={() => onPage(page - 1)}>
             <ChevronLeft className="h-4 w-4" />
           </Button>
           <span>{page} / {pageCount}</span>
-          <Button type="button" variant="outline" size="icon" className="h-7 w-7" disabled={page >= pageCount} onClick={() => onPage(page + 1)}>
+          <Button type="button" variant="outline" size="icon" aria-label="下一页" className="h-7 w-7" disabled={page >= pageCount} onClick={() => onPage(page + 1)}>
             <ChevronRight className="h-4 w-4" />
           </Button>
         </div>

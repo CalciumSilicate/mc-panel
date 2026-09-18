@@ -52,6 +52,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ServerConsoleDialog } from '@/components/ServerConsoleDialog'
 import { ServerFilesDialog } from '@/components/ServerFilesDialog'
+import { ServerImportDialog } from '@/components/ServerImportDialog'
 import { ServerLifecycleButton } from '@/components/ServerLifecycleButton'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
@@ -265,6 +266,7 @@ export default function Servers() {
   const { data: groups, refresh: refreshGroups } = useResource(() => listGroups(), [])
   const { showToast } = useGlobalToast()
   const [createOpen, setCreateOpen] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
   const [manageGroupsOpen, setManageGroupsOpen] = useState(false)
   const [busyId, setBusyId] = useState<number | null>(null)
   const [consoleServer, setConsoleServer] = useState<ServerSummary | null>(null)
@@ -348,7 +350,7 @@ export default function Servers() {
   return (
     <PageShell
       title="服务器实例"
-      description="管理由本面板托管的 MCDR 实例。"
+      description="管理服务器实例"
       width="full"
       actions={
         <>
@@ -360,6 +362,11 @@ export default function Servers() {
             <Button type="button" variant="outline" className="gap-2 px-3 sm:px-4" title="互联组" onClick={() => setManageGroupsOpen(true)}>
               <Network className="h-4 w-4" />
               <span className="sr-only sm:not-sr-only">互联组</span>
+            </Button>
+          ) : null}
+          {canAdmin ? (
+            <Button type="button" variant="outline" className="gap-2" onClick={() => setImportOpen(true)}>
+              <Download className="h-4 w-4" />导入服务器包
             </Button>
           ) : null}
           {canAdmin ? (
@@ -618,6 +625,7 @@ export default function Servers() {
       {filesServer && canAdmin ? <ServerFilesDialog key={filesServer.id}
         server={data?.find((s) => s.id === filesServer.id) ?? filesServer}
         onClose={() => setFilesServer(null)} /> : null}
+      {importOpen && canAdmin ? <ServerImportDialog onClose={() => setImportOpen(false)} onImported={refresh} /> : null}
     </PageShell>
   )
 }

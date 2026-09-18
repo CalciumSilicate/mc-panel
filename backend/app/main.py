@@ -21,8 +21,9 @@ from .java import choose_java, detect_installs, get_java_paths
 from . import bridge, onebot, verification
 from .mcdr import manager
 from .models import Server
-from .routers import archives, auth, chat, configs, groups, jobs, litematica, modconfigs, mods, pb, pcrc, players as players_router, plugins, servers, settings, stats as stats_router, system, tools, users, worldmap as worldmap_router
+from .routers import archives, auth, chat, configs, groups, jobs, litematica, modconfigs, mods, pb, players as players_router, plugins, servers, settings, system, tools, users
 from .routers import server_files as server_files_router
+from .routers import uploads as uploads_router
 
 # 在模块加载时就建表,确保无论以何种方式启动(uvicorn / TestClient / 直接 import)
 # 数据库都已就绪。
@@ -102,11 +103,9 @@ async def _autostart() -> None:
 async def lifespan(_: FastAPI):
     import asyncio
 
-    from . import mod_presets
+    from . import host_metrics, mod_presets, uploads
     from . import pb as pb_mod
     from . import plugin_scan
-    from . import stats as stats_mod
-    from . import worldmap as worldmap_mod
 
     autostart_task = asyncio.create_task(_autostart())
     # 启动 QQ 互通客户端(OneBot 正向 ws)
@@ -120,24 +119,21 @@ async def lifespan(_: FastAPI):
     scan_task = asyncio.create_task(plugin_scan.worker())
     pb_task = asyncio.create_task(pb_mod.worker())
     mod_task = asyncio.create_task(mod_presets.worker())
-    stats_task = asyncio.create_task(stats_mod.worker())
-    map_task = asyncio.create_task(worldmap_mod.worker())
+    host_task = asyncio.create_task(host_metrics.worker())
+    upload_cleanup_task = asyncio.create_task(uploads.maintenance())
     try:
         yield
     finally:
-        tasks = (autostart_task, scan_task, pb_task, mod_task, stats_task, map_task)
+        tasks = (autostart_task, scan_task, pb_task, mod_task, host_task, upload_cleanup_task)
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        await uploads.shutdown()
         # Docker stop sends SIGTERM: save worlds before its grace period expires.
-        from . import pcrc
 
         with SessionLocal() as db:
             instances = list(db.scalars(select(Server)).all())
-        await asyncio.gather(
-            manager.shutdown(instances),
-            *(asyncio.to_thread(pcrc.manager.stop, inst_id) for inst_id in list(pcrc.manager._procs)),
-        )
+        await manager.shutdown(instances)
         print("[shutdown] Instance shutdown complete", flush=True)
 
 
@@ -184,12 +180,10 @@ for r in (
     configs.router,
     pb.router,
     litematica.router,
-    pcrc.router,
     modconfigs.router,
-    stats_router.router,
-    worldmap_router.router,
     players_router.router,
     server_files_router.router,
+    uploads_router.router,
 ):
     app.include_router(r, prefix="/api")
 

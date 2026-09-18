@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Integer, String, Text
+from sqlalchemy import DateTime, Float, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
@@ -14,6 +14,17 @@ from .database import Base
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+class HostResourceSample(Base):
+    """Persistent host telemetry, collected independently of dashboard visits."""
+
+    __tablename__ = "host_resource_samples"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    recorded_at: Mapped[float] = mapped_column(Float, index=True)
+    cpu_percent: Mapped[float] = mapped_column(Float)
+    memory_percent: Mapped[float] = mapped_column(Float)
 
 
 class User(Base):
@@ -48,97 +59,6 @@ class ServerGroup(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
-class PlayerStat(Base):
-    """玩家统计快照(来自 vanilla world/stats/<uuid>.json 的精选指标)。仅在值变化时插入。"""
-
-    __tablename__ = "player_stats"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    server_id: Mapped[int] = mapped_column(Integer, index=True)
-    uuid: Mapped[str] = mapped_column(String(40), index=True)
-    name: Mapped[str] = mapped_column(String(64), default="")
-    metric: Mapped[str] = mapped_column(String(48), index=True)
-    value: Mapped[int] = mapped_column(Integer, default=0)
-    ts: Mapped[datetime] = mapped_column(DateTime, default=_now, index=True)
-
-
-class StatMetric(Base):
-    """Discoverable vanilla stats metric."""
-
-    __tablename__ = "stat_metrics"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    key: Mapped[str] = mapped_column(String(128), unique=True, index=True)
-    category: Mapped[str] = mapped_column(String(64), default="")
-    item: Mapped[str] = mapped_column(String(96), default="")
-    label: Mapped[str] = mapped_column(String(128), default="")
-    sample_type: Mapped[str] = mapped_column(String(16), default="normal")
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, index=True)
-
-
-class PlayerMetric(Base):
-    """Time-series value for vanilla stats metrics."""
-
-    __tablename__ = "player_metrics"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    server_id: Mapped[int] = mapped_column(Integer, index=True)
-    uuid: Mapped[str] = mapped_column(String(40), index=True)
-    name: Mapped[str] = mapped_column(String(64), default="")
-    metric: Mapped[str] = mapped_column(String(128), index=True)
-    total: Mapped[int] = mapped_column(Integer, default=0)
-    delta: Mapped[int] = mapped_column(Integer, default=0)
-    sample_type: Mapped[str] = mapped_column(String(16), default="normal", index=True)
-    ts: Mapped[datetime] = mapped_column(DateTime, default=_now, index=True)
-
-
-class StatJsonRead(Base):
-    """Last processed mtime for a server/player stats JSON file."""
-
-    __tablename__ = "stat_json_reads"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    server_id: Mapped[int] = mapped_column(Integer, index=True)
-    scope: Mapped[str] = mapped_column(String(16), default="full", index=True)
-    filename: Mapped[str] = mapped_column(String(128), index=True)
-    last_mtime: Mapped[int] = mapped_column(Integer, default=0)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
-
-
-class PlayerPosition(Base):
-    """玩家位置轨迹采样(来自 world/playerdata/<uuid>.dat 的 Pos)。仅在位置变化时插入。"""
-
-    __tablename__ = "player_positions"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    server_id: Mapped[int] = mapped_column(Integer, index=True)
-    uuid: Mapped[str] = mapped_column(String(40), index=True)
-    name: Mapped[str] = mapped_column(String(64), default="")
-    x: Mapped[float] = mapped_column(default=0.0)
-    y: Mapped[float] = mapped_column(default=0.0)
-    z: Mapped[float] = mapped_column(default=0.0)
-    dim: Mapped[str] = mapped_column(String(48), default="minecraft:overworld")
-    ts: Mapped[datetime] = mapped_column(DateTime, default=_now, index=True)
-
-
-class MapMarker(Base):
-    """世界地图上的自定义地标(POI):出生点 / 主城 / 传送点等。按维度归属。"""
-
-    __tablename__ = "map_markers"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    server_id: Mapped[int] = mapped_column(Integer, index=True)
-    dim: Mapped[str] = mapped_column(String(48), default="minecraft:overworld")
-    name: Mapped[str] = mapped_column(String(64), default="")
-    x: Mapped[float] = mapped_column(default=0.0)
-    y: Mapped[float] = mapped_column(default=64.0)
-    z: Mapped[float] = mapped_column(default=0.0)
-    icon: Mapped[str] = mapped_column(String(16), default="📍")
-    color: Mapped[str] = mapped_column(String(16), default="#f87171")
-    created_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
-
-
 class PluginScan(Base):
     """每个实例已安装 MCDR 插件 id 的缓存(由定时 worker 扫描更新),供「插件配置」秒读。"""
 
@@ -147,21 +67,6 @@ class PluginScan(Base):
     server_id: Mapped[int] = mapped_column(Integer, primary_key=True)
     installed_ids: Mapped[str] = mapped_column(Text, default="[]")  # JSON 数组
     scanned_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
-
-
-class PcrcInstance(Base):
-    """一个 PCRC 录像机实例(模拟客户端,连进服务器录制 .mcpr)。"""
-
-    __tablename__ = "pcrc_instances"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
-    dir_name: Mapped[str] = mapped_column(String(120), nullable=False)
-    address: Mapped[str] = mapped_column(String(255), default="127.0.0.1")
-    port: Mapped[int] = mapped_column(Integer, default=25565)
-    authenticate_type: Mapped[str] = mapped_column(String(16), default="offline")  # offline / microsoft
-    username: Mapped[str] = mapped_column(String(120), default="PCRC")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
 class Server(Base):

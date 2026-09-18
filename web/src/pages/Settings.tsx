@@ -161,7 +161,7 @@ export default function Settings() {
   return (
     <TabbedSettingsPage
       title="系统设置"
-      description="面板运行参数与安全配置。"
+      description="面板设置"
       tabs={TABS}
       activeTab={activeTab}
       onTabChange={setActiveTab}

@@ -1,34 +1,27 @@
-import { useEffect, useRef, useState } from 'react'
-import { Box, Download, Hammer, Info, Loader2, Trash2, Upload } from 'lucide-react'
+import { useRef, useState } from 'react'
+import { Box, Download, Info, Loader2, Trash2, Upload } from 'lucide-react'
 
 import { ApiError } from '@/api/client'
 import {
   type LitematicaFile,
   type LitematicaInfo,
-  buildLitematica,
   deleteLitematica,
   downloadLitematica,
   getLitematicaInfo,
   listLitematica,
   uploadLitematica,
 } from '@/api/litematica'
-import { type ServerSummary, listServers } from '@/api/servers'
 import { InlineLoader } from '@/components/PageLoader'
 import { Pagination } from '@/components/Pagination'
 import { usePaged } from '@/lib/use-paged'
 import { PageShell, PageSurface } from '@/components/layout/PageScaffold'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useConfirm } from '@/components/ui/dialog-context'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Switch } from '@/components/ui/switch'
 import { useGlobalToast } from '@/components/ui/use-global-toast'
 import { useResource } from '@/lib/use-resource'
 
-const MC_TYPES = ['vanilla', 'fabric', 'forge']
 
 function fmtBytes(n: number): string {
   if (!n) return '0 B'
@@ -44,12 +37,9 @@ const blockName = (id: string) => id.replace(/^minecraft:/, '').replace(/_/g, ' 
 export default function Litematica() {
   const { showToast } = useGlobalToast()
   const confirm = useConfirm()
-  const { data: servers } = useResource(() => listServers(), [])
   const { data: files, loading, refresh } = useResource(() => listLitematica(), [])
-  const mcServers = (servers ?? []).filter((s) => MC_TYPES.includes(s.server_type))
   const [busy, setBusy] = useState<string | null>(null)
   const [info, setInfo] = useState<{ name: string; data: LitematicaInfo } | null>(null)
-  const [buildFor, setBuildFor] = useState<LitematicaFile | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const paged = usePaged(files ?? [], 20)
 
@@ -94,7 +84,7 @@ export default function Litematica() {
   return (
     <PageShell
       title="Litematica 投影"
-      description="上传 .litematic → 查看材料清单 → 在运行中的服务器里逐条建造(投影打印)。"
+      description="管理投影与材料清单"
       width="5xl"
       actions={
         <>
@@ -139,9 +129,6 @@ export default function Litematica() {
                         <Button type="button" variant="ghost" size="icon" className="h-8 w-8" title="下载" onClick={() => downloadLitematica(f.name)}>
                           <Download className="h-4 w-4" />
                         </Button>
-                        <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={() => setBuildFor(f)}>
-                          <Hammer className="h-3.5 w-3.5" />建造
-                        </Button>
                         <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" title="删除" onClick={() => onDelete(f)}>
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -178,76 +165,6 @@ export default function Litematica() {
         </DialogContent>
       </Dialog>
 
-      {buildFor ? <BuildDialog file={buildFor} servers={mcServers} onClose={() => setBuildFor(null)} /> : null}
     </PageShell>
-  )
-}
-
-function BuildDialog({ file, servers, onClose }: { file: LitematicaFile; servers: ServerSummary[]; onClose: () => void }) {
-  const { showToast } = useGlobalToast()
-  const [serverId, setServerId] = useState<number | null>(servers[0]?.id ?? null)
-  const [coords, setCoords] = useState({ x: '0', y: '64', z: '0' })
-  const [placeAir, setPlaceAir] = useState(false)
-  const [busy, setBusy] = useState(false)
-
-  useEffect(() => { if (serverId === null && servers.length > 0) setServerId(servers[0].id) }, [servers, serverId])
-
-  const blocks = file.info?.total_blocks ?? 0
-  const tooBig = blocks > 500000
-
-  const submit = async () => {
-    if (serverId === null) return
-    setBusy(true)
-    try {
-      await buildLitematica({ name: file.name, server_id: serverId, x: Number(coords.x) || 0, y: Number(coords.y) || 0, z: Number(coords.z) || 0, place_air: placeAir })
-      showToast('success', '建造已开始,正在后台解析并逐条下发…')
-      onClose()
-    } catch (err) {
-      showToast('error', err instanceof ApiError ? err.message : '建造失败')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <Dialog open onOpenChange={(o) => (!o ? onClose() : undefined)}>
-      <DialogContent>
-        <DialogHeader><DialogTitle>建造「{file.name}」</DialogTitle></DialogHeader>
-        <div className="space-y-3">
-          <div className="space-y-2">
-            <Label>目标服务器(需运行中)</Label>
-            <Select value={serverId === null ? undefined : String(serverId)} onValueChange={(v) => setServerId(Number(v))}>
-              <SelectTrigger><SelectValue placeholder="选择服务器" /></SelectTrigger>
-              <SelectContent>
-                {servers.map((s) => (<SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            {(['x', 'y', 'z'] as const).map((k) => (
-              <div key={k} className="space-y-1.5">
-                <Label className="uppercase">{k} 原点</Label>
-                <Input value={coords[k]} onChange={(e) => setCoords((c) => ({ ...c, [k]: e.target.value }))} className="font-mono" />
-              </div>
-            ))}
-          </div>
-          <div className="flex items-center justify-between">
-            <Label>放置空气(覆盖原有方块)</Label>
-            <Switch checked={placeAir} onCheckedChange={setPlaceAir} />
-          </div>
-          {tooBig ? (
-            <p className="rounded-lg bg-destructive/10 px-3 py-2 text-xs text-destructive">
-              该投影 {blocks.toLocaleString()} 方块,超过控制台建造上限(50 万)。逐条建造会导致服务器卡死,已禁用。
-            </p>
-          ) : null}
-        </div>
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={onClose} disabled={busy}>取消</Button>
-          <Button type="button" className="gap-1.5" disabled={busy || serverId === null || tooBig} onClick={submit}>
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Hammer className="h-4 w-4" />}开始建造
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   )
 }

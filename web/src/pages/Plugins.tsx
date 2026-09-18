@@ -158,7 +158,7 @@ export default function Plugins() {
   return (
     <PageShell
       title="插件管理"
-      description="管理实例的 MCDR 插件,或从官方插件库在线安装。"
+      description="管理 MCDR 插件"
       width="7xl"
       actions={
         <div className="flex items-center gap-2">

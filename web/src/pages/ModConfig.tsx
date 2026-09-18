@@ -204,7 +204,7 @@ export default function ModConfig() {
   return (
     <PageShell
       title="模组配置"
-      description="ViaVersion / Velocity Proxy 等代理相关模组:一键安装 + 默认配置 + 表单化修改。"
+      description="管理模组配置"
       width="4xl"
       actions={
         all.length > 0 ? (

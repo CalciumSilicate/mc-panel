@@ -149,7 +149,7 @@ export default function Mods() {
   return (
     <PageShell
       title="模组管理"
-      description="管理实例的模组,或从 Modrinth 在线安装。注意:vanilla 服务端需 Fabric/Forge 等加载器才会加载模组。"
+      description="管理服务器模组"
       width="7xl"
       actions={
         <div className="flex flex-wrap items-center gap-2">

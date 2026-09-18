@@ -1,9 +1,9 @@
 """Admin-only existing instance file browsing and editing."""
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from .. import server_files
+from .. import jobs, server_files
 from ..database import get_db
 from ..deps import ensure_not_protected, require_admin
 from ..models import Server
@@ -25,6 +25,15 @@ class SaveBody(BaseModel):
     revision: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
+class EntryBody(BaseModel):
+    path: str = Field(min_length=1, max_length=2048)
+    revision: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class RenameBody(EntryBody):
+    name: str = Field(min_length=1, max_length=240)
+
+
 @router.get("")
 def list_files(path: str = "", server: Server = Depends(_server)) -> dict:
     return server_files.list_directory(server, path)
@@ -39,3 +48,21 @@ def get_content(path: str, server: Server = Depends(_server)) -> dict:
 def put_content(body: SaveBody, server: Server = Depends(_server)) -> dict:
     ensure_not_protected(server)
     return server_files.save_content(server, body.path, body.text, body.revision)
+
+
+@router.patch("/entry")
+def rename_entry(body: RenameBody, server: Server = Depends(_server)) -> dict:
+    return server_files.rename_entry(server, body.path, body.name, body.revision)
+
+
+@router.delete("/entry", status_code=202)
+def delete_entry(body: EntryBody, background: BackgroundTasks, server: Server = Depends(_server)) -> dict:
+    ensure_not_protected(server)
+    job_id = jobs.create()
+    try:
+        target = server_files.detach_entry(server, body.path, body.revision, job_id)
+    except Exception:
+        jobs.fail(job_id, "删除未执行")
+        raise
+    background.add_task(server_files.clean_detached, target, job_id)
+    return {"job_id": job_id}

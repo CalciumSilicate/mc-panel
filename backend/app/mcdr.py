@@ -89,7 +89,8 @@ def _resolve_launch(inst: "Path", server_type: str) -> tuple[str, str]:
     sd = inst / "server"
     if server_type == "forge":
         # 现代 Forge(1.17+):@libraries/.../win_args.txt
-        args = sorted(sd.glob("libraries/net/minecraftforge/forge/*/win_args.txt"))
+        args_file = "win_args.txt" if os.name == "nt" else "unix_args.txt"
+        args = sorted(sd.glob(f"libraries/net/minecraftforge/forge/*/{args_file}"))
         if args:
             return ("@", str(args[0].relative_to(sd)).replace("\\", "/"))
         # 旧版 Forge:forge-*.jar(排除 installer)
@@ -275,7 +276,8 @@ class MCDRManager:
         """核心是否已就绪。Forge 现代版无 server.jar,改判 args 文件 / forge jar。"""
         sd = self.instance_dir(server) / "server"
         if server.server_type == "forge":
-            if any(sd.glob("libraries/net/minecraftforge/forge/*/win_args.txt")):
+            args_file = "win_args.txt" if os.name == "nt" else "unix_args.txt"
+            if any(sd.glob(f"libraries/net/minecraftforge/forge/*/{args_file}")):
                 return True
             return any(p for p in sd.glob("forge-*.jar") if "installer" not in p.name)
         return (sd / "server.jar").exists()

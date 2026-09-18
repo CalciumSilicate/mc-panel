@@ -118,7 +118,7 @@ export default function PrimeBackup() {
   return (
     <PageShell
       title="Prime Backup"
-      description="增量去重备份的查看 / 导出 / 导入 / 恢复(把 PB 插件作为 CLI 调用)。"
+      description="管理增量备份"
       width="5xl"
       actions={
         mcServers.length > 0 ? (

@@ -16,19 +16,14 @@ dependencies = [
     "python-multipart>=0.0.9",
     "PyYAML>=6.0",
     "nbtlib>=2.0",
-    # Litematica 投影解析(.litematic → 指令清单)
+    # Litematica 投影解析(.litematic → 材料清单)
     "litemapy>=0.9",
     # 被管理的 MCDR 实例以 `<python> -m mcdreforged` 启动;装进同一环境,
     # 默认即用后端自身解释器(见 config.DEFAULT_PYTHON_EXECUTABLE),开箱即用。
     "mcdreforged>=2.13",
     "websockets",
     "pillow",
-    "scipy",
     "numpy",
-    "matplotlib",
-    # TODO: 以下三个包不在 PyPI(官方/清华均 404),被 pcrc.py/chat.py/onebot.py/pb.py 引用,
-    #       需用 git 依赖或本地源加回(待确认来源):
-    #   "pcrc"(PCRC 录像)、"pyncm" / "pyncm-async"(网易云解析)
 ]
 
 # 应用而非可发布的库:代码在 backend/app,由 run.py 运行时把 backend 加入 sys.path 后导入。

@@ -1,5 +1,6 @@
 """Run: python -m unittest discover -s tests -v (no app.main import)."""
 import hashlib
+import asyncio
 import os
 import stat
 import subprocess
@@ -12,7 +13,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from fastapi import FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 # database imports create directories; isolate even these import-time effects.
@@ -42,6 +43,7 @@ class ServerFilesTests(unittest.TestCase):
         self.file = self.root / "config.txt"
         self.file.write_bytes(b"hello\n")
         for patcher in (patch.object(files, "SERVERS_ROOT", self.base),
+                        patch.object(files, "TRASH_ROOT", Path(temp.name) / "trash"),
                         patch.object(files.manager, "instance_dir", side_effect=lambda s: self.base / s.dir_name)):
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -228,10 +230,16 @@ class ServerFilesTests(unittest.TestCase):
                     self.assertEqual(client.get(endpoint).status_code, expected)
                 if expected != 200:
                     self.assertEqual(client.put(base + "/content", json=body).status_code, expected)
+                    mutation = {"path": "config.txt", "revision": files._entry_revision(self.file.stat())}
+                    self.assertEqual(client.patch(base + "/entry", json={**mutation, "name": "renamed"}).status_code, expected)
+                    self.assertEqual(client.request("DELETE", base + "/entry", json=mutation).status_code, expected)
             self.server.protected = True
             self.assertEqual(client.get(base).status_code, 200)
             self.assertEqual(client.get(base + "/content", params={"path": "config.txt"}).status_code, 200)
             self.assertEqual(client.put(base + "/content", json=body).status_code, 409)
+            mutation = {"path": "config.txt", "revision": files._entry_revision(self.file.stat())}
+            self.assertEqual(client.patch(base + "/entry", json={**mutation, "name": "renamed"}).status_code, 409)
+            self.assertEqual(client.request("DELETE", base + "/entry", json=mutation).status_code, 409)
             self.assertEqual(self.file.read_bytes(), b"hello\n")
             self.server.protected = False
             response = client.put(base + "/content", json=body)
@@ -241,6 +249,53 @@ class ServerFilesTests(unittest.TestCase):
             self.assertEqual(client.put(base + "/content", json={**body, "revision": "invalid"}).status_code, 422)
             db.get.return_value = None
             self.assertEqual(client.get(base).status_code, 404)
+
+    def test_rename_files_and_nonempty_directories(self):
+        revision = files._entry_revision(self.file.stat())
+        result = files.rename_entry(self.server, "config.txt", "配置.txt", revision)
+        self.assertEqual(result["path"], "配置.txt")
+        self.assertEqual((self.root / "配置.txt").read_bytes(), b"hello\n")
+        folder = self.root / "folder"
+        folder.mkdir()
+        (folder / "nested").mkdir()
+        (folder / "nested/file.bin").write_bytes(b"unchanged")
+        result = files.rename_entry(self.server, "folder", "renamed", files._entry_revision(folder.stat()))
+        self.assertEqual(result["path"], "renamed")
+        self.assertEqual((self.root / "renamed/nested/file.bin").read_bytes(), b"unchanged")
+
+    def test_mutation_conflicts_and_invalid_paths(self):
+        revision = files._entry_revision(self.file.stat())
+        (self.root / "exists.txt").write_bytes(b"keep")
+        self.error(409, files.rename_entry, self.server, "config.txt", "exists.txt", revision)
+        self.assertEqual((self.root / "exists.txt").read_bytes(), b"keep")
+        for name in ("", "../x", "a/b", "a\\b", "NUL", "file:"):
+            self.error(400, files.rename_entry, self.server, "config.txt", name, revision)
+        for path in ("", "../two", "/config.txt"):
+            self.error(400, files.rename_entry, self.server, path, "renamed", revision)
+            self.error(400, files.detach_entry, self.server, path, revision, "a" * 32)
+        self.file.write_bytes(b"external-change")
+        self.error(409, files.rename_entry, self.server, "config.txt", "new.txt", revision)
+        self.error(409, files.detach_entry, self.server, "config.txt", revision, "a" * 32)
+        self.assertEqual(self.file.read_bytes(), b"external-change")
+
+    def test_delete_detaches_before_background_cleanup(self):
+        from app import jobs
+        for name in ("config.txt", "folder"):
+            path = self.root / name
+            if name == "folder":
+                (path / "nested").mkdir(parents=True)
+                (path / "nested/data").write_bytes(b"content")
+            tasks = BackgroundTasks()
+            body = routes.EntryBody(path=name, revision=files._entry_revision(path.stat()))
+            result = routes.delete_entry(body, tasks, self.server)
+            self.assertFalse(path.exists())
+            quarantined = files.TRASH_ROOT / result["job_id"]
+            self.assertTrue(quarantined.exists())
+            self.assertEqual(jobs.get(result["job_id"])["status"], "running")
+            asyncio.run(tasks())
+            self.assertFalse(quarantined.exists())
+            self.assertEqual(jobs.get(result["job_id"])["status"], "done")
+        self.assertEqual((self.base / "two/secret").read_bytes(), b"secret")
 
 
 if __name__ == "__main__":

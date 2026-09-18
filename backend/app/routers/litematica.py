@@ -1,28 +1,19 @@
-"""Litematica 投影:上传库 + 解析材料 + 生成指令并节流下发到服务器控制台。"""
+"""Litematica 投影:上传库与材料清单。"""
 from __future__ import annotations
 
 import asyncio
-import logging
 import re
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
-from sqlalchemy.orm import Session
 
 from .. import litematica as lm
-from ..database import get_db
-from ..deps import ensure_not_protected, require_helper
-from ..mcdr import manager
-from ..models import Server
+from ..deps import require_helper
 
 router = APIRouter(prefix="/litematica", tags=["litematica"])
 
-# 持有后台建造任务的强引用,避免被 GC 回收(asyncio 已知坑)
-_BUILD_TASKS: set = set()
-# 控制台建造的方块上限(超过则拒绝:再大会内存暴涨且服务器卡死)
-_MAX_BUILD_BLOCKS = 500_000
+_PARSE_TASKS: set = set()
 
 
 def _safe_name(name: str) -> str:
@@ -57,8 +48,8 @@ async def upload(file: UploadFile = File(...), _: str = Depends(require_helper))
     dest.write_bytes(await file.read())
     # 大投影解析很慢(litemapy 解码),后台预热缓存,上传立即返回
     task = asyncio.create_task(asyncio.to_thread(lm.parse_and_cache, dest))
-    _BUILD_TASKS.add(task)
-    task.add_done_callback(_BUILD_TASKS.discard)
+    _PARSE_TASKS.add(task)
+    task.add_done_callback(_PARSE_TASKS.discard)
     return {"name": name}
 
 
@@ -90,64 +81,3 @@ def delete(name: str, _: str = Depends(require_helper)) -> dict:
     p.unlink(missing_ok=True)
     lm._cache_file(p).unlink(missing_ok=True)
     return {"ok": True}
-
-
-class BuildBody(BaseModel):
-    name: str
-    server_id: int
-    x: int = 0
-    y: int = 0
-    z: int = 0
-    place_air: bool = False
-
-
-@router.post("/build")
-async def build(body: BuildBody, _: str = Depends(require_helper), db: Session = Depends(get_db)) -> dict:
-    server = db.get(Server, body.server_id)
-    if server is None:
-        raise HTTPException(status_code=404, detail="服务器不存在")
-    ensure_not_protected(server)
-    if not manager.is_running(server.id):
-        raise HTTPException(status_code=400, detail="目标服务器未运行")
-    p = _path(body.name)
-    if not p.exists():
-        raise HTTPException(status_code=404, detail="投影文件不存在")
-    # 体量护栏:百万级方块用控制台逐条建造不可行(内存暴涨+服务器卡死),直接拒绝
-    cached = lm.cached_info(p)
-    if cached and cached.get("total_blocks", 0) > _MAX_BUILD_BLOCKS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"投影过大({cached['total_blocks']:,} 方块,上限 {_MAX_BUILD_BLOCKS:,})。"
-            "控制台逐条建造仅适用于中小投影;超大投影请用 WorldEdit/分区等方式。",
-        )
-    sid = server.id
-
-    async def run() -> None:
-        print(f"[litematica] build 开始: name={body.name} server={sid} offset=({body.x},{body.y},{body.z})", flush=True)
-        try:
-            cmds = await asyncio.to_thread(lm.generate_commands, str(p), (body.x, body.y, body.z), body.place_air)
-        except Exception:  # noqa: BLE001
-            import traceback
-            print("[litematica] 生成指令失败:\n" + traceback.format_exc(), flush=True)
-            return
-        print(f"[litematica] 生成 {len(cmds)} 条指令,开始下发", flush=True)
-        sent = 0
-        for i, cmd in enumerate(cmds):
-            if not manager.is_running(sid):
-                print(f"[litematica] 服务器已停止,已发 {sent} 条后中止", flush=True)
-                return
-            try:
-                await manager.send_raw(sid, cmd)
-                sent += 1
-            except Exception:  # noqa: BLE001
-                import traceback
-                print("[litematica] 下发失败:\n" + traceback.format_exc(), flush=True)
-                return
-            if i % 50 == 49:
-                await asyncio.sleep(0.05)
-        print(f"[litematica] 下发完成,共 {sent} 条", flush=True)
-
-    task = asyncio.create_task(run())
-    _BUILD_TASKS.add(task)
-    task.add_done_callback(_BUILD_TASKS.discard)
-    return {"ok": True, "started": True}

@@ -245,7 +245,7 @@ export default function Chat() {
   return (
     <PageShell
       title="聊天室"
-      description="按互联组的气泡聊天:MC / QQ / 网页 三向互通。"
+      description="跨服与 QQ 聊天"
       width="6xl"
       actions={
         hasGroups ? (

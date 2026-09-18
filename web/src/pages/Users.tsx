@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Check, Crown, Loader2, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { Crown, Loader2, Plus, RefreshCw, Trash2 } from 'lucide-react'
 
 import { ApiError } from '@/api/client'
 import { type PanelUser, createUser, deleteUser, listUsers, transferOwner, updateUser } from '@/api/users'
@@ -19,7 +19,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Switch } from '@/components/ui/switch'
+import { QuickEdit } from '@/components/QuickEdit'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useGlobalToast } from '@/components/ui/use-global-toast'
 import { Pagination } from '@/components/Pagination'
@@ -39,13 +39,20 @@ export default function Users() {
   const { user: me } = useAuth()
   const { showToast } = useGlobalToast()
   const { data, loading, error, refresh } = useResource(() => listUsers(), [])
-  const paged = usePaged(data ?? [], 20)
+  const [q, setQ] = useState('')
+  const [saved, setSaved] = useState<Record<number, PanelUser>>({})
+  const filtered = useMemo(() => (data ?? []).map((u) => saved[u.id] ?? u).filter((u) => `${u.username} ${u.player_id} ${u.role} ${ROLE_LABELS[u.role]}`.toLowerCase().includes(q.trim().toLowerCase())), [data, saved, q])
+  const paged = usePaged(filtered, 20)
+  useEffect(() => { paged.setPage(1) }, [q]) // eslint-disable-line react-hooks/exhaustive-deps
+  const save = async (u: PanelUser, patch: Parameters<typeof updateUser>[1]) => {
+    const updated = await updateUser(u.id, patch)
+    setSaved((prev) => ({ ...prev, [u.id]: updated }))
+  }
   const [createOpen, setCreateOpen] = useState(false)
-  const [editUser, setEditUser] = useState<PanelUser | null>(null)
   const [busy, setBusy] = useState<number | null>(null)
 
   // 可指定的角色:严格低于自己的(从 user/helper/admin 里)
-  const assignable = ['user', 'helper', 'admin'].filter((r) => ROLE_ORDER[r] < ROLE_ORDER[me.role])
+  const assignable = useMemo(() => ['user', 'helper', 'admin'].filter((r) => ROLE_ORDER[r] < ROLE_ORDER[me.role]), [me.role])
   const canManage = (u: PanelUser) => u.id !== me.id && ROLE_ORDER[me.role] > ROLE_ORDER[u.role]
 
   const run = async (id: number, fn: () => Promise<unknown>, ok: string) => {
@@ -64,11 +71,11 @@ export default function Users() {
   return (
     <PageShell
       title="用户管理"
-      description="owner 管理所有用户;admin 仅能管理 helper / user。"
+      description="管理面板账号"
       width="6xl"
       actions={
         <>
-          <Button type="button" variant="outline" className="gap-2" onClick={refresh} disabled={loading}>
+          <Button type="button" variant="outline" className="gap-2" onClick={() => { setSaved({}); refresh() }} disabled={loading}>
             <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
             刷新
           </Button>
@@ -80,6 +87,7 @@ export default function Users() {
       }
     >
       <PageSurface bodyClassName="p-0">
+        <div className="border-b p-4"><Input aria-label="搜索用户" value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索用户名 / 玩家 / 角色" className="max-w-sm" /></div>
         {loading && !data ? (
           <div className="flex h-40 items-center justify-center"><InlineLoader /></div>
         ) : error ? (
@@ -91,7 +99,7 @@ export default function Users() {
                 <TableRow>
                   <TableHead>用户名</TableHead>
                   <TableHead>角色</TableHead>
-                  <TableHead>验证 / 绑定玩家</TableHead>
+                  <TableHead>验证</TableHead><TableHead>绑定玩家</TableHead><TableHead>密码</TableHead>
                   <TableHead>创建时间</TableHead>
                   <TableHead className="text-right">操作</TableHead>
                 </TableRow>
@@ -100,32 +108,18 @@ export default function Users() {
                 {paged.pageItems.map((u) => (
                   <TableRow key={u.id}>
                     <TableCell className="font-medium">
-                      {u.username}
+                      <QuickEdit label={`修改 ${u.username} 的用户名`} value={u.username} disabled={!canManage(u)} onSave={(v) => save(u, { username: v })} />
                       {u.id === me.id ? <span className="ml-1 text-xs text-muted-foreground">(你)</span> : null}
                     </TableCell>
                     <TableCell>
-                      <Badge variant="outline" className={cn('text-[11px]', ROLE_TONE[u.role])}>
-                        {ROLE_LABELS[u.role] ?? u.role}
-                      </Badge>
+                      <QuickEdit label={`修改 ${u.username} 的角色`} value={u.role} display={<Badge variant="outline" className={cn('text-[11px]', ROLE_TONE[u.role])}>{ROLE_LABELS[u.role] ?? u.role}</Badge>} disabled={!canManage(u)} options={assignable.map((r) => ({ value: r, label: ROLE_LABELS[r] }))} onSave={(v) => save(u, { role: v })} />
                     </TableCell>
-                    <TableCell>
-                      {u.verified ? (
-                        <span className="inline-flex items-center gap-1.5 text-sm text-emerald-600 dark:text-emerald-400">
-                          <Check className="h-4 w-4" />
-                          {u.player_id || '已验证'}
-                        </span>
-                      ) : (
-                        <span className="text-sm text-muted-foreground">未验证</span>
-                      )}
-                    </TableCell>
+                    <TableCell><QuickEdit label={`修改 ${u.username} 的验证状态`} value={String(u.verified)} display={u.verified ? '已验证' : '未验证'} disabled={!canManage(u)} options={[{ value: 'true', label: '已验证' }, { value: 'false', label: '未验证' }]} onSave={(v) => save(u, { verified: v === 'true' })} /></TableCell>
+                    <TableCell><QuickEdit label={`修改 ${u.username} 的绑定玩家`} value={u.player_id} disabled={!canManage(u)} onSave={(v) => save(u, { player_id: v })} /></TableCell>
+                    <TableCell><QuickEdit label={`修改 ${u.username} 的密码`} value="" display="••••••" password disabled={!canManage(u)} onSave={(v) => save(u, { new_password: v })} /></TableCell>
                     <TableCell className="text-muted-foreground">{new Date(u.created_at).toLocaleString()}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
-                        {canManage(u) ? (
-                          <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" title="编辑" disabled={busy === u.id} onClick={() => setEditUser(u)}>
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                        ) : null}
                         {me.role === 'owner' && u.role !== 'owner' ? (
                           <Button
                             type="button"
@@ -153,6 +147,7 @@ export default function Users() {
                     </TableCell>
                   </TableRow>
                 ))}
+                {!paged.total ? <TableRow><TableCell colSpan={7} className="h-24 text-center text-muted-foreground">没有匹配的用户</TableCell></TableRow> : null}
               </TableBody>
             </Table>
             <Pagination page={paged.page} pageCount={paged.pageCount} total={paged.total} onPage={paged.setPage} />
@@ -160,7 +155,6 @@ export default function Users() {
         )}
 
       <CreateUserDialog open={createOpen} assignable={assignable} onClose={() => setCreateOpen(false)} onCreated={() => { setCreateOpen(false); refresh() }} />
-      <EditUserDialog user={editUser} assignable={assignable} onClose={() => setEditUser(null)} onSaved={() => { setEditUser(null); refresh() }} />
       </PageSurface>
     </PageShell>
   )
@@ -228,87 +222,6 @@ function CreateUserDialog({ open, assignable, onClose, onCreated }: { open: bool
         <DialogFooter>
           <Button type="button" variant="outline" onClick={onClose} disabled={busy}>取消</Button>
           <Button type="button" onClick={submit} disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : '创建'}</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-function EditUserDialog({ user, assignable, onClose, onSaved }: { user: PanelUser | null; assignable: string[]; onClose: () => void; onSaved: () => void }) {
-  const { showToast } = useGlobalToast()
-  const [role, setRole] = useState('user')
-  const [newPassword, setNewPassword] = useState('')
-  const [verified, setVerified] = useState(false)
-  const [playerId, setPlayerId] = useState('')
-  const [busy, setBusy] = useState(false)
-
-  useEffect(() => {
-    if (user) {
-      setRole(user.role)
-      setNewPassword('')
-      setVerified(user.verified)
-      setPlayerId(user.player_id)
-    }
-  }, [user])
-
-  const submit = async () => {
-    if (!user) return
-    setBusy(true)
-    try {
-      await updateUser(user.id, {
-        role: role !== user.role ? role : undefined,
-        new_password: newPassword || undefined,
-        verified: verified !== user.verified ? verified : undefined,
-        player_id: playerId !== user.player_id ? playerId : undefined,
-      })
-      showToast('success', '已保存')
-      onSaved()
-    } catch (err) {
-      showToast('error', err instanceof ApiError ? err.message : '保存失败')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  // 编辑时的可选角色:可分配集合 + 该用户当前角色(便于显示)
-  const roleOptions = Array.from(new Set([user?.role ?? 'user', ...assignable]))
-
-  return (
-    <Dialog open={user !== null} onOpenChange={(o) => (!o ? onClose() : undefined)}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>编辑用户 —— {user?.username}</DialogTitle>
-        </DialogHeader>
-        <div className="grid gap-4 py-2">
-          <div className="space-y-2">
-            <Label>角色</Label>
-            <Select value={role} onValueChange={setRole}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {roleOptions.map((r) => (
-                  <SelectItem key={r} value={r} disabled={r !== (user?.role ?? '') && !assignable.includes(r)}>
-                    {ROLE_LABELS[r] ?? r}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="eu-pwd">重置密码(留空不改)</Label>
-            <Input id="eu-pwd" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} autoComplete="new-password" />
-          </div>
-          <label className="flex items-center justify-between gap-4 rounded-md border border-border/70 px-3 py-2.5">
-            <span className="text-sm font-medium">已验证</span>
-            <Switch checked={verified} onCheckedChange={setVerified} />
-          </label>
-          <div className="space-y-2">
-            <Label htmlFor="eu-player">绑定玩家</Label>
-            <Input id="eu-player" value={playerId} onChange={(e) => setPlayerId(e.target.value)} placeholder="正版玩家名" />
-          </div>
-        </div>
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={onClose} disabled={busy}>取消</Button>
-          <Button type="button" onClick={submit} disabled={busy}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : '保存'}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

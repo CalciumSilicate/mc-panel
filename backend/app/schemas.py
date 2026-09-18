@@ -66,6 +66,7 @@ class UserCreate(BaseModel):
 
 
 class UserUpdate(BaseModel):
+    username: str | None = Field(default=None, min_length=1, max_length=64)
     role: str | None = None
     new_password: str | None = Field(default=None, min_length=1)
     verified: bool | None = None
@@ -266,6 +267,22 @@ class ResourceUsage(BaseModel):
     percent: float
 
 
+class DashboardArchive(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    size: int
+    source: str
+    created_at: datetime
+
+
+class HostResourcePoint(BaseModel):
+    time: float
+    cpu: float
+    memory: float
+
+
 class DashboardOverview(BaseModel):
     cpu_percent: float
     memory: ResourceUsage
@@ -273,6 +290,16 @@ class DashboardOverview(BaseModel):
     total_servers: int
     running_servers: int
     servers: list[ServerSummary]
+    sampled_at: datetime
+    cpu_threads: int
+    host_uptime_seconds: int
+    available_memory_gb: float
+    free_disk_gb: float
+    archive_count: int
+    archive_bytes: int
+    recent_archives: list[DashboardArchive]
+    history: list[HostResourcePoint]
+    history_interval_seconds: int
 
 
 # ---------- 系统设置 ----------

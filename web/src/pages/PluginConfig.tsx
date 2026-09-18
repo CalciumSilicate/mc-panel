@@ -341,7 +341,7 @@ export default function PluginConfig() {
   return (
     <PageShell
       title="插件配置"
-      description="一批推荐 MCDR 插件:一键安装 + 套用默认配置 + 表单化修改。"
+      description="管理插件配置"
       width="6xl"
       actions={
         mcServers.length > 0 ? (

@@ -72,6 +72,13 @@ def update_user(
     target = _get_user_or_404(db, user_id)
     if not _can_manage(actor, target):
         raise HTTPException(status_code=403, detail="无权管理该用户")
+    if payload.username is not None:
+        username = payload.username.strip()
+        if not username:
+            raise HTTPException(400, '用户名不能为空')
+        if db.scalar(select(User).where(User.username == username, User.id != user_id)):
+            raise HTTPException(409, '用户名已存在')
+        target.username = username
     if payload.role is not None and payload.role != target.role:
         _check_assignable(actor, payload.role)
         target.role = payload.role

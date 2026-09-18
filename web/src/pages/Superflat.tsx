@@ -7,6 +7,7 @@ import { applySuperflat } from '@/api/tools'
 import { PageShell, PageSurface } from '@/components/layout/PageScaffold'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { BlockPicker } from '@/components/BlockPicker'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
@@ -95,7 +96,7 @@ export default function Superflat() {
   return (
     <PageShell
       title="超平坦世界"
-      description="按服务器 MC 版本生成对应格式的 level.dat,写入实例世界目录。对未生成的世界生效。"
+      description="自定义世界分层"
       width="6xl"
       actions={
         <div className="flex items-center gap-2">
@@ -116,9 +117,9 @@ export default function Superflat() {
         <PageSurface title="分层(从底到顶)" bodyClassName="space-y-3">
           {layers.map((l, i) => (
             <div key={i} className="flex items-end gap-2">
-              <div className="flex-1 space-y-1.5">
+              <div className="min-w-0 flex-1 space-y-1.5">
                 {i === 0 ? <Label className="text-xs text-muted-foreground">方块</Label> : null}
-                <Input value={l.block} onChange={(e) => setLayer(i, { block: e.target.value })} className="font-mono" placeholder="minecraft:dirt" />
+                <BlockPicker label={`第 ${i + 1} 层方块`} value={l.block} onChange={(block) => setLayer(i, { block })} />
               </div>
               <div className="w-24 space-y-1.5">
                 {i === 0 ? <Label className="text-xs text-muted-foreground">层数</Label> : null}

@@ -36,19 +36,6 @@ export function deleteLitematica(name: string): Promise<{ ok: boolean }> {
   return apiRequest(`/litematica/${encodeURIComponent(name)}`, { method: 'DELETE' })
 }
 
-export interface BuildInput {
-  name: string
-  server_id: number
-  x: number
-  y: number
-  z: number
-  place_air: boolean
-}
-
-export function buildLitematica(input: BuildInput): Promise<{ ok: boolean; started: boolean }> {
-  return apiRequest('/litematica/build', { method: 'POST', body: JSON.stringify(input) })
-}
-
 export async function downloadLitematica(name: string): Promise<void> {
   const res = await fetch(`/api/litematica/${encodeURIComponent(name)}/download`, {
     headers: { authorization: `Bearer ${getAuthToken()}` },

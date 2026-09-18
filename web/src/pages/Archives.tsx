@@ -107,7 +107,7 @@ export default function Archives() {
   return (
     <PageShell
       title="存档管理"
-      description="把实例的世界打包成存档,或恢复到任意实例。默认需先停止，也可选择强制停止后创建/恢复。"
+      description="管理世界存档"
       width="7xl"
       actions={
         <>

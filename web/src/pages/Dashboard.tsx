@@ -1,7 +1,6 @@
 import { FormEvent, lazy, Suspense, useEffect, useMemo, useState, type ElementType } from 'react'
 import {
   Archive,
-  BarChart3,
   Boxes,
   ChevronLeft,
   ChevronRight,
@@ -12,7 +11,6 @@ import {
   Layers,
   Loader2,
   LogOut,
-  Map as MapIcon,
   MessagesSquare,
   Network,
   Package,
@@ -23,7 +21,6 @@ import {
   Settings,
   UserCog,
   Users as UsersIcon,
-  Video,
 } from 'lucide-react'
 
 import { ApiError } from '@/api/client'
@@ -55,10 +52,7 @@ const PluginConfigPage = lazy(() => import('@/pages/PluginConfig'))
 const ModConfigPage = lazy(() => import('@/pages/ModConfig'))
 const PrimeBackupPage = lazy(() => import('@/pages/PrimeBackup'))
 const LitematicaPage = lazy(() => import('@/pages/Litematica'))
-const StatsPage = lazy(() => import('@/pages/Stats'))
-const WorldMapPage = lazy(() => import('@/pages/WorldMap'))
 const PlayersPage = lazy(() => import('@/pages/Players'))
-const PcrcPage = lazy(() => import('@/pages/Pcrc'))
 const UsersPage = lazy(() => import('@/pages/Users'))
 const SettingsPage = lazy(() => import('@/pages/Settings'))
 
@@ -70,7 +64,7 @@ const SettingsPage = lazy(() => import('@/pages/Settings'))
  * 真要做深链接/多级路由时,把 `currentPage` 状态换成 router 即可,其余结构不动。
  */
 
-type Page = 'overview' | 'servers' | 'proxy' | 'plugins' | 'pconfig' | 'mods' | 'mconfig' | 'archives' | 'primebackup' | 'litematica' | 'pcrc' | 'stats' | 'worldmap' | 'players' | 'superflat' | 'chat' | 'users' | 'settings'
+type Page = 'overview' | 'servers' | 'proxy' | 'plugins' | 'pconfig' | 'mods' | 'mconfig' | 'archives' | 'primebackup' | 'litematica' | 'players' | 'superflat' | 'chat' | 'users' | 'settings'
 
 interface NavItem {
   key: Page
@@ -90,10 +84,7 @@ const navItems: NavItem[] = [
   { key: 'archives', label: '存档', icon: Archive, minRole: 'user' },
   { key: 'primebackup', label: 'Prime Backup', icon: DatabaseBackup, minRole: 'helper' },
   { key: 'litematica', label: 'Litematica', icon: Building2, minRole: 'helper' },
-  { key: 'pcrc', label: 'PCRC 录像', icon: Video, minRole: 'helper' },
   { key: 'chat', label: '聊天室', icon: MessagesSquare, minRole: 'user' },
-  { key: 'stats', label: '数据统计', icon: BarChart3, minRole: 'user' },
-  { key: 'worldmap', label: '世界地图', icon: MapIcon, minRole: 'user' },
   { key: 'players', label: '玩家管理', icon: UserCog, minRole: 'helper' },
   { key: 'superflat', label: '超平坦', icon: Layers, minRole: 'helper' },
   { key: 'users', label: '用户管理', icon: UsersIcon, minRole: 'admin' },
@@ -330,16 +321,13 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                       animate={{ opacity: 1, y: 0, scale: 1 }}
                       transition={{ type: 'spring', bounce: 0.15, duration: 0.4 }}
                     >
-                      {currentPage === 'overview' ? <Overview /> : null}
+                      {currentPage === 'overview' ? <Overview onNavigate={setCurrentPage} /> : null}
                       {currentPage === 'servers' ? <Servers /> : null}
                       {currentPage === 'proxy' ? <ProxyNetPage /> : null}
                       {currentPage === 'pconfig' ? <PluginConfigPage /> : null}
                       {currentPage === 'mconfig' ? <ModConfigPage /> : null}
                       {currentPage === 'primebackup' ? <PrimeBackupPage /> : null}
                       {currentPage === 'litematica' ? <LitematicaPage /> : null}
-                      {currentPage === 'pcrc' ? <PcrcPage /> : null}
-                      {currentPage === 'stats' ? <StatsPage /> : null}
-                      {currentPage === 'worldmap' ? <WorldMapPage /> : null}
                       {currentPage === 'players' ? <PlayersPage /> : null}
                       {currentPage === 'plugins' ? <Plugins /> : null}
                       {currentPage === 'mods' ? <Mods /> : null}
