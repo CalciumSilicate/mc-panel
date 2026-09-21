@@ -153,6 +153,10 @@ export function wireProxy(proxyId: number, secret = '', force = false): Promise<
   return apiRequest<{ results: WireResult[] }>(`/servers/proxy/${proxyId}/wire`, { method: 'POST', body: JSON.stringify({ secret, force }) })
 }
 
+export function configureJoinMotd(proxyId: number): Promise<{ results: WireResult[] }> {
+  return apiRequest(`/servers/proxy/${proxyId}/join-motd`, { method: 'POST', body: '{}' })
+}
+
 export function getSuggestedPort(): Promise<number> {
   return apiRequest<{ port: number }>('/servers/suggest-port').then((r) => r.port)
 }

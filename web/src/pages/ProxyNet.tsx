@@ -6,7 +6,9 @@ import {
   type CustomBackend,
   type ServerSummary,
   type WiringStatus,
+  type WireResult,
   addCustomBackend,
+  configureJoinMotd,
   deleteCustomBackend,
   getProxySecret,
   getWiringStatus,
@@ -46,6 +48,8 @@ export default function ProxyNet() {
   // 每个代理的「添加自定义子服」表单草稿
   const [drafts, setDrafts] = useState<Record<number, { name: string; host: string; port: string }>>({})
   const [addingCustom, setAddingCustom] = useState<number | null>(null)
+  const [motdBusy, setMotdBusy] = useState<number | null>(null)
+  const [motdResults, setMotdResults] = useState<Record<number, WireResult[]>>({})
 
   const proxies = useMemo(() => (data ?? []).filter((s) => s.server_type === 'velocity'), [data])
 
@@ -170,6 +174,26 @@ export default function ProxyNet() {
     }
   }
 
+  const configureMotd = async (proxy: ServerSummary) => {
+    if (!await confirm({
+      title: '一键配置 joinMOTD',
+      description: `为「${proxy.name}」下的托管子服补装 joinMOTD，覆盖欢迎名称、网络名称和跨服列表，保留开服日期等其他配置。运行中的子服将发送插件加载/重载命令，不重启游戏服。受保护、禁用插件或引用公共配置的子服不会修改；自定义子服仅加入列表。请确保已接线，玩家可使用 /server 命令。`,
+      confirmText: '安装并配置',
+    })) return
+    setMotdBusy(proxy.id)
+    setMotdResults((cur) => ({ ...cur, [proxy.id]: [] }))
+    try {
+      const { results } = await configureJoinMotd(proxy.id)
+      setMotdResults((cur) => ({ ...cur, [proxy.id]: results }))
+      const failed = results.filter((r) => r.status === 'error').length
+      showToast(failed ? 'error' : 'success', failed ? `${failed} 个子服配置失败，请查看结果` : 'joinMOTD 配置完成')
+    } catch (err) {
+      showToast('error', err instanceof ApiError ? err.message : 'joinMOTD 配置失败')
+    } finally {
+      setMotdBusy(null)
+    }
+  }
+
   return (
     <PageShell
       title="代理网络"
@@ -228,10 +252,25 @@ export default function ProxyNet() {
                       随机
                     </Button>
                   </div>
-                  <Button type="button" className="w-full gap-1.5 shrink-0 sm:w-auto" disabled={busy === proxy.id || (backends.length === 0 && proxyCustoms.length === 0)} onClick={() => wire(proxy.id)}>
+                  <Button type="button" className="w-full gap-1.5 shrink-0 sm:w-auto" disabled={motdBusy !== null || busy === proxy.id || (backends.length === 0 && proxyCustoms.length === 0)} onClick={() => wire(proxy.id)}>
                     {busy === proxy.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
                     一键接线
                   </Button>
+                </div>
+
+                <div className="space-y-2 border-b border-border/70 px-4 py-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button type="button" variant="outline" size="sm" className="gap-1.5" disabled={busy !== null || motdBusy !== null || proxy.protected || backends.length === 0} onClick={() => configureMotd(proxy)}>
+                      {motdBusy === proxy.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plug className="h-4 w-4" />}
+                      {motdBusy === proxy.id ? '正在安装并配置…' : '一键配置 joinMOTD'}
+                    </Button>
+                    <p className="text-xs text-muted-foreground">同步入服欢迎消息与可点击跨服列表；网络增删子服后需再次配置。</p>
+                  </div>
+                  {motdResults[proxy.id]?.map((r, i) => (
+                    <p key={i} className={cn('break-words text-xs', r.status === 'error' ? 'text-destructive' : 'text-muted-foreground')}>
+                      <span className="font-medium">{r.name}</span>：{r.detail}
+                    </p>
+                  ))}
                 </div>
 
                 {/* 子服 */}

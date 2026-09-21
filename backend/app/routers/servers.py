@@ -187,6 +187,24 @@ def _get_proxy_or_404(db: Session, proxy_id: int) -> Server:
     return proxy
 
 
+@router.post("/proxy/{proxy_id}/join-motd")
+async def configure_join_motd(
+    proxy_id: int, _: str = Depends(require_admin), db: Session = Depends(get_db)
+) -> dict:
+    """按代理拓扑配置托管子服的欢迎消息；外部子服仅加入跨服列表。"""
+    proxy = _get_proxy_or_404(db, proxy_id)
+    ensure_not_protected(proxy)
+    backends = list(db.scalars(select(Server).where(Server.proxy_id == proxy_id).order_by(Server.id)).all())
+    customs = list(db.scalars(select(ProxyCustomBackend).where(ProxyCustomBackend.proxy_id == proxy_id).order_by(ProxyCustomBackend.id)).all())
+    if not backends:
+        raise HTTPException(status_code=400, detail="该代理下还没有托管子服")
+    keys = [proxy_mod._key(s.name) for s in [*backends, *customs]]
+    if len(keys) != len(set(keys)) or "try" in keys:
+        raise HTTPException(status_code=400, detail="子服路由名冲突或使用保留名称 try,请先重命名")
+    results = await proxy_mod.configure_join_motd(proxy, backends, customs, get_settings_row(db).python_executable)
+    return {"results": results}
+
+
 @router.get("/proxy/{proxy_id}/custom-backends", response_model=list[CustomBackendOut])
 def list_custom_backends(
     proxy_id: int, _: str = Depends(require_admin), db: Session = Depends(get_db)

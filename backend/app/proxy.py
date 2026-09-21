@@ -8,14 +8,17 @@
 """
 from __future__ import annotations
 
+import json
 import re
 import secrets
 import tomllib
 from pathlib import Path
 
+from . import plugin_presets
 from .mcdr import manager
 from .mod_manager import manager as mods
 from .models import Server
+from .plugin_manager import manager as plugins
 
 # 子服类型 -> (转发 mod 的 Modrinth slug, modrinth loader)
 _FORWARD_MOD = {
@@ -27,6 +30,55 @@ _FORWARD_MOD = {
 def _key(name: str) -> str:
     k = re.sub(r"[^A-Za-z0-9_]+", "_", name).strip("_").lower()
     return k or "server"
+
+
+async def configure_join_motd(proxy: Server, backends: list[Server], customs: list, python: str) -> list[dict]:
+    preset = plugin_presets.PRESETS["join_motd"]
+    server_list = [{"name": _key(s.name), "display": s.name} for s in [*backends, *customs]]
+    results = []
+    for server in backends:
+        configured = False
+        try:
+            if server.protected:
+                raise ValueError("实例受保护，未修改")
+            if server.server_type not in ("vanilla", "fabric", "forge"):
+                raise ValueError("非 MC 实例，未修改")
+            if manager.get_status(server) not in ("running", "stopped"):
+                raise ValueError("实例正在安装或切换运行状态，请稍后重试")
+            inst = manager.instance_dir(server)
+            target = inst / preset.target
+            # 严格读取，避免通用预设写入器在 JSON 损坏时回退默认值而丢失配置。
+            if target.exists():
+                current = json.loads(target.read_text(encoding="utf-8"))
+                if not isinstance(current, dict):
+                    raise ValueError("joinMOTD 配置不是 JSON 对象，未修改")
+                if current.get("commonJsonDataPath"):
+                    raise ValueError("已使用公共配置 commonJsonDataPath，请先解除引用，避免公共配置覆盖本次设置")
+            installed = next((p for p in plugins.list_plugins(inst) if p["id"] == preset.plugin_id), None)
+            if installed and not installed["enabled"]:
+                raise ValueError("joinMOTD 已禁用，请先在插件管理中启用")
+            command = "!!MCDR plugin reload join_motd"
+            if not installed:
+                result = await plugins.install_from_catalogue(inst, preset.plugin_id, None, python)
+                if result["file_name"]:
+                    command = f'!!MCDR plugin load {json.dumps(result["file_name"], ensure_ascii=False)}'
+            plugin_presets.write_values(inst, preset, {
+                "serverName": server.name,
+                "mainServerName": proxy.name,
+                "serverList": server_list,
+            })
+            configured = True
+            if manager.get_status(server) == "running":
+                await manager.send_command(server, command)
+                detail = "已配置，已发送加载/重载命令（请在控制台确认）"
+            else:
+                detail = "已配置，下次启动生效"
+            results.append({"name": server.name, "status": "ok", "detail": detail})
+        except Exception as exc:  # 单个子服失败不阻断其余子服。
+            detail = ("配置已保存，但加载/重载失败：" if configured else "") + str(exc)
+            results.append({"name": server.name, "status": "error", "detail": detail})
+    results.extend({"name": c.name, "status": "skipped", "detail": "已加入跨服列表；远端需手动安装配置"} for c in customs)
+    return results
 
 
 def _secret_file(proxy_inst: Path) -> Path:
