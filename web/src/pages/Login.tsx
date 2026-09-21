@@ -20,6 +20,7 @@ export default function Login({ mode, allowRegister, onAuthenticated }: LoginPro
   const [registering, setRegistering] = useState(false)
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
@@ -36,6 +37,10 @@ export default function Login({ mode, allowRegister, onAuthenticated }: LoginPro
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault()
     setError('')
+    if (effective !== 'login' && password !== confirmPassword) {
+      setError('两次输入的密码不一致，请重新确认')
+      return
+    }
     setSubmitting(true)
     try {
       if (effective === 'setup') await setupOwner(username.trim(), password)
@@ -86,11 +91,19 @@ export default function Login({ mode, allowRegister, onAuthenticated }: LoginPro
               autoComplete={effective === 'login' ? 'current-password' : 'new-password'}
             />
           </div>
+          {effective !== 'login' && (
+            <div className="space-y-2">
+              <Label htmlFor="confirm-password">确认密码</Label>
+              <Input id="confirm-password" type="password" value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)} autoComplete="new-password"
+                placeholder="再次输入密码" required />
+            </div>
+          )}
         </div>
 
-        {error ? <div className="mt-3 text-sm text-destructive">{error}</div> : null}
+        {error ? <div role="alert" className="mt-3 text-sm text-destructive">{error}</div> : null}
 
-        <Button type="submit" className="mt-5 w-full gap-2" disabled={submitting || !username.trim() || !password}>
+        <Button type="submit" className="mt-5 w-full gap-2" disabled={submitting || !username.trim() || !password || (effective !== 'login' && !confirmPassword)}>
           {submitting ? (
             <Loader2 className="h-4 w-4 animate-spin" />
           ) : effective === 'login' ? (
@@ -107,6 +120,7 @@ export default function Login({ mode, allowRegister, onAuthenticated }: LoginPro
             className="mt-4 w-full text-center text-sm text-muted-foreground hover:text-foreground"
             onClick={() => {
               setRegistering((v) => !v)
+              setConfirmPassword('')
               setError('')
             }}
           >

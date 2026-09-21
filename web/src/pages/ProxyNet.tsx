@@ -44,6 +44,7 @@ export default function ProxyNet() {
   const [busy, setBusy] = useState<number | null>(null)
   const [wireResults, setWireResults] = useState<Record<number, WiringStatus[]>>({})
   const [secrets, setSecrets] = useState<Record<number, string>>({})
+  const [visibleSecrets, setVisibleSecrets] = useState<Record<number, boolean>>({})
   const [customs, setCustoms] = useState<Record<number, CustomBackend[]>>({})
   // 每个代理的「添加自定义子服」表单草稿
   const [drafts, setDrafts] = useState<Record<number, { name: string; host: string; port: string }>>({})
@@ -226,55 +227,76 @@ export default function ProxyNet() {
             return (
               <PageSurface key={proxy.id} bodyClassName="p-0">
                 {/* 主服节点 */}
-                <div className="flex flex-wrap items-center gap-3 border-b border-border/70 px-4 py-3">
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-primary">
-                    <Network className="h-5 w-5" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="w-full truncate font-semibold sm:w-auto" title={proxy.name}>{proxy.name}</span>
-                      <Badge variant="outline" className="shrink-0 whitespace-nowrap text-[11px]">主服 · Velocity</Badge>
-                      <StatusBadge s={proxy} />
+                <div className="flex flex-col gap-4 border-b border-border/70 bg-primary/5 px-4 py-5 sm:flex-row sm:items-center sm:px-5">
+                  <div className="flex min-w-0 flex-1 items-center gap-3">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-primary">
+                      <Network className="h-5 w-5" />
                     </div>
-                    <div className="text-xs text-muted-foreground">端口 {proxy.port} · {backends.length + proxyCustoms.length} 个子服</div>
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <h2 className="break-words text-lg font-semibold [overflow-wrap:anywhere]">{proxy.name}</h2>
+                      <div className="text-xs leading-relaxed text-muted-foreground">Velocity · 端口 {proxy.port} · {backends.length + proxyCustoms.length} 个子服</div>
+                    </div>
                   </div>
-                  <ServerLifecycleButton server={proxy} onChanged={refresh} />
-                  {/* forwarding secret(固定宽度,靠近接线按钮)*/}
-                  <div className="hidden shrink-0 items-center gap-2 lg:flex">
-                    <span className="shrink-0 text-xs text-muted-foreground">转发密钥</span>
-                    <Input
-                      value={secrets[proxy.id] ?? ''}
-                      placeholder="加载中…"
-                      className="h-8 w-56 font-mono text-xs"
-                      onChange={(e) => setSecrets((cur) => ({ ...cur, [proxy.id]: e.target.value }))}
-                    />
-                    <Button type="button" variant="outline" size="sm" onClick={() => setSecrets((cur) => ({ ...cur, [proxy.id]: randomSecret() }))}>
-                      随机
-                    </Button>
+                  <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                    <StatusBadge s={proxy} />
+                    <ServerLifecycleButton server={proxy} onChanged={refresh} />
                   </div>
-                  <Button type="button" className="w-full gap-1.5 shrink-0 sm:w-auto" disabled={motdBusy !== null || busy === proxy.id || (backends.length === 0 && proxyCustoms.length === 0)} onClick={() => wire(proxy.id)}>
-                    {busy === proxy.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
-                    一键接线
-                  </Button>
                 </div>
 
-                <div className="space-y-2 border-b border-border/70 px-4 py-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button type="button" variant="outline" size="sm" className="gap-1.5" disabled={busy !== null || motdBusy !== null || proxy.protected || backends.length === 0} onClick={() => configureMotd(proxy)}>
-                      {motdBusy === proxy.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plug className="h-4 w-4" />}
-                      {motdBusy === proxy.id ? '正在安装并配置…' : '一键配置 joinMOTD'}
-                    </Button>
-                    <p className="text-xs text-muted-foreground">同步入服欢迎消息与可点击跨服列表；网络增删子服后需再次配置。</p>
+                <details className="border-b border-border/70">
+                  <summary className="cursor-pointer px-4 py-3 text-sm font-medium marker:text-muted-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary sm:px-5">网络配置 <span className="ml-2 text-xs font-normal text-muted-foreground">转发与接线 · joinMOTD</span></summary>
+                  <div className="space-y-5 px-4 pb-5 sm:px-5">
+                    <section className="space-y-3 border-t border-border/70 pt-4">
+                      <h3 className="text-sm font-medium">转发与接线</h3>
+                      <p className="text-xs leading-relaxed text-muted-foreground">密钥将在一键接线时写入配置。接线会修改磁盘配置；运行中的实例需确认强制停止，完成后不会自动重启。</p>
+                      <label htmlFor={`proxy-secret-${proxy.id}`} className="block text-xs text-muted-foreground">转发密钥</label>
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <Input
+                          id={`proxy-secret-${proxy.id}`}
+                          type={visibleSecrets[proxy.id] ? 'text' : 'password'}
+                          value={secrets[proxy.id] ?? ''}
+                          placeholder="加载中…"
+                          autoComplete="off"
+                          className="h-9 min-w-0 w-full font-mono text-sm sm:w-auto sm:flex-1"
+                          onChange={(e) => setSecrets((cur) => ({ ...cur, [proxy.id]: e.target.value }))}
+                        />
+                        <Button type="button" variant="outline" size="sm" aria-label={visibleSecrets[proxy.id] ? '隐藏转发密钥' : '显示转发密钥'} aria-pressed={!!visibleSecrets[proxy.id]} onClick={() => setVisibleSecrets((cur) => ({ ...cur, [proxy.id]: !cur[proxy.id] }))}>
+                          {visibleSecrets[proxy.id] ? '隐藏' : '显示'}
+                        </Button>
+                        <Button type="button" variant="outline" size="sm" onClick={() => setSecrets((cur) => ({ ...cur, [proxy.id]: randomSecret() }))}>
+                          随机密钥
+                        </Button>
+                      </div>
+                      <Button type="button" className="w-full gap-1.5 shrink-0 sm:w-auto" disabled={motdBusy !== null || busy === proxy.id || (backends.length === 0 && proxyCustoms.length === 0)} onClick={() => wire(proxy.id)}>
+                        {busy === proxy.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
+                        一键接线
+                      </Button>
+                    </section>
+
+                    <section className="space-y-3 border-t border-border/70 pt-4">
+                      <h3 className="text-sm font-medium">入服欢迎 · joinMOTD</h3>
+                      <div className="space-y-3">
+                        <p className="text-xs leading-relaxed text-muted-foreground">同步入服欢迎消息与可点击跨服列表；网络增删子服后需再次配置。</p>
+                        <Button type="button" variant="outline" size="sm" className="gap-1.5" disabled={busy !== null || motdBusy !== null || proxy.protected || backends.length === 0} onClick={() => configureMotd(proxy)}>
+                          {motdBusy === proxy.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plug className="h-4 w-4" />}
+                          {motdBusy === proxy.id ? '正在安装并配置…' : '一键配置 joinMOTD'}
+                        </Button>
+                      </div>
+                      {motdResults[proxy.id]?.map((r, i) => (
+                        <p key={i} className={cn('break-words text-xs [overflow-wrap:anywhere]', r.status === 'error' ? 'text-destructive' : 'text-muted-foreground')}>
+                          <span className="font-medium">{r.name}</span>：{r.detail}
+                        </p>
+                      ))}
+                    </section>
                   </div>
-                  {motdResults[proxy.id]?.map((r, i) => (
-                    <p key={i} className={cn('break-words text-xs', r.status === 'error' ? 'text-destructive' : 'text-muted-foreground')}>
-                      <span className="font-medium">{r.name}</span>：{r.detail}
-                    </p>
-                  ))}
-                </div>
+                </details>
 
                 {/* 子服 */}
-                <div className="space-y-2 px-4 py-3">
+                <div className="space-y-3 px-4 py-5 sm:px-5">
+                  <div className="space-y-1">
+                    <h3 className="text-sm font-semibold">子服 <span className="ml-1 font-normal text-muted-foreground">{backends.length + proxyCustoms.length}</span></h3>
+                    <p className="text-xs leading-relaxed text-muted-foreground">运行状态与接线配置分别展示；配置验证不代表实际连接正常。</p>
+                  </div>
                   {backends.length === 0 && proxyCustoms.length === 0 ? (
                     <p className="py-2 text-center text-xs text-muted-foreground">还没有子服。</p>
                   ) : (
@@ -282,98 +304,127 @@ export default function ProxyNet() {
                       {backends.map((b) => {
                         const res = results.find((r) => !r.custom && r.id === b.id)
                         return (
-                          <div key={b.id} className="flex flex-wrap items-center gap-2 rounded-lg border border-border/70 bg-background/60 px-3 py-2">
-                            <Plug className="h-4 w-4 shrink-0 text-muted-foreground" />
-                            <span className="min-w-0 flex-[1_1_80%] truncate text-sm font-medium sm:flex-1" title={b.name}>{b.name}</span>
-                            <Badge variant="outline" className="text-[11px]">{TYPE_LABEL[b.server_type] ?? b.server_type}</Badge>
-                            <span className="font-mono text-xs text-muted-foreground">:{b.port}</span>
-                            <StatusBadge s={b} />
-                            <ServerLifecycleButton server={b} onChanged={refresh} />
+                          <div key={b.id} className="space-y-3 rounded-lg border border-border/70 bg-background/60 px-3 py-3">
+                            <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center">
+                              <div className="flex min-w-0 flex-1 items-start gap-2">
+                                <Plug className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                                <div className="min-w-0 space-y-1">
+                                  <h4 className="break-words text-sm font-medium [overflow-wrap:anywhere]">{b.name}</h4>
+                                  <p className="text-xs text-muted-foreground">{TYPE_LABEL[b.server_type] ?? b.server_type} · 端口 <span className="font-mono">{b.port}</span></p>
+                                </div>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <StatusBadge s={b} />
+                                <ServerLifecycleButton server={b} onChanged={refresh} />
+                                <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" title="移出代理" aria-label={`将 ${b.name} 移出代理`} disabled={busy === b.id} onClick={() => run(b.id, () => updateServer(b.id, { proxy_id: null }), '已移出')}>
+                                  <X className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </div>
                             {res ? (
-                              <span className={cn('max-w-[40%] truncate text-[11px]', res.status === 'ok' ? 'text-emerald-600 dark:text-emerald-400' : res.status === 'unsupported' ? 'text-amber-600 dark:text-amber-400' : 'text-destructive')} title={res.detail}>
-                                {res.detail}
-                              </span>
-                            ) : <span className="text-[11px] text-muted-foreground">接线状态未验证</span>}
-                            <Button type="button" variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" title="移出代理" disabled={busy === b.id} onClick={() => run(b.id, () => updateServer(b.id, { proxy_id: null }), '已移出')}>
-                              <X className="h-4 w-4" />
-                            </Button>
+                              <details className="border-t border-border/50 pt-2 text-xs">
+                                <summary className={cn('cursor-pointer rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary', res.status === 'ok' ? 'text-emerald-600 dark:text-emerald-400' : res.status === 'unsupported' ? 'text-amber-600 dark:text-amber-400' : 'text-destructive')}>
+                                  {res.status === 'ok' ? '磁盘配置已验证' : res.status === 'unsupported' ? '暂不支持自动接线' : '接线配置需注意'}
+                                  <span className="ml-2 text-muted-foreground">详情</span>
+                                </summary>
+                                <p className="mt-2 leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">{res.detail}</p>
+                              </details>
+                            ) : <p className="border-t border-border/50 pt-2 text-xs text-muted-foreground">接线配置未验证</p>}
                           </div>
                         )
                       })}
                       {proxyCustoms.map((c) => {
                         const res = results.find((r) => r.custom && r.id === c.id)
                         return (
-                          <div key={`custom-${c.id}`} className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-border/70 bg-background/40 px-3 py-2">
-                            <Globe className="h-4 w-4 shrink-0 text-muted-foreground" />
-                            <span className="min-w-0 flex-[1_1_80%] truncate text-sm font-medium sm:flex-1" title={c.name}>{c.name}</span>
-                            <Badge variant="outline" className="text-[11px]">自定义</Badge>
-                            <span className="min-w-0 break-all font-mono text-xs text-muted-foreground">{c.host}:{c.port}</span>
+                          <div key={`custom-${c.id}`} className="space-y-3 rounded-lg border border-dashed border-border/70 bg-background/40 px-3 py-3">
+                            <div className="flex min-w-0 items-start gap-2">
+                              <Globe className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                              <div className="min-w-0 flex-1 space-y-1">
+                                <h4 className="break-words text-sm font-medium [overflow-wrap:anywhere]">{c.name}</h4>
+                                <p className="text-xs text-muted-foreground">外部子服 · <span className="break-all font-mono">{c.host}:{c.port}</span></p>
+                              </div>
+                              <Button type="button" variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive" title="移除自定义子服" aria-label={`移除外部子服 ${c.name}`} onClick={() => removeCustom(proxy.id, c.id)}>
+                                <X className="h-4 w-4" />
+                              </Button>
+                            </div>
                             {res ? (
-                              <span className={cn('max-w-[40%] truncate text-[11px]', res.status === 'skipped' ? 'text-sky-600 dark:text-sky-400' : res.status === 'ok' ? 'text-emerald-600 dark:text-emerald-400' : 'text-destructive')} title={res.detail}>
-                                {res.detail}
-                              </span>
+                              <details className="border-t border-border/50 pt-2 text-xs">
+                                <summary className={cn('cursor-pointer rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary', res.status === 'skipped' ? 'text-sky-600 dark:text-sky-400' : res.status === 'ok' ? 'text-emerald-600 dark:text-emerald-400' : 'text-destructive')}>
+                                  {res.status === 'skipped' ? '远端配置需手动确认' : res.status === 'ok' ? '代理路由已验证' : '代理路由需注意'}
+                                  <span className="ml-2 text-muted-foreground">详情</span>
+                                </summary>
+                                <p className="mt-2 leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">{res.detail}</p>
+                                <p className="mt-1 text-muted-foreground">远端配置与运行状态未验证。</p>
+                              </details>
                             ) : (
-                              <span className="text-[11px] text-muted-foreground">路由未验证;远端配置未验证</span>
+                              <p className="border-t border-border/50 pt-2 text-xs text-muted-foreground">路由未验证；远端配置与运行状态未验证</p>
                             )}
-                            <Button type="button" variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" title="移除自定义子服" onClick={() => removeCustom(proxy.id, c.id)}>
-                              <X className="h-4 w-4" />
-                            </Button>
                           </div>
                         )
                       })}
                     </>
                   )}
 
-                  {/* 添加托管子服 */}
-                  {unattached.length > 0 ? (
-                    <div className="flex items-center gap-2 pt-1">
-                      <Server className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      <Select
-                        value={undefined}
-                        onValueChange={(v) => run(Number(v), () => updateServer(Number(v), { proxy_id: proxy.id }), '已加入')}
-                      >
-                        <SelectTrigger className="h-8 min-w-0 flex-1 sm:w-56 sm:flex-none"><SelectValue placeholder="添加托管子服…" /></SelectTrigger>
-                        <SelectContent>
-                          {unattached.map((s) => (
-                            <SelectItem key={s.id} value={String(s.id)}>
-                              {s.name}（{TYPE_LABEL[s.server_type] ?? s.server_type}）
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  ) : null}
+                  <details className="border-t border-border/70 pt-3">
+                    <summary className="cursor-pointer rounded-sm text-sm font-medium marker:text-muted-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">添加子服</summary>
+                    <div className="space-y-4 pt-4">
+                      {/* 添加托管子服 */}
+                      <h4 className="text-xs font-medium text-muted-foreground">托管子服</h4>
+                      {unattached.length > 0 ? (
+                        <div className="flex items-center gap-2 pt-1">
+                          <Server className="h-4 w-4 shrink-0 text-muted-foreground" />
+                          <Select
+                            value={undefined}
+                            onValueChange={(v) => run(Number(v), () => updateServer(Number(v), { proxy_id: proxy.id }), '已加入')}
+                          >
+                            <SelectTrigger aria-label="选择托管子服加入网络" className="h-8 min-w-0 flex-1 sm:w-56 sm:flex-none"><SelectValue placeholder="添加托管子服…" /></SelectTrigger>
+                            <SelectContent>
+                              {unattached.map((s) => (
+                                <SelectItem key={s.id} value={String(s.id)}>
+                                  {s.name}（{TYPE_LABEL[s.server_type] ?? s.server_type}）
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      ) : <p className="text-xs text-muted-foreground">暂无可添加的托管子服。</p>}
 
-                  {/* 添加自定义子服(外部服务器:名字 / host / 端口,接线时跳过) */}
-                  <div className="grid grid-cols-[minmax(0,1fr)_5rem] items-center gap-2 border-t border-border/70 pt-3 sm:flex sm:flex-wrap">
-                    <Globe className="hidden h-4 w-4 shrink-0 text-muted-foreground sm:block" />
-                    <Input
-                      value={draft.name}
-                      placeholder="子服名"
-                      aria-label="子服名"
-                      className="col-span-2 h-8 min-w-0 sm:w-32"
-                      onChange={(e) => setDrafts((cur) => ({ ...cur, [proxy.id]: { ...draftOf(proxy.id), name: e.target.value } }))}
-                    />
-                    <Input
-                      value={draft.host}
-                      placeholder="host(如 mc.example.com)"
-                      aria-label="子服地址"
-                      className="h-8 min-w-0 sm:w-52"
-                      onChange={(e) => setDrafts((cur) => ({ ...cur, [proxy.id]: { ...draftOf(proxy.id), host: e.target.value } }))}
-                    />
-                    <Input
-                      value={draft.port}
-                      placeholder="端口"
-                      inputMode="numeric"
-                      aria-label="子服端口"
-                      className="h-8 min-w-0 sm:w-20"
-                      onChange={(e) => setDrafts((cur) => ({ ...cur, [proxy.id]: { ...draftOf(proxy.id), port: e.target.value } }))}
-                    />
-                    <Button type="button" variant="outline" size="sm" className="col-span-2 gap-1.5" disabled={addingCustom === proxy.id} onClick={() => submitCustom(proxy.id)}>
-                      {addingCustom === proxy.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-                      添加自定义子服
-                    </Button>
-                  </div>
+                      {/* 添加自定义子服(外部服务器:名字 / host / 端口,接线时跳过) */}
+                      <div className="space-y-3 border-t border-border/70 pt-4">
+                        <h4 className="text-xs font-medium text-muted-foreground">外部子服</h4>
+                        <p className="text-xs leading-relaxed text-muted-foreground">仅添加代理路由，远端服务器需手动配置转发。</p>
+                        <div className="grid grid-cols-[minmax(0,1fr)_5rem] items-center gap-2 sm:flex sm:flex-wrap">
+                          <Globe className="hidden h-4 w-4 shrink-0 text-muted-foreground sm:block" />
+                          <Input
+                            value={draft.name}
+                            placeholder="子服名"
+                            aria-label="子服名"
+                            className="col-span-2 h-8 min-w-0 sm:w-32"
+                            onChange={(e) => setDrafts((cur) => ({ ...cur, [proxy.id]: { ...draftOf(proxy.id), name: e.target.value } }))}
+                          />
+                          <Input
+                            value={draft.host}
+                            placeholder="host(如 mc.example.com)"
+                            aria-label="子服地址"
+                            className="h-8 min-w-0 sm:w-52"
+                            onChange={(e) => setDrafts((cur) => ({ ...cur, [proxy.id]: { ...draftOf(proxy.id), host: e.target.value } }))}
+                          />
+                          <Input
+                            value={draft.port}
+                            placeholder="端口"
+                            inputMode="numeric"
+                            aria-label="子服端口"
+                            className="h-8 min-w-0 sm:w-20"
+                            onChange={(e) => setDrafts((cur) => ({ ...cur, [proxy.id]: { ...draftOf(proxy.id), port: e.target.value } }))}
+                          />
+                          <Button type="button" variant="outline" size="sm" className="col-span-2 gap-1.5" disabled={addingCustom === proxy.id} onClick={() => submitCustom(proxy.id)}>
+                            {addingCustom === proxy.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                            添加自定义子服
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  </details>
                 </div>
               </PageSurface>
             )
