@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowUp, FileText, Folder, FolderOpen, Loader2, LockKeyhole, Pencil, RefreshCw, Save, Trash2, Upload } from 'lucide-react'
+import { ArrowUp, FilePlus, FileText, Folder, FolderOpen, FolderPlus, Loader2, LockKeyhole, Pencil, RefreshCw, Save, Trash2, Upload } from 'lucide-react'
 
-import { deleteServerEntry, listServerFiles, readServerFile, renameServerEntry, saveServerFile, type ServerDirectory, type ServerFileContent, type ServerFileEntry } from '@/api/serverFiles'
+import { createServerEntry, deleteServerEntry, listServerFiles, readServerFile, renameServerEntry, saveServerFile, type ServerDirectory, type ServerFileContent, type ServerFileEntry } from '@/api/serverFiles'
 import { pollJob } from '@/api/jobs'
 import type { ServerSummary } from '@/api/servers'
 import { uploadFile, type UploadState } from '@/api/uploads'
@@ -145,6 +145,32 @@ export function ServerFilesDialog({ server, onClose }: { server: ServerSummary; 
     }
   }
 
+  const createEntry = (kind: 'file' | 'directory') => {
+    if (server.protected || loading) return
+    void discardThen(async () => {
+      const label = kind === 'file' ? '文件' : '文件夹'
+      const name = await prompt({ title: `新建${label}`, label: '名称', description: '仅输入名称，不要包含路径；同名条目不会被覆盖。' })
+      if (name === null || !mounted.current) return
+      if (!name || name.includes('/') || name.includes('\\')) { setError('请输入有效名称，不要包含路径'); return }
+      savingRef.current = true
+      setSaving(true)
+      setError('')
+      setOperation(`新建${label}中…`)
+      try {
+        const result = await createServerEntry(server.id, directory.path, name, kind)
+        if (!mounted.current) return
+        showToast('success', `${label}已创建`)
+        await load(directory.path, 'directory')
+        if (kind === 'file' && mounted.current) await load(result.path, 'file')
+      } catch (err) {
+        if (mounted.current) setError(err instanceof Error ? err.message : '创建失败')
+      } finally {
+        savingRef.current = false
+        if (mounted.current) { setSaving(false); setOperation('') }
+      }
+    })
+  }
+
   const changeEntry = (entry: ServerFileEntry, action: 'rename' | 'delete') => {
     if (server.protected || loading || entry.kind === 'blocked' || !entry.revision) return
     void discardThen(async () => {
@@ -217,6 +243,8 @@ export function ServerFilesDialog({ server, onClose }: { server: ServerSummary; 
             void discardThen(() => { uploadDirectory.current = directory.path; void upload(selected) })
           }} />
           <Button type="button" variant="outline" size="sm" className="gap-2" disabled={uploading || saving || loading} onClick={() => fileInput.current?.click()}><Upload className="h-4 w-4" />上传文件</Button>
+          <Button type="button" variant="outline" size="sm" className="gap-2" disabled={uploading || saving || loading} onClick={() => createEntry('file')}><FilePlus className="h-4 w-4" />新建文件</Button>
+          <Button type="button" variant="outline" size="sm" className="gap-2" disabled={uploading || saving || loading} onClick={() => createEntry('directory')}><FolderPlus className="h-4 w-4" />新建文件夹</Button>
           <label htmlFor={`upload-overwrite-${server.id}`} className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
             <Checkbox id={`upload-overwrite-${server.id}`} checked={overwrite} disabled={uploading} onCheckedChange={checked => setOverwrite(checked === true)} />
             替换同名文件

@@ -258,6 +258,39 @@ def publish_upload(server, directory: str, name: str, source: Path, expected: li
 
 
 @_io_errors
+def create_entry(server, directory: str, name: str, kind: str) -> dict:
+    from .deps import ensure_not_protected
+
+    ensure_not_protected(server)
+    if len(_parts(name)) != 1 or len(name) > 240:
+        _error(400, "请输入单层有效名称，不能包含目录")
+    if kind not in {"file", "directory"}:
+        _error(400, "文件类型不合法")
+    with _locks_guard:
+        lock = _locks.setdefault(str(_root(server)), threading.Lock())
+    with lock:
+        parent, _ = _target(server, directory, "directory")
+        target = parent / name
+        if os.path.lexists(target):
+            _error(409, "已存在同名文件或目录")
+        try:
+            # Exclusive creation also prevents overwrites by concurrent external
+            # creators; the instance lock alone cannot provide that guarantee.
+            if kind == "directory":
+                target.mkdir()
+            else:
+                fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o666)
+                os.close(fd)
+        except OSError:
+            # Windows can report PermissionError for an existing directory.
+            if os.path.lexists(target):
+                _error(409, "已存在同名文件或目录")
+            raise
+        manager.mark_needs_restart(server.id)
+        return {"path": f"{directory}/{name}" if directory else name}
+
+
+@_io_errors
 def rename_entry(server, path: str, name: str, revision: str) -> dict:
     from .deps import ensure_not_protected
 

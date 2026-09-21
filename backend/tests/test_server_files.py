@@ -150,6 +150,10 @@ class ServerFilesTests(unittest.TestCase):
         self.addCleanup(lambda: os.rmdir(junction))
         self.error(400, files.read_content, self.server, "junction/secret")
         self.error(400, files.list_directory, self.server, "junction")
+        for kind in ("file", "directory"):
+            self.error(400, files.create_entry, self.server, "junction", "new", kind)
+            self.error(409, files.create_entry, self.server, "", "junction", kind)
+        self.assertFalse((self.base / "two/new").exists())
         self.assertEqual(next(e for e in files.list_directory(self.server)["entries"] if e["name"] == "junction")["kind"], "blocked")
         root_link = self.base / "linked"
         subprocess.run(["cmd", "/c", "mklink", "/J", str(root_link), str(self.root)], check=True, capture_output=True)
@@ -249,6 +253,106 @@ class ServerFilesTests(unittest.TestCase):
             self.assertEqual(client.put(base + "/content", json={**body, "revision": "invalid"}).status_code, 422)
             db.get.return_value = None
             self.assertEqual(client.get(base).status_code, 404)
+
+    def test_create_root_and_nested_entries(self):
+        with patch.object(files.manager, "mark_needs_restart") as restart:
+            for directory in ("", "新目录"):
+                self.assertEqual(files.create_entry(self.server, directory, "新目录", "directory"),
+                                 {"path": f"{directory}/新目录" if directory else "新目录"})
+                result = files.create_entry(self.server, directory, "空文件.txt", "file")
+                content = files.read_content(self.server, result["path"])
+                self.assertEqual(content["text"], "")
+                self.assertEqual(content["size_bytes"], 0)
+                self.assertTrue(content["editable"])
+                self.assertEqual(files.save_content(self.server, result["path"], "saved", content["revision"])["text"], "saved")
+            self.assertEqual(restart.call_count, 4)
+
+    def test_create_conflicts_and_validation(self):
+        (self.root / "folder").mkdir()
+        for kind in ("file", "directory"):
+            for name in ("config.txt", "folder"):
+                self.error(409, files.create_entry, self.server, "", name, kind)
+            for name in ("", ".", "..", "../x", "a/b", "a\\b", "NUL.txt", "a:", "a.", "a ", "a\x00", "x" * 241):
+                self.error(400, files.create_entry, self.server, "", name, kind)
+            for directory in ("../two", "/", "folder/../", "config.txt"):
+                self.error(400, files.create_entry, self.server, directory, "new", kind)
+            self.error(404, files.create_entry, self.server, "missing", "new", kind)
+            self.server.protected = True
+            self.error(409, files.create_entry, self.server, "", "new", kind)
+            self.server.protected = False
+        self.error(400, files.create_entry, self.server, "", "new", "blocked")
+        self.assertEqual(self.file.read_bytes(), b"hello\n")
+        self.assertEqual(sorted(p.name for p in self.root.iterdir()), ["config.txt", "folder"])
+        with patch.object(files.os, "open", side_effect=PermissionError("private host path")):
+            self.error(403, files.create_entry, self.server, "", "denied", "file")
+
+    def test_create_concurrent_and_external_conflicts(self):
+        barrier = threading.Barrier(2)
+
+        def worker(kind):
+            barrier.wait()
+            try:
+                files.create_entry(self.server, "", "race", kind)
+                return 201
+            except HTTPException as exc:
+                return exc.status_code
+
+        with ThreadPoolExecutor(2) as pool:
+            self.assertEqual(sorted(pool.map(worker, ("file", "directory"))), [201, 409])
+        # Simulate an external creator after validation, before exclusive open.
+        real_open = os.open
+
+        def external_create(path, flags, mode):
+            Path(path).write_bytes(b"keep external contents")
+            return real_open(path, flags, mode)
+
+        with patch.object(files.os, "open", side_effect=external_create):
+            self.error(409, files.create_entry, self.server, "", "external", "file")
+        self.assertEqual((self.root / "external").read_bytes(), b"keep external contents")
+
+    def test_create_rejects_links(self):
+        link = self.root / "link"
+        try:
+            link.symlink_to(self.base / "two", target_is_directory=True)
+            (self.root / "dangling").symlink_to(self.root / "absent")
+        except OSError:
+            self.skipTest("symlink privilege unavailable")
+        for kind in ("file", "directory"):
+            self.error(400, files.create_entry, self.server, "link", "new", kind)
+            for name in ("link", "dangling"):
+                self.error(409, files.create_entry, self.server, "", name, kind)
+        self.assertFalse((self.base / "two/new").exists())
+        self.assertFalse((self.root / "absent").exists())
+
+    def test_create_route(self):
+        app = FastAPI()
+        app.include_router(routes.router)
+        db = Mock()
+        db.get.return_value = self.server
+        app.dependency_overrides[routes.get_db] = lambda: db
+        endpoint = "/servers/1/files/entry"
+        with TestClient(app) as client:
+            for role, expected in ((None, 401), ("user", 403), ("helper", 403), ("admin", 201), ("owner", 201)):
+                if role:
+                    app.dependency_overrides[get_current_user] = lambda role=role: SimpleNamespace(role=role)
+                for kind in ("file", "directory"):
+                    body = {"directory": "", "name": f"{role}-{kind}", "kind": kind}
+                    response = client.post(endpoint, json=body)
+                    self.assertEqual(response.status_code, expected)
+                    if expected == 201:
+                        self.assertEqual(response.json(), {"path": body["name"]})
+                        self.assertEqual(client.post(endpoint, json=body).status_code, 409)
+            body = {"directory": "owner-directory", "name": "nested", "kind": "file"}
+            self.assertEqual(client.post(endpoint, json=body).json(), {"path": "owner-directory/nested"})
+            for changes, status in (({"name": "../escape"}, 400), ({"directory": "../two"}, 400),
+                                    ({"name": ""}, 422), ({"kind": "blocked"}, 422)):
+                self.assertEqual(client.post(endpoint, json={**body, **changes}).status_code, status)
+            self.server.protected = True
+            for kind in ("file", "directory"):
+                self.assertEqual(client.post(endpoint, json={**body, "name": "protected", "kind": kind}).status_code, 409)
+            self.assertFalse((self.root / "owner-directory/protected").exists())
+            db.get.return_value = None
+            self.assertEqual(client.post(endpoint, json=body).status_code, 404)
 
     def test_rename_files_and_nonempty_directories(self):
         revision = files._entry_revision(self.file.stat())

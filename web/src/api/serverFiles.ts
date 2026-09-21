@@ -43,6 +43,12 @@ export function saveServerFile(id: number, file: ServerFileContent, text: string
   })
 }
 
+export function createServerEntry(id: number, directory: string, name: string, kind: 'file' | 'directory') {
+  return apiRequest<{ path: string }>(`/servers/${id}/files/entry`, {
+    method: 'POST', body: JSON.stringify({ directory, name, kind }),
+  })
+}
+
 export function renameServerEntry(id: number, entry: ServerFileEntry, name: string) {
   return apiRequest<{ path: string }>(`/servers/${id}/files/entry`, {
     method: 'PATCH', body: JSON.stringify({ path: entry.path, revision: entry.revision, name }),

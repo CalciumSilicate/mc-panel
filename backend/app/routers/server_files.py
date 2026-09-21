@@ -1,4 +1,6 @@
 """Admin-only existing instance file browsing and editing."""
+from typing import Literal
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -32,6 +34,17 @@ class EntryBody(BaseModel):
 
 class RenameBody(EntryBody):
     name: str = Field(min_length=1, max_length=240)
+
+
+class CreateBody(BaseModel):
+    directory: str = Field(default="", max_length=2048)
+    name: str = Field(min_length=1, max_length=240)
+    kind: Literal["file", "directory"]
+
+
+@router.post("/entry", status_code=201)
+def create_entry(body: CreateBody, server: Server = Depends(_server)) -> dict:
+    return server_files.create_entry(server, body.directory, body.name, body.kind)
 
 
 @router.get("")
