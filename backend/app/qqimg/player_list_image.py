@@ -4,6 +4,7 @@ import os
 import platform
 import functools
 import hashlib
+from itertools import groupby
 import httpx
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Tuple, Union, Optional
@@ -11,13 +12,13 @@ from typing import List, Dict, Tuple, Union, Optional
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 
-# mc-panel:字体从 backend/resources/fonts/ 找,系统字体回退在 load_font 里;无本地头像缓存
+# mc-panel:使用 backend/resources/fonts/ 内置字体；无本地头像缓存
 from pathlib import Path as _Path
 
 _BACKEND_DIR = _Path(__file__).resolve().parents[2]
 AVATAR_MC_PATH = None  # 无本地头像缓存目录,统一走远程(mc-heads 等)
-FONT_REGULAR_PATH = _BACKEND_DIR / "resources" / "fonts" / "MapleMono-NF-CN-Regular.ttf"
-FONT_BOLD_PATH = _BACKEND_DIR / "resources" / "fonts" / "MapleMono-NF-CN-Bold.ttf"
+FONT_CJK_PATH = _BACKEND_DIR / "resources" / "fonts" / "NotoSansSC.ttf"
+FONT_LATIN_PATH = _BACKEND_DIR / "resources" / "fonts" / "Lexend.ttf"
 
 # md5 工具与项目保持一致（与 /users/mc/avatar 的缓存命名相同）
 try:
@@ -51,23 +52,29 @@ class Theme:
 # ========= 基础工具函数 =========
 
 @functools.lru_cache(maxsize=128)
-def load_font(size: int, is_bold: bool = False) -> ImageFont.FreeTypeFont:
-    """加载字体,带缓存。内置字体优先,回退系统 CJK 字体(复用 render_common)。"""
-    preferred_path = FONT_BOLD_PATH if is_bold else FONT_REGULAR_PATH
-    try:
-        if preferred_path and os.path.exists(preferred_path):
-            return ImageFont.truetype(str(preferred_path), size)
-    except Exception:
-        pass
-    from .render_common import get_default_font_path
+def load_font(size: int, is_bold: bool = False) -> tuple[ImageFont.FreeTypeFont, ImageFont.FreeTypeFont]:
+    """随应用分发可变字体；中文 Noto Sans SC，拉丁字母/数字 Lexend。"""
+    fonts = tuple(ImageFont.truetype(str(path), size) for path in (FONT_CJK_PATH, FONT_LATIN_PATH))
+    for font in fonts:
+        font.set_variation_by_axes([700 if is_bold else 400])
+    return fonts
 
-    font_path = get_default_font_path("bold" if is_bold else "regular")
-    try:
-        if font_path and os.path.exists(font_path):
-            return ImageFont.truetype(font_path, size)
-    except Exception:
-        pass
-    return ImageFont.load_default()
+
+def draw_text(draw, xy, text, *, fill, font, anchor="lt"):
+    """按字形区段混排，使用共同基线和整行边界计算对齐。"""
+    runs = [(font[latin], ''.join(chars)) for latin, chars in groupby(text, key=lambda c: ord(c) < 0x0250)]
+    if not runs:
+        return
+    widths = [f.getlength(s) for f, s in runs]
+    bounds = [f.getbbox(s, anchor="ls") for f, s in runs]
+    top = min(b[1] for b in bounds)
+    bottom = max(b[3] for b in bounds)
+    x, y = xy
+    x -= sum(widths) * {"l": 0, "m": 0.5, "r": 1}[anchor[0]]
+    y -= top if anchor[1] == "t" else (top + bottom) / 2
+    for (f, s), width in zip(runs, widths):
+        draw.text((x, y), s, fill=fill, font=f, anchor="ls")
+        x += width
 
 
 def draw_shadow(img: Image.Image, bbox: Tuple[int, int, int, int], radius: int, blur: int = 15, offset=(0, 6)):
@@ -278,14 +285,14 @@ def render_player_list_image(
     draw = ImageDraw.Draw(img)
 
     # 绘制头部
-    draw.text((Theme.PADDING, 50), group_name, fill=Theme.TEXT_PRIMARY, font=font_h1, anchor="lt")
+    draw_text(draw, (Theme.PADDING, 50), group_name, fill=Theme.TEXT_PRIMARY, font=font_h1, anchor="lt")
 
     sub_text = f"共在线: {total_online}"
-    draw.text((Theme.PADDING, 110), sub_text, fill=Theme.TEXT_TIME, font=font_sub, anchor="lt")
+    draw_text(draw, (Theme.PADDING, 110), sub_text, fill=Theme.TEXT_TIME, font=font_sub, anchor="lt")
 
     # 绘制生成时间
     gen_time = datetime.now().strftime("%H:%M")
-    draw.text((Theme.WIDTH - Theme.PADDING, 60), f"查询于 {gen_time}", fill=Theme.TEXT_SECONDARY, font=font_sub,
+    draw_text(draw, (Theme.WIDTH - Theme.PADDING, 60), f"查询于 {gen_time}", fill=Theme.TEXT_SECONDARY, font=font_sub,
               anchor="rt")
 
     # 绘制卡片
@@ -305,10 +312,10 @@ def render_player_list_image(
         p_list = srv_data.get('players', [])
 
         # 服务器名
-        draw.text((x + 25, y + header_h // 2), srv_name, fill=Theme.TEXT_PRIMARY, font=font_h2, anchor="lm")
+        draw_text(draw, (x + 25, y + header_h // 2), srv_name, fill=Theme.TEXT_PRIMARY, font=font_h2, anchor="lm")
         # 人数 Badge
         count_text = f"{len(p_list)} 在线"
-        draw.text((x + w - 25, y + header_h // 2), count_text, fill=Theme.TEXT_SECONDARY, font=font_sub, anchor="rm")
+        draw_text(draw, (x + w - 25, y + header_h // 2), count_text, fill=Theme.TEXT_SECONDARY, font=font_sub, anchor="rm")
 
         # 分割线
         draw.line((x + 15, y + header_h, x + w - 15, y + header_h), fill=(240, 240, 240), width=2)
@@ -316,7 +323,7 @@ def render_player_list_image(
         # 绘制玩家列表
         current_y = y + header_h + 10
         if not p_list:
-            draw.text((x + w // 2, current_y + 30), "无人在线", fill=Theme.TEXT_SECONDARY, font=font_sub,
+            draw_text(draw, (x + w // 2, current_y + 30), "无人在线", fill=Theme.TEXT_SECONDARY, font=font_sub,
                       anchor="mm")
         else:
             for p in p_list:
@@ -333,12 +340,12 @@ def render_player_list_image(
                 # 名字
                 text_x = x + 25 + Theme.AVATAR_SIZE + 20
                 row_mid_y = current_y + player_row_h / 2
-                draw.text((text_x, row_mid_y), p_name, fill=Theme.TEXT_PRIMARY, font=font_p, anchor="lm")
+                draw_text(draw, (text_x, row_mid_y), p_name, fill=Theme.TEXT_PRIMARY, font=font_p, anchor="lm")
 
                 # 在线时长
                 duration_str = format_duration(p_login)
                 if duration_str:
-                    draw.text((x + w - 25, row_mid_y), duration_str, fill=Theme.TEXT_TIME, font=font_time, anchor="rm")
+                    draw_text(draw, (x + w - 25, row_mid_y), duration_str, fill=Theme.TEXT_TIME, font=font_time, anchor="rm")
 
                 current_y += player_row_h
 

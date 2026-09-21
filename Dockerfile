@@ -31,6 +31,7 @@ COPY --from=dependencies /usr/local/lib/python3.14/site-packages /usr/local/lib/
 WORKDIR /app
 COPY backend/app ./backend/app
 COPY backend/default_config ./backend/default_config
+COPY backend/resources/fonts ./backend/resources/fonts
 COPY --from=web /build/web/dist ./web/dist
 ENV JAVA_HOME=/opt/java/jre25 \
     PATH="/opt/java/jre25/bin:${PATH}" \

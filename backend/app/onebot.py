@@ -9,6 +9,7 @@ MC→QQ(在 bridge 里):仅转发以 . 或 。开头的聊天,去前缀后发 <�
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import mimetypes
