@@ -39,6 +39,8 @@ export function ServerConsoleDialog({ server, onClose, onChanged }: ServerConsol
   const [input, setInput] = useState('')
   const wsRef = useRef<WebSocket | null>(null)
   const logRef = useRef<HTMLDivElement>(null)
+  const following = useRef(true)
+  const [paused, setPaused] = useState(false)
 
   const serverId = server?.id ?? null
   const status = server?.status
@@ -48,6 +50,8 @@ export function ServerConsoleDialog({ server, onClose, onChanged }: ServerConsol
     if (serverId === null) return
     setLines([])
     setConnected(false)
+    following.current = true
+    setPaused(false)
 
     const ws = new WebSocket(consoleWsUrl(serverId))
     wsRef.current = ws
@@ -79,10 +83,10 @@ export function ServerConsoleDialog({ server, onClose, onChanged }: ServerConsol
     }
   }, [serverId])
 
-  // 新日志到达后滚动到底部
+  // Follow only while the reader is at the bottom, not while reading history.
   useEffect(() => {
     const el = logRef.current
-    if (el) el.scrollTop = el.scrollHeight
+    if (el && following.current) el.scrollTop = el.scrollHeight
   }, [lines])
 
   const canSend = canStop && connected && status === 'running'
@@ -127,12 +131,26 @@ export function ServerConsoleDialog({ server, onClose, onChanged }: ServerConsol
 
             <div className="flex items-center gap-2">
               {server ? <ServerLifecycleButton key={server.id} server={server} onChanged={onChanged} /> : null}
+              {paused ? <Button type="button" variant="outline" size="sm" onClick={() => {
+                following.current = true
+                setPaused(false)
+                const el = logRef.current
+                if (el) el.scrollTop = el.scrollHeight
+              }}>返回最新</Button> : null}
             </div>
           </div>
         </DialogHeader>
 
         <div
           ref={logRef}
+          aria-label="控制台日志"
+          tabIndex={0}
+          onScroll={(event) => {
+            const el = event.currentTarget
+            const atBottom = el.scrollHeight - el.clientHeight - el.scrollTop <= 24
+            following.current = atBottom
+            setPaused(!atBottom)
+          }}
           className="min-h-0 flex-1 overflow-y-auto rounded-md border border-border/70 bg-zinc-950 p-3 font-mono text-xs leading-relaxed text-zinc-100"
         >
           {lines.length === 0 ? (

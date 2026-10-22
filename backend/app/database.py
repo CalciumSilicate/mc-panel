@@ -72,6 +72,7 @@ _COLUMN_MIGRATIONS = {
         "owner_user_id": "INTEGER",
     },
     "users": {
+        "session_id": "VARCHAR(64) NOT NULL DEFAULT ''",
         "verified": "BOOLEAN DEFAULT 0",
         "player_id": "VARCHAR(64) DEFAULT ''",
         "verify_code": "VARCHAR(16) DEFAULT ''",
@@ -91,3 +92,8 @@ def _migrate_columns() -> None:
             for name, ddl in columns.items():
                 if name not in existing:
                     conn.execute(text(f'ALTER TABLE "{table}" ADD COLUMN {name} {ddl}'))
+        # Backfill each legacy account independently; never rotate valid sessions on restart.
+        conn.execute(text(
+            "UPDATE users SET session_id = lower(hex(randomblob(32))) "
+            "WHERE session_id IS NULL OR session_id = ''"
+        ))

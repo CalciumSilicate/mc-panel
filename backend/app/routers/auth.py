@@ -20,7 +20,7 @@ from ..schemas import (
     VerifyInfo,
     VerifyRequest,
 )
-from ..security import create_access_token, hash_password, verify_password
+from ..security import create_access_token, hash_password, new_session_id, verify_password
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -31,7 +31,7 @@ def _user_count(db: Session) -> int:
 
 def _issue_token(user: User, db: Session) -> str:
     expire = get_settings_row(db).token_expire_minutes
-    return create_access_token(user.id, user.role, expire)
+    return create_access_token(user.id, user.role, expire, session_id=user.session_id)
 
 
 @router.get("/bootstrap", response_model=BootstrapInfo)
@@ -86,7 +86,10 @@ def register(payload: Credentials, db: Session = Depends(get_db)) -> TokenRespon
 
 
 @router.post("/logout")
-def logout(_: User = Depends(get_current_user)) -> dict:
+def logout(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> dict:
+    """Revoke all of this account's sessions, including the calling token."""
+    user.session_id = new_session_id()
+    db.commit()
     return {}
 
 
@@ -131,5 +134,6 @@ def change_password(
     if not verify_password(payload.old_password, user.hashed_password):
         raise HTTPException(status_code=400, detail="原密码错误")
     user.hashed_password = hash_password(payload.new_password)
+    user.session_id = new_session_id()
     db.commit()
     return {"ok": True}

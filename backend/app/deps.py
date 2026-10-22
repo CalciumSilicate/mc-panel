@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import secrets
 
 from fastapi import Depends, Header, HTTPException
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import net
@@ -35,6 +37,28 @@ def get_settings_row(db: Session) -> SystemSettings:
     return row
 
 
+def authenticate_token(token: str, db: Session) -> User | None:
+    """Shared HTTP/WebSocket authentication; decode alone does not check revocation.
+
+    Re-call with a fresh/committed DB session for long-lived WebSocket messages.
+    """
+    payload = decode_token(token)
+    if not payload:
+        return None
+    try:
+        user_id = int(payload["sub"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    user = db.scalar(
+        select(User).where(User.id == user_id).execution_options(populate_existing=True)
+    )
+    if user is None or not user.session_id:
+        return None
+    if not secrets.compare_digest(user.session_id, payload["sid"]):
+        return None
+    return user
+
+
 def get_current_user(
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
@@ -42,16 +66,9 @@ def get_current_user(
     """校验 Bearer token 并返回当前用户(以数据库中的角色为准)。"""
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="未登录")
-    payload = decode_token(authorization.split(" ", 1)[1].strip())
-    if not payload or "sub" not in payload:
-        raise HTTPException(status_code=401, detail="令牌无效或已过期")
-    try:
-        user_id = int(payload["sub"])
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=401, detail="令牌无效")
-    user = db.get(User, user_id)
+    user = authenticate_token(authorization.split(" ", 1)[1].strip(), db)
     if user is None:
-        raise HTTPException(status_code=401, detail="用户不存在")
+        raise HTTPException(status_code=401, detail="令牌无效或已过期")
     return user
 
 

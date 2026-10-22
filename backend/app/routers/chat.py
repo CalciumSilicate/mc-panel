@@ -14,10 +14,9 @@ from .. import bridge, chat, cqcode
 from .. import onebot
 from ..config import CHAT_IMG_DIR
 from ..database import SessionLocal, get_db
-from ..deps import require_auth, require_operate
+from ..deps import authenticate_token, require_auth, require_operate
 from ..mcdr import manager
 from ..models import Server, ServerGroup, User
-from ..security import decode_token
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -143,22 +142,14 @@ async def members(
 
 @router.websocket("/ws/{group_id}")
 async def chat_ws(websocket: WebSocket, group_id: int, token: str = Query(default="")):
-    payload = decode_token(token)
-    if not payload:
-        await websocket.close(code=4401)
-        return
     db = SessionLocal()
     try:
-        try:
-            user = db.get(User, int(payload.get("sub") or 0))
-        except (TypeError, ValueError):
-            user = None
+        if authenticate_token(token, db) is None:
+            await websocket.close(code=4401)
+            return
         group = db.get(ServerGroup, group_id)
     finally:
         db.close()
-    if user is None:
-        await websocket.close(code=4401)
-        return
     if group is None:
         await websocket.close(code=4404)
         return
@@ -169,7 +160,17 @@ async def chat_ws(websocket: WebSocket, group_id: int, token: str = Query(defaul
     queue = chat.subscribe(group_id)
     try:
         while True:
-            await websocket.send_json(await queue.get())
+            try:
+                message = await asyncio.wait_for(queue.get(), timeout=1)
+            except TimeoutError:
+                message = None
+            # 已建立的连接也必须在改密/注销后失效,而非只检查握手。
+            with SessionLocal() as db:
+                if authenticate_token(token, db) is None:
+                    await websocket.close(code=4401)
+                    return
+            if message is not None:
+                await websocket.send_json(message)
     except Exception:  # noqa: BLE001 - 断开
         pass
     finally:

@@ -1,4 +1,4 @@
-import { FormEvent, lazy, Suspense, useEffect, useMemo, useState, type ElementType } from 'react'
+import { FormEvent, lazy, Suspense, useEffect, useMemo, useRef, useState, type ElementType } from 'react'
 import {
   Archive,
   Boxes,
@@ -24,7 +24,7 @@ import {
 } from 'lucide-react'
 
 import { ApiError } from '@/api/client'
-import { changePassword, logout } from '@/api/auth'
+import { changePassword, clearAuthToken, logout } from '@/api/auth'
 import { ChunkLoadBoundary } from '@/components/ChunkLoadBoundary'
 import { PageLoader } from '@/components/PageLoader'
 import { VerifyPanel } from '@/components/VerifyPanel'
@@ -109,6 +109,8 @@ interface DashboardProps {
 
 export default function Dashboard({ onLogout }: DashboardProps) {
   const { user, roleAtLeast } = useAuth()
+  const { showToast } = useGlobalToast()
+  const mobileNavTrigger = useRef<HTMLButtonElement>(null)
   const [currentPage, setCurrentPage] = useState<Page>(() => readStoredPage())
   const [collapsed, setCollapsed] = useState(false)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
@@ -147,8 +149,13 @@ export default function Dashboard({ onLogout }: DashboardProps) {
   }, [])
 
   const handleLogout = async () => {
-    await logout()
-    onLogout()
+    try {
+      await logout()
+    } catch {
+      showToast('error', '无法确认服务端会话已注销，已退出本地登录。')
+    } finally {
+      onLogout()
+    }
   }
 
   const renderNavItem = (item: NavItem, options?: { collapsed?: boolean; onSelect?: () => void }) => {
@@ -159,6 +166,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
       <button
         type="button"
         key={item.key}
+        aria-label={item.label}
         data-active={active}
         className={cn(
           'dashboard-nav-item flex w-full items-center rounded-md py-2.5 text-left text-sm font-medium transition-colors',
@@ -207,6 +215,8 @@ export default function Dashboard({ onLogout }: DashboardProps) {
           <div className="flex h-16 items-center border-b px-4">
             <button
               type="button"
+              aria-label={collapsed ? '展开导航' : '收起导航'}
+              aria-expanded={!collapsed}
               onClick={() => setCollapsed((value) => !value)}
               className={cn(
                 'grid w-full items-center gap-3 overflow-hidden rounded-xl text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
@@ -225,49 +235,39 @@ export default function Dashboard({ onLogout }: DashboardProps) {
           <div className="scrollbar-none flex-1 overflow-y-auto px-3 py-4">{sidebar()}</div>
 
           <div className="border-t p-3">
-            <Button variant="ghost" size="sm" className="w-full justify-center" onClick={() => setCollapsed((value) => !value)}>
+            <Button variant="ghost" size="sm" className="w-full justify-center" aria-label={collapsed ? '展开导航' : '收起导航'} aria-expanded={!collapsed} onClick={() => setCollapsed((value) => !value)}>
               {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
             </Button>
           </div>
         </motion.aside>
 
         {/* 移动端抽屉 */}
-        <AnimatePresence>
-          {isMobileViewport && mobileNavOpen ? (
-            <>
-              <motion.button
-                type="button"
-                className="fixed inset-0 z-40 bg-black/42 md:hidden dark:bg-black/64"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                onClick={() => setMobileNavOpen(false)}
-                aria-label="关闭导航"
-              />
-              <motion.aside
-                className="dashboard-mobile-drawer fixed inset-y-0 left-0 z-50 flex w-[288px] max-w-[86vw] flex-col border-r bg-background md:hidden"
-                initial={{ x: -320 }}
-                animate={{ x: 0 }}
-                exit={{ x: -320 }}
-                transition={{ type: 'spring', bounce: 0.1, duration: 0.35 }}
-              >
-                <div className="flex h-16 items-center border-b px-4">
-                  <div className="flex items-center gap-3">
-                    <div className="dashboard-brand-mark flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-md shadow-primary/25">
-                      <Boxes className="h-5 w-5" />
-                    </div>
-                    <div className="text-lg font-bold tracking-tight">{BRAND_NAME}</div>
-                  </div>
+        <Dialog open={isMobileViewport && mobileNavOpen} onOpenChange={setMobileNavOpen}>
+          <DialogContent id="mobile-navigation" variant="drawer" aria-describedby={undefined} onCloseAutoFocus={(event) => {
+            event.preventDefault()
+            mobileNavTrigger.current?.focus()
+          }}>
+            <DialogTitle className="sr-only">导航菜单</DialogTitle>
+            <div className="flex h-16 items-center border-b px-4">
+              <div className="flex items-center gap-3">
+                <div className="dashboard-brand-mark flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-md shadow-primary/25">
+                  <Boxes className="h-5 w-5" />
                 </div>
-                <div className="scrollbar-none flex-1 overflow-y-auto px-3 py-4">{sidebar(false, () => setMobileNavOpen(false))}</div>
-              </motion.aside>
-            </>
-          ) : null}
-        </AnimatePresence>
+                <div className="text-lg font-bold tracking-tight">{BRAND_NAME}</div>
+              </div>
+            </div>
+            <div className="scrollbar-none min-h-0 flex-1 overflow-y-auto px-3 py-4">{sidebar(false, () => setMobileNavOpen(false))}</div>
+          </DialogContent>
+        </Dialog>
 
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <div className="scrollbar-none flex-1 overflow-y-auto">
             <header className="dashboard-header sticky top-0 z-10 flex h-16 items-center gap-3 border-b bg-background px-4 md:px-6">
+              {isMobileViewport ? (
+                <Button ref={mobileNavTrigger} variant="outline" size="icon" className="h-9 w-9 shrink-0 md:hidden" aria-label="打开导航" aria-expanded={mobileNavOpen} aria-controls="mobile-navigation" aria-haspopup="dialog" onClick={() => setMobileNavOpen(true)}>
+                  <PanelLeft className="h-4 w-4" />
+                </Button>
+              ) : null}
               <AnimatePresence mode="wait">
                 <motion.div
                   key={currentPage}
@@ -277,11 +277,6 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                   transition={{ type: 'spring', bounce: 0.15, duration: 0.35 }}
                   className="flex min-w-0 flex-1 items-center gap-3"
                 >
-                  {isMobileViewport ? (
-                    <Button variant="outline" size="icon" className="h-9 w-9 md:hidden" onClick={() => setMobileNavOpen(true)}>
-                      <PanelLeft className="h-4 w-4" />
-                    </Button>
-                  ) : null}
                   <CurrentIcon className="h-5 w-5 text-primary" />
                   <h2 className="truncate text-base font-semibold md:text-lg">{currentItem.label}</h2>
                 </motion.div>
@@ -296,11 +291,11 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                     </span>
                   </span>
                 ) : null}
-                <Button variant="outline" size="icon" title="修改密码" onClick={() => setChangePwOpen(true)}>
+                <Button variant="outline" size="icon" title="修改密码" aria-label="修改密码" onClick={() => setChangePwOpen(true)}>
                   <KeyRound className="h-4 w-4" />
                 </Button>
                 <ThemeToggleButton compact={isMobileViewport} showLabel={!isMobileViewport} />
-                <Button variant="outline" size={isMobileViewport ? 'icon' : undefined} className="gap-2" onClick={handleLogout}>
+                <Button variant="outline" size={isMobileViewport ? 'icon' : undefined} className="gap-2" aria-label="退出登录" onClick={handleLogout}>
                   <LogOut className="h-4 w-4" />
                   {!isMobileViewport ? <span>退出登录</span> : null}
                 </Button>
@@ -343,12 +338,12 @@ export default function Dashboard({ onLogout }: DashboardProps) {
           </div>
         </div>
       </div>
-      <ChangePasswordDialog open={changePwOpen} onClose={() => setChangePwOpen(false)} />
+      <ChangePasswordDialog open={changePwOpen} onClose={() => setChangePwOpen(false)} onChanged={onLogout} />
     </TooltipProvider>
   )
 }
 
-function ChangePasswordDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+function ChangePasswordDialog({ open, onClose, onChanged }: { open: boolean; onClose: () => void; onChanged: () => void }) {
   const { showToast } = useGlobalToast()
   const [oldPw, setOldPw] = useState('')
   const [newPw, setNewPw] = useState('')
@@ -372,8 +367,9 @@ function ChangePasswordDialog({ open, onClose }: { open: boolean; onClose: () =>
     setBusy(true)
     try {
       await changePassword(oldPw, newPw)
-      showToast('success', '密码已修改')
-      onClose()
+      clearAuthToken()
+      showToast('success', '密码已修改，所有会话已注销，请重新登录')
+      onChanged()
     } catch (err) {
       showToast('error', err instanceof ApiError ? err.message : '修改失败')
     } finally {

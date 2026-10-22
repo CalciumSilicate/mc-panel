@@ -37,10 +37,13 @@ def folder(uid: str) -> Path:
 
 
 def read(uid: str) -> dict:
-    try:
-        return json.loads((folder(uid) / "state.json").read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        raise HTTPException(404, "上传任务不存在") from None
+    # Writers replace state.json under the same guard. On Windows, even opening
+    # the old file during that replacement can fail with a sharing violation.
+    with _guard:
+        try:
+            return json.loads((folder(uid) / "state.json").read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            raise HTTPException(404, "上传任务不存在") from None
 
 
 def save(state: dict) -> None:

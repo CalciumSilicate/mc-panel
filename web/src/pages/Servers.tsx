@@ -591,7 +591,8 @@ export default function Servers() {
         </DialogContent>
       </Dialog>
 
-      <EditServerDialog
+      {editServer ? <EditServerDialog
+        key={editServer.id}
         server={editServer}
         groups={groups ?? []}
         onClose={() => setEditServer(null)}
@@ -604,7 +605,7 @@ export default function Servers() {
           refresh()
         }}
         onChanged={refresh}
-      />
+      /> : null}
 
       <ManageGroupsDialog
         open={manageGroupsOpen}
@@ -990,6 +991,16 @@ function EditServerDialog({
   const [rconInfo, setRconInfo] = useState<RconInfo | null>(null)
   const [rconPort, setRconPort] = useState('')
   const [rconPwd, setRconPwd] = useState('')
+  const [configReady, setConfigReady] = useState(false)
+  const [configError, setConfigError] = useState('')
+  const [initialConfig, setInitialConfig] = useState('')
+  const [rconError, setRconError] = useState('')
+  const active = useRef(true)
+
+  useEffect(() => {
+    active.current = true
+    return () => { active.current = false }
+  }, [])
 
   const open = server !== null
   const running = server?.status === 'running' || server?.status === 'starting'
@@ -1036,26 +1047,35 @@ function EditServerDialog({
 
   useEffect(() => {
     if (!open || !server) return
+    let cancelled = false
+    setConfigReady(false)
+    setConfigError('')
     if (needsMc) {
       setVersionsLoading(true)
       getServerVersions(editType)
-        .then(setVersions)
+        .then((list) => { if (!cancelled) setVersions(list) })
         .catch(() => undefined)
-        .finally(() => setVersionsLoading(false))
+        .finally(() => { if (!cancelled) setVersionsLoading(false) })
     }
-    if (isVelocity) {
-      getVelocityConfig(server.id).then(setVelCfg).catch(() => undefined)
-    } else {
-      getProperties(server.id).then(setProps).catch(() => setProps({}))
-    }
+    const config = isVelocity ? getVelocityConfig(server.id) : getProperties(server.id)
+    config.then((value) => {
+      if (cancelled) return
+      if (isVelocity) setVelCfg(value as VelocityConfig)
+      else setProps(value as Record<string, string>)
+      setInitialConfig(JSON.stringify(value))
+      setConfigReady(true)
+    }).catch((err) => {
+      if (!cancelled) setConfigError(`配置加载失败，已禁止保存。请关闭后重试：${err instanceof Error ? err.message : '未知错误'}`)
+    })
     getSettings()
-      .then((s) => setJavaInstalls(s.java_installs))
-      .catch(() => setJavaInstalls([]))
+      .then((s) => { if (!cancelled) setJavaInstalls(s.java_installs) })
+      .catch(() => { if (!cancelled) setJavaInstalls([]) })
     if (!isVelocity) {
       getRconInfo(server.id)
-        .then((r) => { setRconInfo(r); setRconPort(r.port ? String(r.port) : ''); setRconPwd(r.password) })
-        .catch(() => setRconInfo(null))
+        .then((r) => { if (!cancelled) { setRconInfo(r); setRconPort(r.port ? String(r.port) : ''); setRconPwd(r.password) } })
+        .catch((err) => { if (!cancelled) setRconError(`RCON 加载失败，请关闭后重试：${err instanceof Error ? err.message : '未知错误'}`) })
     }
+    return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, server?.id])
 
@@ -1063,14 +1083,17 @@ function EditServerDialog({
   useEffect(() => {
     if (!open || !needsLoader) return
     if (editType !== 'velocity' && !version) return
+    let cancelled = false
     setLoaderLoading(true)
     getLoaderVersions(editType, editType === 'velocity' ? '' : version)
       .then((list) => {
+        if (cancelled) return
         setLoaders(list)
         setLoaderVersion((cur) => (cur && list.includes(cur) ? cur : list[0] ?? ''))
       })
       .catch(() => undefined)
-      .finally(() => setLoaderLoading(false))
+      .finally(() => { if (!cancelled) setLoaderLoading(false) })
+    return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, version, editType])
 
@@ -1119,9 +1142,11 @@ function EditServerDialog({
   const doDelete = async () => {
     if (!server) return
     if (!(await confirm({ title: `删除服务器「${server.name}」?`, description: '该实例的所有文件将被移除,且不可恢复。', confirmText: '删除', destructive: true }))) return
+    if (!active.current) return
     setDeleting(true)
     try {
       await deleteServer(server.id)
+      if (!active.current) return
       showToast('success', '已删除')
       onDeleted()
     } catch (err) {
@@ -1133,15 +1158,17 @@ function EditServerDialog({
 
   const reloadRcon = async (id: number) => {
     const info = await getRconInfo(id)
+    if (!active.current) return
     setRconInfo(info); setRconPort(info.port ? String(info.port) : ''); setRconPwd(info.password)
   }
 
   const doToggleRcon = async (enabled: boolean) => {
-    if (!server) return
+    if (!server || !rconInfo || rconBusy || submitting || locked) return
     setRconBusy(true)
     try {
       await setRcon(server.id, { enabled })
       await reloadRcon(server.id)
+      if (!active.current) return
       onChanged() // 刷新列表但不关闭对话框
       showToast('success', enabled ? '已启用 RCON,重启实例后生效' : '已关闭 RCON')
     } catch (err) {
@@ -1152,11 +1179,12 @@ function EditServerDialog({
   }
 
   const applyRcon = async () => {
-    if (!server) return
+    if (!server || !rconInfo || rconBusy || submitting || locked) return
     setRconBusy(true)
     try {
       await setRcon(server.id, { enabled: true, port: Number(rconPort) || undefined, password: rconPwd.trim() || undefined })
       await reloadRcon(server.id)
+      if (!active.current) return
       onChanged()
       showToast('success', '已更新 RCON,重启实例后生效')
     } catch (err) {
@@ -1167,12 +1195,13 @@ function EditServerDialog({
   }
 
   const submit = async () => {
-    if (!server) return
+    if (!server || submitting || rconBusy) return
     // 受保护:本次只取消保护,不应用其它字段(与后端一致)
     if (locked) {
       setSubmitting(true)
       try {
         await updateServer(server.id, { protected: false })
+        if (!active.current) return
         showToast('success', '已取消保护')
         onSaved()
       } catch (err) {
@@ -1184,6 +1213,10 @@ function EditServerDialog({
     }
     if (!name.trim()) {
       showToast('error', '名称不能为空')
+      return
+    }
+    if (!configReady) {
+      showToast('error', configError || '配置尚未加载完成，请稍候再保存')
       return
     }
     setSubmitting(true)
@@ -1204,12 +1237,17 @@ function EditServerDialog({
         mcdr_language: mcdrLang,
         startup_commands: startupCmds.split('\n').map((c) => c.trim()).filter(Boolean),
       })
-      if (isVelocity) {
-        await updateVelocityConfig(server.id, velCfg)
-      } else {
-        const toWrite = Object.fromEntries(Object.entries(props).filter(([, v]) => v !== ''))
-        await updateProperties(server.id, toWrite)
+      // Basic-only edits must not rewrite fetched (possibly stale) config.
+      if (JSON.stringify(isVelocity ? velCfg : props) !== initialConfig) {
+        if (isVelocity) {
+          await updateVelocityConfig(server.id, velCfg)
+        } else {
+          const original = JSON.parse(initialConfig) as Record<string, string>
+          const toWrite = Object.fromEntries(Object.entries(props).filter(([key, value]) => value !== '' && value !== original[key]))
+          if (Object.keys(toWrite).length) await updateProperties(server.id, toWrite)
+        }
       }
+      if (!active.current) return
       showToast('success', coreChanged ? '已保存,正在重新安装核心' : '已保存')
       onSaved()
     } catch (err) {
@@ -1225,6 +1263,10 @@ function EditServerDialog({
         <DialogHeader>
           <DialogTitle>编辑实例 —— {server?.name}</DialogTitle>
         </DialogHeader>
+
+        {!configReady ? <p role={configError ? 'alert' : 'status'} className={cn('text-sm', configError ? 'text-destructive' : 'text-muted-foreground')}>
+          {configError || '正在加载实例配置，加载完成前无法保存…'}
+        </p> : null}
 
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList className="grid w-full grid-cols-3">
@@ -1329,6 +1371,7 @@ function EditServerDialog({
 
           {/* 服务器属性 / Velocity 配置 */}
           <TabsContent value="properties" className="space-y-4 py-2">
+            <fieldset disabled={!configReady || submitting} className="min-w-0 space-y-4">
             {isVelocity ? (
               <>
                 <div className="space-y-2">
@@ -1493,6 +1536,7 @@ function EditServerDialog({
               <Label htmlFor="edit-startup">开服自动执行指令</Label>
               <Textarea id="edit-startup" value={startupCmds} onChange={(e) => setStartupCmds(e.target.value)} rows={3} placeholder="每行一条,服务器加载完成(Done)后依次发送" className="font-mono" />
             </div>
+            </fieldset>
           </TabsContent>
 
           {/* 高级 */}
@@ -1519,8 +1563,9 @@ function EditServerDialog({
                     <span className="block text-sm font-medium">启用 RCON</span>
                     <span className="block text-xs text-muted-foreground">世界地图位置采集依赖 RCON。开启后自动分配端口+随机密码,改动需重启实例后生效。</span>
                   </span>
-                  <Switch checked={rconInfo?.enabled ?? false} disabled={rconBusy || locked} onCheckedChange={doToggleRcon} />
+                  <Switch checked={rconInfo?.enabled ?? false} disabled={rconBusy || submitting || locked || !rconInfo} onCheckedChange={doToggleRcon} />
                 </label>
+                {rconError ? <p role="alert" className="text-xs text-destructive">{rconError}</p> : null}
                 {rconInfo?.enabled ? (
                   <div className="space-y-2 pt-1">
                     <div className="grid grid-cols-[100px_1fr] gap-2">
@@ -1571,7 +1616,7 @@ function EditServerDialog({
           <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>
             取消
           </Button>
-          <Button type="button" className="gap-2" onClick={submit} disabled={submitting || (locked && protectedFlag)}>
+          <Button type="button" className="gap-2" onClick={submit} disabled={submitting || rconBusy || (!locked && !configReady) || (locked && protectedFlag)}>
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pencil className="h-4 w-4" />}
             {locked ? '取消保护' : '保存'}
           </Button>

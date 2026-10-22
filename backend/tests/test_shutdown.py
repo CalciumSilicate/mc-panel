@@ -2,51 +2,74 @@ import asyncio
 import os
 import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 with tempfile.TemporaryDirectory() as data, patch.dict(os.environ, {"MCPANEL_DATA_DIR": data}):
     from app.mcdr import MCDRManager
 
 
+class ManagedProcess:
+    """A process which exits only when explicitly released (or killed)."""
+    def __init__(self):
+        self.pid = 2**30
+        self.returncode = None
+        self.exited = asyncio.Event()
+        self.stopped = asyncio.Event()
+        self.stdout = asyncio.StreamReader()
+        self.stdin = SimpleNamespace(write=Mock(side_effect=lambda _: self.stopped.set()), drain=AsyncMock())
+        self.kill = Mock(side_effect=self.finish)
+        self.terminate = self.kill
+
+    def finish(self):
+        self.returncode = 0
+        self.exited.set()
+        self.stdout.feed_eof()
+
+    async def wait(self):
+        await self.exited.wait()
+        return self.returncode
+
+    async def communicate(self):
+        await self.wait()
+        return b"", None
+
+
 class ShutdownTests(unittest.IsolatedAsyncioTestCase):
     async def test_graceful_wait_and_install_cancellation(self):
         manager = MCDRManager()
-        server = SimpleNamespace(id=1)
-        proc = SimpleNamespace(returncode=None, wait=AsyncMock())
+        proc = ManagedProcess()
         manager._procs[1] = proc
         install = asyncio.create_task(asyncio.sleep(100))
-        manager._install_tasks[1] = install
-        with patch.object(manager, "stop", new_callable=AsyncMock) as stop, patch.object(manager, "force_stop", new_callable=AsyncMock) as force:
-            await manager.shutdown([server, SimpleNamespace(id=2)])
-            stop.assert_awaited_once_with(server)
-            proc.wait.assert_awaited_once()
-            force.assert_not_awaited()
+        manager.set_install_task(2, install)
+        with tempfile.TemporaryDirectory() as root, patch.object(manager, "instance_dir", return_value=Path(root)):
+            shutdown = asyncio.create_task(manager.shutdown([SimpleNamespace(id=1), SimpleNamespace(id=2)]))
+            await proc.stopped.wait()
+            self.assertFalse(shutdown.done())
+            proc.finish()
+            await asyncio.wait_for(shutdown, 2)
+            proc.kill.assert_not_called()
             self.assertTrue(install.cancelled())
+            self.assertFalse(manager.is_running(1))
 
     async def test_timeout_escalates_and_reaps(self):
         manager = MCDRManager()
-        server = SimpleNamespace(id=1)
-        proc = SimpleNamespace(returncode=None, wait=AsyncMock(side_effect=[TimeoutError, 0]))
+        proc = ManagedProcess()
         manager._procs[1] = proc
-        with patch.object(manager, "stop", new_callable=AsyncMock), patch.object(manager, "force_stop", new_callable=AsyncMock) as force:
-            await manager.shutdown([server], timeout=0.1)
-            force.assert_awaited_once_with(server)
-            self.assertEqual(proc.wait.await_count, 2)
+        await asyncio.wait_for(manager.shutdown([SimpleNamespace(id=1)], timeout=0.01), 2)
+        proc.kill.assert_called_once()
+        self.assertTrue(proc.exited.is_set())
+        self.assertFalse(manager.is_running(1))
 
     async def test_instances_stop_in_parallel(self):
         manager = MCDRManager()
-        ready = asyncio.Event()
-        calls = []
-
-        async def stop(server):
-            calls.append(server.id)
-            if len(calls) == 2:
-                ready.set()
-            await ready.wait()
-
-        for i in (1, 2):
-            manager._procs[i] = SimpleNamespace(returncode=None, wait=AsyncMock())
-        with patch.object(manager, "stop", side_effect=stop):
-            await asyncio.wait_for(manager.shutdown([SimpleNamespace(id=1), SimpleNamespace(id=2)]), 1)
-        self.assertEqual(set(calls), {1, 2})
+        processes = [ManagedProcess(), ManagedProcess()]
+        for i, proc in enumerate(processes, 1):
+            manager._procs[i] = proc
+        shutdown = asyncio.create_task(manager.shutdown([SimpleNamespace(id=1), SimpleNamespace(id=2)]))
+        await asyncio.wait_for(asyncio.gather(*(p.stopped.wait() for p in processes)), 2)
+        self.assertFalse(shutdown.done())
+        for proc in processes:
+            proc.finish()
+        await asyncio.wait_for(shutdown, 2)

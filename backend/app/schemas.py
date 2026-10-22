@@ -2,14 +2,19 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
+
+from .security import validate_password
+
+Password = Annotated[str, AfterValidator(validate_password)]
 
 
 # ---------- 鉴权 ----------
 class Credentials(BaseModel):
     username: str = Field(min_length=1, max_length=64)
-    password: str = Field(min_length=1)
+    password: Password
 
 
 class TokenResponse(BaseModel):
@@ -45,8 +50,8 @@ class BootstrapInfo(BaseModel):
 
 
 class ChangePasswordRequest(BaseModel):
-    old_password: str
-    new_password: str = Field(min_length=1)
+    old_password: Password
+    new_password: Password
 
 
 class VerifyRequest(BaseModel):
@@ -61,14 +66,14 @@ class VerifyInfo(BaseModel):
 
 class UserCreate(BaseModel):
     username: str = Field(min_length=1, max_length=64)
-    password: str = Field(min_length=1)
+    password: Password
     role: str = "user"
 
 
 class UserUpdate(BaseModel):
     username: str | None = Field(default=None, min_length=1, max_length=64)
     role: str | None = None
-    new_password: str | None = Field(default=None, min_length=1)
+    new_password: Password | None = None
     verified: bool | None = None
     player_id: str | None = None
 

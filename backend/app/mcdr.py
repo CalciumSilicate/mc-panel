@@ -17,6 +17,7 @@ import shlex
 import shutil
 from collections import deque
 from collections.abc import Callable
+from functools import wraps
 from pathlib import Path
 
 import yaml
@@ -218,10 +219,30 @@ def _permission_text() -> str:
     )
 
 
+def _serialized(method):
+    @wraps(method)
+    async def run(self, server, *args, **kwargs):
+        async with self.lifecycle_lock(server.id):
+            if (server.id, server.dir_name) in self._deleted or server.id in self._transitioning:
+                raise RuntimeError("实例已删除或正在取消/删除")
+            return await method(self, server, *args, **kwargs)
+    return run
+
+
 class MCDRManager:
     def __init__(self) -> None:
         # server_id -> asyncio subprocess
         self._procs: dict[int, asyncio.subprocess.Process] = {}
+        self._locks: dict[int, asyncio.Lock] = {}
+        # Include the directory UUID: SQLite may reuse a deleted numeric ID.
+        self._deleted: set[tuple[int, str]] = set()
+        self._transitioning: set[int] = set()
+        # Cancel/delete serialize with each other, but can cancel an installer
+        # which already owns _locks without waiting for that lock first.
+        self._control_locks: dict[int, asyncio.Lock] = {}
+        self._install_procs: dict[int, asyncio.subprocess.Process] = {}
+        self._process_trees: dict[int, list] = {}
+        self._shutting_down = False
         # server_id -> 最近日志行的环形缓冲(供控制台连接时回放历史)
         self._buffers: dict[int, deque[str]] = {}
         # server_id -> 订阅该实例输出的队列集合(每个 WebSocket 连接一个)
@@ -244,6 +265,9 @@ class MCDRManager:
         self.line_hook: "Callable[[int, str], None] | None" = None
 
     # ---------- 路径 ----------
+    def lifecycle_lock(self, server_id: int) -> asyncio.Lock:
+        return self._locks.setdefault(server_id, asyncio.Lock())
+
     def instance_dir(self, server: Server) -> Path:
         return SERVERS_ROOT / server.dir_name
 
@@ -285,6 +309,9 @@ class MCDRManager:
     # ---------- 状态 ----------
     def get_status(self, server: Server) -> str:
         inst = self.instance_dir(server)
+        task = self._install_tasks.get(server.id)
+        if server.id in self._install_procs or (task is not None and not task.done()):
+            return STATUS_INSTALLING
         if (inst / _INSTALLING_MARKER).exists():
             return STATUS_INSTALLING
         if (inst / _FAILED_MARKER).exists():
@@ -303,22 +330,53 @@ class MCDRManager:
         return self._install_progress.get(server_id)
 
     def set_install_task(self, server_id: int, task: asyncio.Task) -> None:
+        existing = self._install_tasks.get(server_id)
+        if (self._shutting_down or server_id in self._transitioning
+                or self.lifecycle_lock(server_id).locked()
+                or self.is_running(server_id)
+                or server_id in self._install_procs
+                or (existing is not None and not existing.done())):
+            task.cancel()
+            raise RuntimeError("实例正在执行生命周期操作")
         self._install_tasks[server_id] = task
+        task.add_done_callback(lambda done: self._clear_install_task(server_id, done))
+
+    def _clear_install_task(self, server_id: int, task: asyncio.Task) -> None:
+        if self._install_tasks.get(server_id) is task:
+            self._install_tasks.pop(server_id, None)
+            self._install_progress.pop(server_id, None)
 
     def clear_install_task(self, server_id: int) -> None:
-        self._install_tasks.pop(server_id, None)
-        self._install_progress.pop(server_id, None)
+        self._clear_install_task(server_id, asyncio.current_task())
+
+    async def _cancel_install_task(self, server_id: int) -> None:
+        task = self._install_tasks.get(server_id)
+        if task is not None:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            self._clear_install_task(server_id, task)
+        proc = self._install_procs.get(server_id)
+        if proc is not None:
+            await self._kill_tree(proc, drain_output=True)
+            self._install_procs.pop(server_id, None)
 
     async def cancel_install(self, server: Server) -> None:
         """中止进行中的安装:取消下载任务并把实例标记为失败(可重试)。"""
-        task = self._install_tasks.get(server.id)
-        if task is not None and not task.done():
-            task.cancel()
-        inst = self.instance_dir(server)
-        (inst / _INSTALLING_MARKER).unlink(missing_ok=True)
-        (inst / _FAILED_MARKER).write_text("已取消安装,可点「重试」重新下载", encoding="utf-8")
-        self._install_progress.pop(server.id, None)
-        self._install_tasks.pop(server.id, None)
+        async with self._control_locks.setdefault(server.id, asyncio.Lock()):
+            self._transitioning.add(server.id)
+            try:
+                # Installer owns the lifecycle lock: cancel and join first.
+                await self._cancel_install_task(server.id)
+                async with self.lifecycle_lock(server.id):
+                    if (server.id, getattr(server, "dir_name", "")) in self._deleted:
+                        return
+                    inst = self.instance_dir(server)
+                    inst.mkdir(parents=True, exist_ok=True)
+                    (inst / _INSTALLING_MARKER).unlink(missing_ok=True)
+                    (inst / _FAILED_MARKER).write_text("已取消安装,可点「重试」重新下载", encoding="utf-8")
+            finally:
+                self._transitioning.discard(server.id)
 
     async def _install_core(self, server: Server, java_command: str) -> None:
         """按服务器类型下载/安装核心到 server/ 目录。耗时,放后台。"""
@@ -357,12 +415,19 @@ class MCDRManager:
             await ver.download_file(meta["url"], installer, progress=prog)
             # 运行官方安装器生成服务端文件(需联网拉依赖)
             self._install_progress[server.id] = (0, 0)
-            proc = await asyncio.create_subprocess_exec(
+            proc = await self._spawn(
+                self._install_procs, server.id,
                 java_command or "java", "-jar", meta["name"], "--installServer",
                 cwd=str(server_dir),
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
             )
-            out, _ = await proc.communicate()
+            try:
+                out, _ = await proc.communicate()
+            except BaseException:
+                await self._kill_tree(proc, drain_output=True)
+                self._install_procs.pop(server.id, None)
+                raise
+            self._install_procs.pop(server.id, None)
             if proc.returncode != 0:
                 tail = (out or b"").decode("utf-8", "replace")[-500:]
                 raise RuntimeError(f"Forge 安装器失败(code {proc.returncode}): {tail}")
@@ -371,8 +436,12 @@ class MCDRManager:
             raise RuntimeError(f"不支持的服务器类型: {st}")
 
     # ---------- 创建 ----------
+    @_serialized
     async def create_instance(self, server: Server, java_command: str) -> None:
         """生成实例目录并安装核心。耗时较长,应在后台任务中调用。"""
+        if self.is_running(server.id) or server.id in self._install_procs:
+            raise RuntimeError("运行中无法安装")
+        await self._reap_previous(server)
         inst = self.instance_dir(server)
         server_dir = inst / "server"
         marker = inst / _INSTALLING_MARKER
@@ -477,8 +546,10 @@ class MCDRManager:
             if not raw:
                 break
             self._append_line(server_id, raw.decode("utf-8", errors="replace").rstrip("\r\n"))
+        await proc.wait()
         rc = proc.returncode
-        self._ready.discard(server_id)
+        if self._procs.get(server_id) is proc:
+            self._ready.discard(server_id)
         self._append_line(server_id, f"[mc-panel] 进程已退出 (return code: {rc})")
 
     def _reconcile_config(self, inst: Path) -> None:
@@ -704,8 +775,12 @@ class MCDRManager:
                 )
         path.write_text(text, encoding="utf-8")
 
+    @_serialized
     async def redownload_jar(self, server: Server, java_command: str = "java") -> None:
         """重装核心(换版本/重试):重跑类型对应安装,保留世界/配置。"""
+        if self.is_running(server.id) or server.id in self._install_procs:
+            raise RuntimeError("运行中无法重新安装")
+        await self._reap_previous(server)
         inst = self.instance_dir(server)
         server_dir = inst / "server"
         server_dir.mkdir(parents=True, exist_ok=True)
@@ -726,9 +801,14 @@ class MCDRManager:
             raise
 
     # ---------- 启停 ----------
+    @_serialized
     async def start(
         self, server: Server, python_executable: str, java_path: str | None = None
     ) -> None:
+        task = self._install_tasks.get(server.id)
+        if (self._shutting_down or server.id in self._install_procs
+                or (task is not None and not task.done())):
+            raise RuntimeError("安装中或面板正在关闭")
         inst = self.instance_dir(server)
         if not self._core_installed(server):
             raise RuntimeError("核心尚未安装完成")
@@ -740,6 +820,7 @@ class MCDRManager:
         existing = self._procs.get(server.id)
         if existing is not None and existing.returncode is None:
             return  # 已在运行
+        await self._reap_previous(server)
         self._needs_restart.discard(server.id)
         self._queued.discard(server.id)
         try:
@@ -750,7 +831,8 @@ class MCDRManager:
         # 强制 MCDR(Python)以 UTF-8 读写其 stdio,否则 Windows 下会用系统码页(GBK)
         # 写日志,我们按 UTF-8 解码就会乱码。这样无论宿主机区域设置如何都统一为 UTF-8。
         env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
-        proc = await asyncio.create_subprocess_exec(
+        proc = await self._spawn(
+            self._procs, server.id,
             python_executable,
             "-m",
             "mcdreforged",
@@ -760,7 +842,6 @@ class MCDRManager:
             stderr=asyncio.subprocess.STDOUT,
             env=env,
         )
-        self._procs[server.id] = proc
         # 新一轮运行:清空旧缓冲、重置启动完成标志,并启动输出读取任务
         self._ready.discard(server.id)
         self._buffers[server.id] = deque(maxlen=_CONSOLE_BUFFER_LINES)
@@ -795,11 +876,14 @@ class MCDRManager:
         except (BrokenPipeError, ConnectionResetError) as exc:
             raise RuntimeError("无法写入实例标准输入") from exc
 
+    @_serialized
     async def stop(self, server: Server) -> None:
+        await self._stop(server)
+
+    async def _stop(self, server: Server) -> None:
         self._needs_restart.discard(server.id)
         proc = self._procs.get(server.id)
         if proc is None or proc.returncode is not None:
-            self._procs.pop(server.id, None)
             return
         if proc.stdin is not None:
             try:
@@ -808,59 +892,125 @@ class MCDRManager:
             except (BrokenPipeError, ConnectionResetError):
                 proc.terminate()
 
+    @_serialized
     async def force_stop(self, server: Server) -> None:
+        await self._force_stop(server)
+
+    async def _force_stop(self, server: Server) -> None:
         """强杀:连同子进程(MCDR 派生的 Java 服务端)一起 kill。"""
         self._needs_restart.discard(server.id)
         proc = self._procs.get(server.id)
         if proc is None:
             return
-        try:
-            import psutil
+        await self._kill_tree(proc)
+        self._procs.pop(server.id, None)
 
+    async def _spawn(self, registry: dict, server_id: int, *args, **kwargs):
+        # Cancellation during spawn must not lose the newly created handle.
+        task = asyncio.create_task(asyncio.create_subprocess_exec(*args, **kwargs))
+        try:
+            proc = await asyncio.shield(task)
+        except asyncio.CancelledError:
+            proc = await task
+            registry[server_id] = proc
+            await self._kill_tree(proc, drain_output=True)
+            registry.pop(server_id, None)
+            raise
+        registry[server_id] = proc
+        return proc
+
+    @staticmethod
+    def _process_tree(proc):
+        import psutil
+
+        try:
             parent = psutil.Process(proc.pid)
-            for child in parent.children(recursive=True):
-                try:
-                    child.kill()
-                except Exception:  # noqa: BLE001
-                    pass
-            parent.kill()
-        except Exception:  # noqa: BLE001
+            return [*parent.children(recursive=True), parent]
+        except psutil.NoSuchProcess:
+            return []
+
+    def _remember_tree(self, proc):
+        # Keep descendants across failed cleanup even if the parent has exited.
+        processes = self._process_trees.setdefault(proc.pid, [])
+        for process in self._process_tree(proc):
+            if process not in processes:
+                processes.append(process)
+        return processes
+
+    async def _reap_previous(self, server: Server) -> None:
+        proc = self._procs.get(server.id)
+        if proc is not None:
+            await self._kill_tree(proc)
+            self._procs.pop(server.id, None)
+
+    async def _kill_tree(self, proc, *, drain_output: bool = False) -> None:
+        import psutil
+
+        processes = self._remember_tree(proc)
+        for process in processes:
+            try:
+                process.kill()
+            except psutil.NoSuchProcess:
+                pass
+        if proc.returncode is None:
             try:
                 proc.kill()
-            except Exception:  # noqa: BLE001
+            except ProcessLookupError:
                 pass
+        if drain_output:
+            # A cancelled communicate() no longer drains pipes. wait() alone
+            # can otherwise hang on a full stdout buffer even after kill().
+            await asyncio.wait_for(proc.communicate(), timeout=10)
+        await asyncio.wait_for(proc.wait(), timeout=10)
+        if processes:
+            _, alive = await asyncio.to_thread(psutil.wait_procs, processes, timeout=10)
+            if alive:
+                raise RuntimeError("子进程未退出,拒绝丢弃进程句柄")
+        self._process_trees.pop(proc.pid, None)
+
+    async def _drain(self, server: Server, timeout: float) -> None:
+        proc = self._procs.get(server.id)
+        if proc is None:
+            return
+        self._remember_tree(proc)
+        try:
+            async with asyncio.timeout(timeout):
+                await self._stop(server)
+                await proc.wait()
+        except (TimeoutError, OSError):
+            pass
+        # Also reclaim descendants if their parent exited before them.
+        await self._kill_tree(proc)
         self._procs.pop(server.id, None)
 
     async def shutdown(self, servers: list[Server], timeout: float = 60) -> None:
         """Drain instances concurrently before the container's SIGKILL deadline."""
-        installs = list(self._install_tasks.values())
-        for task in installs:
-            task.cancel()
-        await asyncio.gather(*installs, return_exceptions=True)
+        self._shutting_down = True
+        await asyncio.gather(*(self.cancel_install(server) for server in servers
+                               if server.id in self._install_tasks or server.id in self._install_procs))
+        await asyncio.gather(*(self._cancel_install_task(server_id)
+                               for server_id in set(self._install_tasks) | set(self._install_procs)))
 
         async def drain(server: Server) -> None:
-            proc = self._procs.get(server.id)
-            if proc is None or proc.returncode is not None:
-                return
-            try:
-                async with asyncio.timeout(timeout):
-                    await self.stop(server)
-                    await proc.wait()
-            except (TimeoutError, OSError):
-                await self.force_stop(server)
-                try:
-                    await asyncio.wait_for(proc.wait(), timeout=10)
-                except TimeoutError:
-                    pass
+            async with self.lifecycle_lock(server.id):
+                await self._drain(server, timeout)
 
         await asyncio.gather(*(drain(server) for server in servers))
 
     async def delete_instance(self, server: Server) -> None:
-        await self.stop(server)
-        self._procs.pop(server.id, None)
-        inst = self.instance_dir(server)
-        if inst.exists():
-            shutil.rmtree(inst, ignore_errors=True)
+        async with self._control_locks.setdefault(server.id, asyncio.Lock()):
+            self._transitioning.add(server.id)
+            try:
+                await self._cancel_install_task(server.id)
+                async with self.lifecycle_lock(server.id):
+                    await self._drain(server, 60)
+                    inst = self.instance_dir(server)
+                    if inst.exists():
+                        shutil.rmtree(inst)
+                    self._deleted.add((server.id, server.dir_name))
+                    self._queued.discard(server.id)
+            finally:
+                self._transitioning.discard(server.id)
 
 
 # 单例

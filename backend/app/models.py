@@ -10,6 +10,7 @@ from sqlalchemy import DateTime, Float, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
+from .security import new_session_id
 
 
 def _now() -> datetime:
@@ -35,6 +36,7 @@ class User(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     username: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    session_id: Mapped[str] = mapped_column(String(64), nullable=False, default=new_session_id)
     role: Mapped[str] = mapped_column(String(16), default="user")
     # 验证态与绑定的正版玩家名;未验证的 user 只读
     verified: Mapped[bool] = mapped_column(default=False)

@@ -7,6 +7,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -156,7 +157,12 @@ async def http_exception_handler(_: Request, exc: StarletteHTTPException):
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(_: Request, exc: RequestValidationError):
-    return JSONResponse(status_code=422, content={"error": "请求参数不合法", "detail": exc.errors()})
+    # 校验上下文可能含 ValueError;不回传原始 input,避免泄露密码等请求内容。
+    details = [{key: value for key, value in error.items() if key not in ("input", "ctx")}
+               for error in exc.errors()]
+    return JSONResponse(status_code=422, content=jsonable_encoder(
+        {"error": "请求参数不合法", "detail": details}
+    ))
 
 
 @app.get("/api/health")
@@ -198,7 +204,12 @@ if WEB_DIST.exists():
     async def serve_spa(full_path: str):
         if full_path.startswith("api/"):
             return JSONResponse(status_code=404, content={"error": "Not Found"})
-        candidate = WEB_DIST / full_path
+        root = WEB_DIST.resolve()
+        try:
+            candidate = (root / full_path).resolve()
+            candidate.relative_to(root)
+        except (ValueError, OSError, RuntimeError):
+            return JSONResponse(status_code=404, content={"error": "Not Found"})
         if full_path and candidate.is_file():
             return FileResponse(candidate)
         index = WEB_DIST / "index.html"

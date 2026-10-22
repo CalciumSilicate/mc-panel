@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from ..database import SessionLocal, get_db
 from ..deps import (
     ROLE_ORDER,
+    authenticate_token,
     ensure_not_protected,
     get_settings_row,
     require_admin,
@@ -30,7 +31,6 @@ from ..deps import (
 from ..java import choose_java, detect_installs, get_java_paths, required_java_major
 from ..mcdr import manager
 from ..models import ProxyCustomBackend, Server, ServerGroup, User
-from ..security import decode_token
 from ..schemas import (
     CreateServerResponse,
     CustomBackendCreate,
@@ -391,7 +391,10 @@ async def _redownload_in_background(server_id: int) -> None:
 
 def _launch_install(server_id: int, coro) -> None:
     """创建可中止的安装任务并登记到 manager。"""
-    manager.set_install_task(server_id, asyncio.create_task(coro))
+    try:
+        manager.set_install_task(server_id, asyncio.create_task(coro))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("", response_model=CreateServerResponse)
@@ -545,7 +548,8 @@ async def update_server(
     loader_changed = payload.loader_version is not None and payload.loader_version != server.loader_version
     version_changed = mc_changed or loader_changed
     if version_changed:
-        if status in ("running", "starting", "installing"):
+        if (status in ("running", "starting", "installing", "queued")
+                or manager.lifecycle_lock(server.id).locked()):
             raise HTTPException(status_code=400, detail="更换版本/核心需先停止实例")
         if mc_changed:
             server.mc_version = payload.mc_version
@@ -741,7 +745,8 @@ async def reinstall_server(
 ) -> dict:
     """重新下载服务端核心(用于安装失败/中断后的重试)。"""
     server = _get_server_or_404(db, server_id)
-    if manager.get_status(server) in ("running", "installing"):
+    if (manager.get_status(server) in ("running", "starting", "installing", "queued")
+            or manager.is_running(server.id) or manager.lifecycle_lock(server.id).locked()):
         raise HTTPException(status_code=400, detail="运行中或安装中,无法重新安装")
     _launch_install(server.id, _redownload_in_background(server.id))
     return {"ok": True}
@@ -826,22 +831,17 @@ async def console_ws(websocket: WebSocket, server_id: int, token: str = Query(de
 
     浏览器 WebSocket 无法自定义请求头,故 token 经 query 参数传入。
     """
-    payload = decode_token(token)
-    if not payload:
-        await websocket.close(code=4401)
-        return
-
     db = SessionLocal()
     try:
-        try:
-            user = db.get(User, int(payload.get("sub") or 0))
-        except (TypeError, ValueError):
-            user = None
+        user = authenticate_token(token, db)
         server = db.get(Server, server_id)
     finally:
         db.close()
+    if user is None:
+        await websocket.close(code=4401)
+        return
     # 控制台需 helper 及以上
-    if user is None or ROLE_ORDER.get(user.role, 0) < ROLE_ORDER["helper"]:
+    if ROLE_ORDER.get(user.role, 0) < ROLE_ORDER["helper"]:
         await websocket.close(code=4403)
         return
     if server is None:
@@ -850,6 +850,21 @@ async def console_ws(websocket: WebSocket, server_id: int, token: str = Query(de
 
     await websocket.accept()
     queue = manager.subscribe(server_id)
+
+    async def authorized() -> bool:
+        with SessionLocal() as session:
+            current = authenticate_token(token, session)
+            code = 4401 if current is None else (
+                4403 if ROLE_ORDER.get(current.role, 0) < ROLE_ORDER["helper"] else None
+            )
+        if code is not None:
+            await websocket.close(code=code)
+            return False
+        return True
+
+    async def watch_session() -> None:
+        while await authorized():
+            await asyncio.sleep(1)
 
     async def pump_logs() -> None:
         for line in manager.recent_lines(server_id):
@@ -863,6 +878,8 @@ async def console_ws(websocket: WebSocket, server_id: int, token: str = Query(de
             command = (data or {}).get("command")
             if not command:
                 continue
+            if not await authorized():
+                return
             try:
                 await manager.send_command(server, command)
             except RuntimeError as exc:
@@ -870,11 +887,14 @@ async def console_ws(websocket: WebSocket, server_id: int, token: str = Query(de
 
     log_task = asyncio.create_task(pump_logs())
     cmd_task = asyncio.create_task(pump_commands())
+    auth_task = asyncio.create_task(watch_session())
+    tasks = (log_task, cmd_task, auth_task)
     try:
-        await asyncio.wait({log_task, cmd_task}, return_when=asyncio.FIRST_COMPLETED)
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
     except WebSocketDisconnect:
         pass
     finally:
-        for task in (log_task, cmd_task):
+        for task in tasks:
             task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         manager.unsubscribe(server_id, queue)

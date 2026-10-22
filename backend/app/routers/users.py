@@ -9,7 +9,7 @@ from ..database import get_db
 from ..deps import ROLE_ORDER, require_admin, require_owner
 from ..models import User
 from ..schemas import UserCreate, UserOut, UserUpdate
-from ..security import hash_password
+from ..security import hash_password, new_session_id
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -84,6 +84,7 @@ def update_user(
         target.role = payload.role
     if payload.new_password:
         target.hashed_password = hash_password(payload.new_password)
+        target.session_id = new_session_id()
     # 直接修改验证态与绑定玩家
     if payload.verified is not None:
         target.verified = payload.verified

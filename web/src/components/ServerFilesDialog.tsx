@@ -49,7 +49,7 @@ export function ServerFilesDialog({ server, onClose }: { server: ServerSummary; 
   const dirty = file !== null && draft !== file.text
   const readOnly = server.protected || !file?.editable
 
-  const load = useCallback(async (path: string, kind: 'directory' | 'file') => {
+  const load = useCallback(async (path: string, kind: 'directory' | 'file', preserveDraft = false) => {
     request.current?.abort()
     const controller = new AbortController()
     request.current = controller
@@ -61,8 +61,10 @@ export function ServerFilesDialog({ server, onClose }: { server: ServerSummary; 
         if (controller.signal.aborted || !mounted.current) return
         setDirectory(result)
         setAddress(`/${result.path}`)
-        setFile(null)
-        setDraft('')
+        if (!preserveDraft) {
+          setFile(null)
+          setDraft('')
+        }
       } else {
         const result = await readServerFile(server.id, path, controller.signal)
         if (controller.signal.aborted || !mounted.current) return
@@ -136,7 +138,9 @@ export function ServerFilesDialog({ server, onClose }: { server: ServerSummary; 
       }
       if (mounted.current) {
         showToast('success', '上传完成')
-        void load(uploadDirectory.current, 'directory')
+        // Refresh metadata only: edits made while uploading must survive. Keep
+        // the file revision too, so overwriting that file still detects conflicts.
+        void load(uploadDirectory.current, 'directory', true)
       }
     } catch (err) {
       if (mounted.current && !controller.signal.aborted) setError(err instanceof Error ? err.message : '上传失败')

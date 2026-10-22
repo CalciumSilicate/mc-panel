@@ -42,6 +42,20 @@ export class ApiError extends Error {
   }
 }
 
+function errorMessage(payload: { error?: unknown; detail?: unknown }, status: number): string {
+  const base = typeof payload?.error === 'string' ? payload.error : `HTTP ${status}`
+  if (typeof payload?.detail === 'string') return `${base}: ${payload.detail}`
+  if (!Array.isArray(payload?.detail)) return base
+  // FastAPI validation details: show field names and messages, never raw input.
+  const fields = payload.detail.flatMap((item: unknown) => {
+    if (!item || typeof item !== 'object' || !('msg' in item) || typeof item.msg !== 'string') return []
+    const path = 'loc' in item && Array.isArray(item.loc)
+      ? item.loc.filter((part: unknown) => typeof part === 'string' || typeof part === 'number').join('.') : ''
+    return [`${path ? `${path}: ` : ''}${item.msg}`]
+  })
+  return fields.length ? `${base}: ${fields.join('；')}` : base
+}
+
 /** multipart 文件上传:不设置 content-type(交给浏览器带 boundary),仍注入鉴权头。 */
 export async function apiUpload<T>(path: string, formData: FormData): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
@@ -51,8 +65,7 @@ export async function apiUpload<T>(path: string, formData: FormData): Promise<T>
   })
   const payload = await response.json().catch(() => ({}))
   if (!response.ok) {
-    const message = typeof payload?.error === 'string' ? payload.error : `HTTP ${response.status}`
-    throw new ApiError(message, response.status)
+    throw new ApiError(errorMessage(payload, response.status), response.status)
   }
   return payload as T
 }
@@ -74,8 +87,7 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
     status = response.status
     const payload = await response.json().catch(() => ({}))
     if (!response.ok) {
-      const message = typeof payload?.error === 'string' ? payload.error : `HTTP ${response.status}`
-      throw new ApiError(message, response.status)
+      throw new ApiError(errorMessage(payload, response.status), response.status)
     }
     apiRequestCompleted(path, method, requestId, startedAt, response.status)
     return payload as T

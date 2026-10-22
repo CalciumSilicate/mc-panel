@@ -11,7 +11,7 @@ import shutil
 import tarfile
 import uuid
 import zipfile
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import nbtlib
 
@@ -119,7 +119,19 @@ def world_name(instance_dir: Path) -> str:
 
 
 def world_dir(instance_dir: Path) -> Path:
-    return instance_dir / "server" / world_name(instance_dir)
+    name = world_name(instance_dir)
+    # server.properties is editable: never let level-name select server/ itself,
+    # an absolute path, or a world outside server/ (including through symlinks).
+    windows_name = PureWindowsPath(name)
+    root = (instance_dir / "server").resolve()
+    target = instance_dir / "server" / name
+    if (windows_name.drive or windows_name.root
+            or ".." in windows_name.parts or Path(name).is_absolute()
+            or target.is_symlink()
+            or target.resolve() == root
+            or not target.resolve().is_relative_to(root)):
+        raise ValueError("非法世界目录路径")
+    return target
 
 
 def _iter_files(root: Path) -> list[Path]:
@@ -162,7 +174,16 @@ def restore_archive(archive_path: Path, instance_dir: Path, progress=None) -> No
     if kind is None:
         raise ValueError("不支持的压缩格式(支持 zip / tar / tar.gz / tar.bz2 / tar.xz)")
     target = world_dir(instance_dir)
-    tmp = instance_dir / f".restore_{uuid.uuid4().hex}"
+    backup = target.with_name(target.name + "_backup")
+    root = (instance_dir / "server").resolve()
+    if backup.is_symlink() or not backup.resolve().is_relative_to(root):
+        raise ValueError("非法世界备份路径")
+    token = uuid.uuid4().hex
+    tmp = instance_dir / f".restore_{token}"
+    # Siblings guarantee same-filesystem renames, including on Windows. Never
+    # copy directly into target: a failed copy must not become the next backup.
+    staged = target.with_name(f".restore_world_{token}")
+    previous_backup = target.with_name(f".restore_backup_{token}")
     try:
         if progress:
             progress(0, 100)
@@ -177,16 +198,32 @@ def restore_archive(archive_path: Path, instance_dir: Path, progress=None) -> No
         src = _find_world_root(tmp)
         if src is None:
             raise ValueError("存档中未找到 level.dat")
-        # 备份现有世界
-        if target.exists():
-            backup = target.with_name(target.name + "_backup")
-            if backup.exists():
-                shutil.rmtree(backup, ignore_errors=True)
-            target.rename(backup)
-        shutil.copytree(src, target)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(src, staged)
+        saved_backup = False
+        saved_world = False
+        try:
+            if target.exists():
+                if backup.exists():
+                    backup.rename(previous_backup)
+                    saved_backup = True
+                target.rename(backup)
+                saved_world = True
+            staged.rename(target)
+        except OSError:
+            # Keep recovery directories if rollback itself fails; never delete
+            # the last intact world just to clean up a failed restore.
+            if saved_world:
+                backup.rename(target)
+            if saved_backup:
+                previous_backup.rename(backup)
+            raise
+        if saved_backup:
+            shutil.rmtree(previous_backup, ignore_errors=True)
         if progress:
             progress(100, 100)
     finally:
+        shutil.rmtree(staged, ignore_errors=True)
         shutil.rmtree(tmp, ignore_errors=True)
 
 
