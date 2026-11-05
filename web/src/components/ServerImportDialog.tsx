@@ -1,3 +1,4 @@
+import { EnumSelect } from '@/components/ui/enum-select'
 import { useEffect, useRef, useState } from 'react'
 import { FileArchive, Upload } from 'lucide-react'
 import { uploadFile, type ImportOptions, type UploadState } from '@/api/uploads'
@@ -114,7 +115,7 @@ export function ServerImportDialog({ onClose, onImported }: { onClose: () => voi
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div className="col-span-2 space-y-1.5"><Label htmlFor="import-name">实例名称</Label><Input id="import-name" value={options.name} disabled={locked} onChange={e => setOptions({ ...options, name: e.target.value })} /></div>
-          <div className="space-y-1.5"><Label htmlFor="import-type">类型</Label><select id="import-type" className="h-10 w-full rounded-md border bg-background px-3 text-sm" value={options.server_type} disabled={locked} onChange={e => setOptions({ ...options, server_type: e.target.value as ImportOptions['server_type'] })}>{['vanilla', 'fabric', 'forge', 'velocity'].map(value => <option key={value} value={value}>{value}</option>)}</select></div>
+          <div className="space-y-1.5"><Label htmlFor="import-type">类型</Label><EnumSelect id="import-type" className="h-10 w-full rounded-md border bg-background px-3 text-sm" value={options.server_type} disabled={locked} onValueChange={value => setOptions({ ...options, server_type: value as ImportOptions['server_type'] })}>{['vanilla', 'fabric', 'forge', 'velocity'].map(value => <option key={value} value={value}>{value}</option>)}</EnumSelect></div>
           <div className="space-y-1.5"><Label htmlFor="import-port">端口</Label><Input id="import-port" type="number" min={1} max={65535} value={options.port} disabled={locked} onChange={e => setOptions({ ...options, port: Number(e.target.value) })} /></div>
           <div className="space-y-1.5"><Label htmlFor="import-min">最小内存</Label><Input id="import-min" value={options.min_memory} disabled={locked} onChange={e => setOptions({ ...options, min_memory: e.target.value })} /></div>
           <div className="space-y-1.5"><Label htmlFor="import-max">最大内存</Label><Input id="import-max" value={options.max_memory} disabled={locked} onChange={e => setOptions({ ...options, max_memory: e.target.value })} /></div>

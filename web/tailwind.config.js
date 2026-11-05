@@ -9,15 +9,13 @@ export default {
   ],
   theme: {
     extend: {
-      fontFamily: {
-        sans: ['Lexend', 'Noto Sans SC', 'Microsoft YaHei', 'system-ui', 'sans-serif'],
-      },
+      fontFamily: { sans: ['var(--font-sans)'], mono: ['var(--font-mono)'] },
       borderRadius: {
         lg: 'var(--radius)',
         md: 'calc(var(--radius) - 2px)',
         sm: 'calc(var(--radius) - 4px)',
       },
-      colors: {
+      colors: { success: "hsl(var(--success) / <alpha-value>)", warning: "hsl(var(--warning) / <alpha-value>)", info: "hsl(var(--info) / <alpha-value>)",
         background: 'hsl(var(--background))',
         foreground: 'hsl(var(--foreground))',
         card: {

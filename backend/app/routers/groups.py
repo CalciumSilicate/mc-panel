@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..deps import require_admin, require_auth
+from ..deps import require_admin, require_helper
 from ..models import Server, ServerGroup
 from ..schemas import ServerGroupCreate, ServerGroupOut, ServerGroupUpdate
 
@@ -41,7 +41,7 @@ def _out(group: ServerGroup, count: int) -> ServerGroupOut:
 
 
 @router.get("", response_model=list[ServerGroupOut])
-def list_groups(_: object = Depends(require_auth), db: Session = Depends(get_db)) -> list[ServerGroupOut]:
+def list_groups(_: object = Depends(require_helper), db: Session = Depends(get_db)) -> list[ServerGroupOut]:
     counts = _counts(db)
     groups = db.scalars(select(ServerGroup).order_by(ServerGroup.id)).all()
     return [_out(g, counts.get(g.id, 0)) for g in groups]

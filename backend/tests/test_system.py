@@ -31,6 +31,25 @@ class DashboardTests(unittest.TestCase):
             self.addCleanup(item.stop)
         self.disk_usage = mock
 
+    def test_user_cannot_read_server_configuration(self):
+        import json
+        from app.routers.servers import list_servers
+        from app.schemas import USER_HIDDEN_SERVER_FIELDS
+
+        self.db.add(Server(name="private-config", dir_name="private-config", port=25565))
+        self.db.commit()
+        user = SimpleNamespace(role="user")
+        for response, nested in [(list_servers(_=user, db=self.db), False),
+                                 (system.overview(_=user, db=self.db), True)]:
+            payload = json.loads(response.body)
+            server = (payload["servers"] if nested else payload)[0]
+            self.assertEqual(server["name"], "private-config")
+            self.assertIn("min_memory", server)
+            self.assertIn("max_memory", server)
+            self.assertTrue(USER_HIDDEN_SERVER_FIELDS.isdisjoint(server))
+        for role in ("helper", "admin", "owner"):
+            self.assertEqual(list_servers(_=SimpleNamespace(role=role), db=self.db)[0].port, 25565)
+
     def test_empty_dashboard_and_data_volume(self):
         result = system.overview(db=self.db)
         self.assertEqual(result.total_servers, 0)

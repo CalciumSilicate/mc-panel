@@ -1,3 +1,4 @@
+import { mergeApiHeaders, readApiPayload } from '@/lib/baseline-http'
 import { nsKey } from '@/config'
 import { apiRequestCompleted, apiRequestFailed, apiRequestStarted } from '@/lib/logger'
 
@@ -63,7 +64,7 @@ export async function apiUpload<T>(path: string, formData: FormData): Promise<T>
     headers: { ...authHeaders() },
     body: formData,
   })
-  const payload = await response.json().catch(() => ({}))
+  const payload = await readApiPayload(response, 'POST')
   if (!response.ok) {
     throw new ApiError(errorMessage(payload, response.status), response.status)
   }
@@ -77,15 +78,12 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
   try {
     const response = await fetch(`${API_BASE}${path}`, {
       ...init,
-      headers: {
-        'content-type': 'application/json',
-        'x-request-id': requestId,
-        ...authHeaders(),
-        ...init?.headers,
-      },
+      headers: mergeApiHeaders({'content-type': 'application/json',
+'x-request-id': requestId,
+...authHeaders()}, init?.headers, init?.body),
     })
     status = response.status
-    const payload = await response.json().catch(() => ({}))
+    const payload = await readApiPayload(response)
     if (!response.ok) {
       throw new ApiError(errorMessage(payload, response.status), response.status)
     }

@@ -163,6 +163,13 @@ class InstallProgress(BaseModel):
     percent: float
 
 
+USER_HIDDEN_SERVER_FIELDS = {
+    "group_id", "group_name", "port",
+    "auto_start", "autostart_priority", "rcon_port",
+    "extra_jvm_args", "start_command_override", "startup_commands",
+}
+
+
 class ServerSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

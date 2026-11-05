@@ -13,6 +13,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -41,6 +42,7 @@ from ..schemas import (
     PropertiesUpdate,
     ServerCreate,
     ServerSummary,
+    USER_HIDDEN_SERVER_FIELDS,
     ServerUpdate,
     VersionList,
 )
@@ -271,7 +273,10 @@ def list_servers(
     names = {g.id: g.name for g in db.scalars(select(ServerGroup)).all()}
     # 手动排序优先(sort_order 越小越前),未排序过的按 id(创建顺序)兜底
     servers = db.scalars(select(Server).order_by(Server.sort_order, Server.id)).all()
-    return [_to_summary(s, names.get(s.group_id, "")) for s in servers]
+    summaries = [_to_summary(s, names.get(s.group_id, "")) for s in servers]
+    if getattr(_, "role", None) == "user":
+        return JSONResponse([s.model_dump(mode="json", exclude=USER_HIDDEN_SERVER_FIELDS) for s in summaries])
+    return summaries
 
 
 class ReorderBody(BaseModel):
@@ -477,14 +482,15 @@ async def update_server(
 ) -> ServerSummary:
     server = _get_server_or_404(db, server_id)
 
-    # 受保护实例:仅允许取消保护本身,其它编辑一律拒绝(强制先取消保护)
+    # 受保护实例允许单独编辑开服指令；混入其他配置时仍拒绝。
     if server.protected:
         if payload.protected is False:
             server.protected = False
             db.commit()
             db.refresh(server)
             return _to_summary(server)
-        raise HTTPException(status_code=409, detail="实例受保护,请先取消保护后再编辑")
+        if payload.model_fields_set != {"startup_commands"} or payload.startup_commands is None:
+            raise HTTPException(status_code=409, detail="实例受保护,仅可编辑开服指令；其他配置请先取消保护")
 
     status = manager.get_status(server)
 

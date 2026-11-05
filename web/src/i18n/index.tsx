@@ -9,6 +9,8 @@ interface I18nContextValue {
 }
 
 const dictionary: Record<string, string> = {
+  'common.confirm': '确认',
+  'common.cancel': '取消',
   'common.close': '关闭',
   'dateTimePicker.placeholder': '选择日期时间',
 }

@@ -37,7 +37,7 @@ import { Label } from '@/components/ui/label'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useGlobalToast } from '@/components/ui/use-global-toast'
 import { BRAND_NAME, nsKey } from '@/config'
-import { AnimatePresence, motion } from '@/lib/motion'
+import { motion } from '@/lib/motion'
 import { cn } from '@/lib/utils'
 
 const Overview = lazy(() => import('@/pages/Overview'))
@@ -167,7 +167,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
         type="button"
         key={item.key}
         aria-label={item.label}
-        data-active={active}
+        data-active={active}  aria-current={active ? 'page' : undefined}
         className={cn(
           'dashboard-nav-item flex w-full items-center rounded-md py-2.5 text-left text-sm font-medium transition-colors',
           active
@@ -205,7 +205,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
 
   return (
     <TooltipProvider delayDuration={0}>
-      <div className="dashboard-shell flex h-screen overflow-hidden bg-muted/30">
+      <div className="dashboard-shell flex h-dvh overflow-hidden bg-muted/30">
         {/* 桌面侧栏:折叠态宽度用 spring 过渡 */}
         <motion.aside
           className="dashboard-aside relative hidden h-full shrink-0 flex-col border-r bg-background md:flex"
@@ -264,11 +264,11 @@ export default function Dashboard({ onLogout }: DashboardProps) {
           <div className="scrollbar-none flex-1 overflow-y-auto">
             <header className="dashboard-header sticky top-0 z-10 flex h-16 items-center gap-3 border-b bg-background px-4 md:px-6">
               {isMobileViewport ? (
-                <Button ref={mobileNavTrigger} variant="outline" size="icon" className="h-9 w-9 shrink-0 md:hidden" aria-label="打开导航" aria-expanded={mobileNavOpen} aria-controls="mobile-navigation" aria-haspopup="dialog" onClick={() => setMobileNavOpen(true)}>
+                <Button data-mobile-nav-trigger="" ref={mobileNavTrigger} variant="outline" size="icon" className="h-9 w-9 shrink-0 md:hidden" aria-label="打开导航" aria-expanded={mobileNavOpen} aria-controls="mobile-navigation" aria-haspopup="dialog" onClick={() => setMobileNavOpen(true)}>
                   <PanelLeft className="h-4 w-4" />
                 </Button>
               ) : null}
-              <AnimatePresence mode="wait">
+              <>
                 <motion.div
                   key={currentPage}
                   initial={{ opacity: 0, y: 8 }}
@@ -280,7 +280,7 @@ export default function Dashboard({ onLogout }: DashboardProps) {
                   <CurrentIcon className="h-5 w-5 text-primary" />
                   <h2 className="truncate text-base font-semibold md:text-lg">{currentItem.label}</h2>
                 </motion.div>
-              </AnimatePresence>
+              </>
 
               <div className="ml-auto flex min-w-0 items-center gap-2">
                 {!isMobileViewport ? (

@@ -4,7 +4,7 @@ import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, v
 import { CSS } from '@dnd-kit/utilities'
 import { useReducedMotion } from 'motion/react'
 import type { ReactNode } from 'react'
-import { Ban, ChevronDown, ChevronUp, Download, FolderOpen, GripVertical, Loader2, MessageSquare, Network, Pencil, Plus, RefreshCw, Server, Terminal, Trash2, X } from 'lucide-react'
+import { Ban, ChevronDown, ChevronUp, Download, FolderOpen, GripVertical, Loader2, MessageSquare, Network, Pencil, Plus, RefreshCw, Server, ShieldCheck, Terminal, Trash2, X } from 'lucide-react'
 
 import {
   type JavaInfo,
@@ -104,7 +104,7 @@ function SortableServerRow({ server, canSort, disabled, children }: {
       ref={setNodeRef}
       data-dragging={isDragging || undefined}
       style={{ transform: CSS.Transform.toString(transform), transition, position: 'relative', zIndex: isDragging ? 10 : undefined }}
-      className={cn(isDragging && 'bg-card shadow-xl ring-1 ring-primary/50 hover:bg-card [&_td]:bg-primary/10')}
+      className={cn(server.protected && 'bg-primary/10 hover:bg-primary/20 [&>td:first-child]:shadow-[inset_3px_0_0_hsl(var(--primary))] dark:bg-white/[0.025] dark:hover:bg-white/[0.05] dark:[&>td:first-child]:shadow-[inset_2px_0_0_hsl(var(--primary)/0.35)]', isDragging && 'bg-card shadow-xl ring-1 ring-primary/50 hover:bg-card [&_td]:bg-primary/10')}
     >
       <TableCell className="w-8 px-1">
         {canSort ? (
@@ -263,7 +263,7 @@ export default function Servers() {
   const canAdmin = roleAtLeast('admin')
   const canHelper = roleAtLeast('helper')
   const { data, loading, error, refresh } = useResource(() => listServers(), [])
-  const { data: groups, refresh: refreshGroups } = useResource(() => listGroups(), [])
+  const { data: groups, refresh: refreshGroups } = useResource(() => canHelper ? listGroups() : Promise.resolve([]), [canHelper])
   const { showToast } = useGlobalToast()
   const [createOpen, setCreateOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
@@ -426,14 +426,14 @@ export default function Servers() {
                 onDragEnd={handleDrop}
               >
               <SortableContext items={displayed.map((server) => server.id)} strategy={verticalListSortingStrategy}>
-              <Table className="min-w-[1300px]">
+              <Table className={canHelper ? "min-w-[1300px]" : "min-w-[700px]"}>
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-8 px-1" />
                     {([
                       ['名称', 'name'], ['类型', 'server_type'], ['版本', 'mc_version'], ['加载器/核心', 'loader_version'],
                       ['互联组', 'group_name'], ['内存', 'max_memory'], ['端口', 'port'], ['开机自启', 'auto_start'], ['自启优先级', 'autostart_priority'], ['状态', 'status'],
-                    ] as const).map(([label, key]) => (
+                    ] as const).filter(([, key]) => canHelper || !['group_name', 'port', 'auto_start', 'autostart_priority'].includes(key)).map(([label, key]) => (
                       <TableHead key={key} aria-sort={sort?.key === key ? sort.direction === 1 ? 'ascending' : 'descending' : 'none'}>
                         <button type="button" disabled={dragId !== null} className="inline-flex items-center gap-1 hover:text-foreground" title="点击切换升序、降序、原始顺序；排序时暂停拖拽" onClick={() => setSort(sort?.key !== key ? { key, direction: 1 } : sort.direction === 1 ? { key, direction: -1 } : null)}>
                           {label}{sort?.key === key ? sort.direction === 1 ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" /> : null}
@@ -456,18 +456,21 @@ export default function Servers() {
                         canSort={canAdmin}
                         disabled={savingOrder || sort !== null}
                       >
-                        <TableCell className="max-w-52 truncate font-medium" title={server.name}>{server.name}</TableCell>
+                        <TableCell className="max-w-52 font-medium"><div className="flex min-w-0 items-center gap-2"><span className="min-w-0 truncate" title={server.name}>{server.name}</span>{server.protected && <Badge variant="outline" className="w-fit shrink-0 gap-1 border-primary/30 bg-primary/10 text-[11px] font-normal text-primary-foreground dark:border-white/10 dark:bg-white/[0.04] dark:text-muted-foreground"><ShieldCheck className="h-3 w-3" aria-hidden="true" />保护</Badge>}</div></TableCell>
                         <TableCell>
                           <Badge variant="outline" className={cn('text-[11px]', TYPE_BADGE[server.server_type])}>{TYPE_LABEL[server.server_type] ?? server.server_type}</Badge>
                         </TableCell>
                         <TableCell className="max-w-40 truncate text-muted-foreground" title={server.mc_version}>{server.mc_version || '—'}</TableCell>
                         <TableCell className="max-w-52 truncate font-mono text-xs text-muted-foreground" title={server.loader_version}>{server.loader_version || '—'}</TableCell>
+                        {canHelper && <>
                         <TableCell className="text-muted-foreground">
                           <ServerQuickEdit server={server} field="group" groups={groups ?? []} editable={canAdmin} onSaved={refresh} />
                         </TableCell>
+                        </>}
                         <TableCell className="font-mono text-xs text-muted-foreground">
                           <ServerQuickEdit server={server} field="memory" groups={groups ?? []} editable={canAdmin} onSaved={refresh} />
                         </TableCell>
+                        {canHelper && <>
                         <TableCell className="font-mono text-muted-foreground">
                           <ServerQuickEdit server={server} field="port" groups={groups ?? []} editable={canAdmin} onSaved={refresh} />
                         </TableCell>
@@ -477,6 +480,7 @@ export default function Servers() {
                         <TableCell>
                           <ServerQuickEdit server={server} field="priority" groups={groups ?? []} editable={canAdmin} onSaved={refresh} />
                         </TableCell>
+                        </>}
                         <TableCell>
                           <div className="flex flex-wrap items-center gap-1">
                             <Badge variant="outline" className={cn('gap-1 text-[11px]', meta.tone)}>
@@ -492,7 +496,7 @@ export default function Servers() {
                         <TableCell>
                           <div className="flex items-center justify-end gap-1.5">
                             {canAdmin ? <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" title="浏览服务器文件" aria-label="浏览服务器文件" onClick={() => setFilesServer(server)}><FolderOpen className="h-4 w-4" /></Button> : null}
-                            {canAdmin ? <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" title="编辑开服自动执行指令" aria-label="编辑开服自动执行指令" disabled={server.protected || installing} onClick={() => { setCommandsServer(server); setCommandsDraft((server.startup_commands ?? []).join('\n')) }}><MessageSquare className="h-4 w-4" /></Button> : null}
+                            {canAdmin ? <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" title="编辑开服自动执行指令" aria-label="编辑开服自动执行指令" disabled={installing} onClick={() => { setCommandsServer(server); setCommandsDraft((server.startup_commands ?? []).join('\n')) }}><MessageSquare className="h-4 w-4" /></Button> : null}
                             {canAdmin ? (
                               <Button
                                 type="button"

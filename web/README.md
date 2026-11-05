@@ -1,7 +1,8 @@
-# 前端典范模板(web)
+# MC Panel 前端
 
-一套可直接派生的内部后台前端基线。从 AMP-Manager 沉淀、经 ASXSDashboard 验证后抽取,
-目标是:**新项目 clone 下来就有一致的外壳、设计语言和工程约定,只往里填业务。**
+公共约定以 [BASELINE.md](./BASELINE.md) 为准；以下业务说明保留本项目的接口与流程。
+
+由 frontend-template 派生，当前使用本项目的真实认证、API 与业务页面。
 
 技术栈:Vite 6 · React 19 · TypeScript 5.6 · Tailwind 3 · shadcn/ui(Radix)· lucide · motion · recharts。
 
@@ -9,18 +10,17 @@
 
 ## 快速开始
 
+在本目录运行：
+
 ```bash
-cd web
-npm install
-npm run dev      # http://localhost:5278,登录页输入任意密码即可看到演示页(走假后端)
-npm run build    # tsc -b && vite build
-npm run lint
+npm ci
+npm run dev
+npm run check:baseline
+npx playwright install chromium
+npm run test:baseline
 ```
 
-模板自带「假后端」(`src/api/demo.ts`),无需起后端即可看到完整页面。接真实接口时替换它即可。
-
-派生新项目:把 `web/` 整个拷走 → 改 `src/config.ts` 的 `BRAND_NAME` → 删掉 `pages/Overview.tsx`、
-`pages/Settings.tsx`、`api/demo.ts` 这几个示例 → 开始写你自己的页面。
+Node 26.12.1、npm 11.20.0。端口和代理见 vite.config.ts，业务启动方式见项目根 README。这里使用真实后端；品牌与身份在 app.config.json 中维护。
 
 ---
 
@@ -44,7 +44,7 @@ npm run lint
 ### 1. 设计语言固化在 CSS,页面只描述内容
 所有页面壳走 `PageScaffold`(`PageShell` / `PageSurface` / `PageStat` / `PageStatStrip`),
 对应 `index.css` 里的 `ops-*` 语义类。页面代码里**不要散写卡片/边框/阴影的 Tailwind 组合** ——
-要改外观就改 `ops-*` 一处,全站统一。范本见 `pages/Overview.tsx`。
+要改外观就改 `ops-*` 一处,全站统一。公共列表参考 `components/layout/ResourceTable.tsx`，业务概览保留自身结构。
 
 ### 2. 主题用 HSL token,不写死颜色
 颜色一律 `hsl(var(--primary))` 之类,light/dark 两套定义在 `index.css :root` / `.dark`。
@@ -61,8 +61,8 @@ const { data, loading, error, refresh } = useResource(() => getOverview(range), 
 页面不直接 `fetch`。所有请求经 `api/client.ts` 的 `apiRequest`(自动注入鉴权头、x-request-id、结构化日志、`ApiError`)。
 每个业务域一个 `api/<feature>.ts`,导出类型化函数,页面只调函数、不碰 URL。
 
-### 5. 命名空间:localStorage / 事件名一律 `app:` 前缀
-统一由 `config.ts` 的 `nsKey()` 生成,避免与第三方脚本冲突。品牌名也只在 `config.ts` 维护一处。
+### 5. 应用命名空间
+品牌与稳定 appId 在 app.config.json 维护，存储和事件通过 nsKey() 生成，不能使用共享 app: 前缀。首屏主题由同一 appId 注入。
 
 ### 6. 页面懒加载 + 切换动画
 页面一律 `lazy()` + `<Suspense>`,外层 `ChunkLoadBoundary` 兜底「部署后旧 chunk 404 → 自动 reload 一次」。
@@ -80,7 +80,7 @@ const { data, loading, error, refresh } = useResource(() => getOverview(range), 
 ## 加一个新页面(checklist)
 
 1. `src/api/<feature>.ts`:用 `apiRequest` 写类型化的数据函数。
-2. `src/pages/<Name>.tsx`:用 `PageShell` + `PageSurface` 搭壳,数据用 `useResource`,照抄 `Overview.tsx` 结构。
+2. `src/pages/<Name>.tsx`:用 `PageShell` 搭壳，独立表单区块才加 `PageSurface`,数据用 `useResource`,照抄 `Overview.tsx` 结构。
 3. `src/pages/Dashboard.tsx`:在 `navItems` 加一项,在 `lazy()` 区和 `<main>` 的条件渲染里各加一行。
 4. `npm run lint && npm run build` 应全绿。
 
@@ -93,4 +93,6 @@ const { data, loading, error, refresh } = useResource(() => getOverview(range), 
 - **无 react-router**:理由见约定 7。
 - **无 TanStack Query**:`useResource` 覆盖了 80% 取数场景;真出现复杂缓存/失效再引。
 - **页面文案目前硬编码中文**:i18n 层已就位,需要多语言时再迁。
-- **web 层暂无单测**:示例页逻辑很薄;复杂业务页建议补 Vitest。
+- **验证**：公共交互由 test:baseline 覆盖，业务关键逻辑按各项目需要补测试。
+
+前端公共基线与验证命令见 [BASELINE.md](./BASELINE.md)。

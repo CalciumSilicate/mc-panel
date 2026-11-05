@@ -1,3 +1,4 @@
+import { nsKey } from '@/config'
 type LogLevel = 'debug' | 'info' | 'warn' | 'error' | 'silent'
 
 const LEVEL_WEIGHT: Record<LogLevel, number> = {
@@ -97,7 +98,7 @@ function shouldLog(level: LogLevel): boolean {
 
 function currentLevel(): LogLevel {
   const configured = (
-    (typeof window !== 'undefined' ? window.localStorage.getItem('app:log-level') : '') ||
+    (typeof window !== 'undefined' ? window.localStorage.getItem(nsKey('log-level')) : '') ||
     import.meta.env.VITE_APP_LOG_LEVEL ||
     (import.meta.env.DEV ? 'debug' : 'warn')
   ).toLowerCase()

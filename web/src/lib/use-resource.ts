@@ -1,68 +1,46 @@
-import { useCallback, useEffect, useState, type DependencyList } from 'react'
-
+import { useCallback, useEffect, useRef, useState, type DependencyList } from 'react'
 import { logError } from '@/lib/logger'
+import { createResourceLoader } from './resource-loader'
 
 export interface ResourceState<T> {
   data: T | null
   loading: boolean
+  refreshing: boolean
   error: string | null
-  /** 手动重新拉取(忽略上次结果,重新进入 loading)。 */
   refresh: () => void
+  patch: (updater: (current: T) => T) => void
 }
-
-/**
- * 标准异步数据获取 hook —— 取代每个页面手搓的
- * `useEffect + loading + error + 用 refreshKey 透传刷新` 这套样板。
- *
- * 职责:
- *   - deps 变化或调用 refresh() 时重新拉取
- *   - 处理竞态:后发请求/卸载后不再 setState,旧请求结果被丢弃
- *   - 统一把异常转成可展示的 error 字符串,并打到结构化日志
- *
- * @example
- * const { data, loading, error, refresh } = useResource(
- *   () => getOverview(range),
- *   [range],
- * )
- * if (loading) return <InlineLoader />
- * if (error) return <ErrorState message={error} onRetry={refresh} />
+/** deps identify the resource. Forward signal to the API to cancel obsolete HTTP work.
+ * Single flight is local to this hook; use a query cache for cross-component sharing.
  */
-export function useResource<T>(
-  fetcher: () => Promise<T>,
-  deps: DependencyList = [],
-): ResourceState<T> {
+export function useResource<T>(fetcher: (signal: AbortSignal) => Promise<T>, deps: DependencyList = [], options: { keepPreviousData?: boolean } = {}): ResourceState<T> {
   const [data, setData] = useState<T | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [nonce, setNonce] = useState(0)
-
-  const refresh = useCallback(() => setNonce((value) => value + 1), [])
-
+  const reload = useRef<(() => void) | null>(null)
+  const refresh = useCallback(() => reload.current?.(), [])
+  const patch = useCallback((updater: (current: T) => T) => {
+    setData(current => current === null ? current : updater(current))
+  }, [])
+  const keepPreviousData = options.keepPreviousData ?? false
   useEffect(() => {
-    let cancelled = false
-    setLoading(true)
+    if (!keepPreviousData) setData(null)
     setError(null)
-
-    fetcher()
-      .then((result) => {
-        if (!cancelled) setData(result)
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return
+    const loader = createResourceLoader(fetcher, {
+      start: () => { setRefreshing(true); setError(null) },
+      success: result => { setData(result); setError(null) },
+      failure: err => {
         const message = err instanceof Error ? err.message : '加载失败'
         setError(message)
         logError('resource.load_failed', { error: message })
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-
-    return () => {
-      cancelled = true
-    }
-    // fetcher 每次 render 都是新引用,刻意只依赖调用方声明的 deps + nonce。
+      },
+      finish: () => setRefreshing(false),
+    })
+    reload.current = loader.load
+    loader.load()
+    return () => { loader.dispose(); reload.current = null }
+    // Resource identity is explicit; an inline fetcher changing alone must not refetch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [...deps, nonce])
-
-  return { data, loading, error, refresh }
+  }, [keepPreviousData, ...deps])
+  return { data, loading: data === null && refreshing, refreshing, error, refresh, patch }
 }

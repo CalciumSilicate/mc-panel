@@ -5,6 +5,9 @@ from datetime import datetime, timezone
 import time
 from typing import Annotated
 
+from fastapi.responses import JSONResponse
+from ..schemas import USER_HIDDEN_SERVER_FIELDS
+
 import psutil
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
@@ -61,7 +64,7 @@ def overview(
     ).all()
     history, history_interval = host_metrics.history(db, history_minutes)
 
-    return DashboardOverview(
+    result = DashboardOverview(
         # A short sample avoids the first-call zero when the request moves to a
         # different FastAPI worker thread. This endpoint runs in the thread pool.
         cpu_percent=psutil.cpu_percent(interval=0.1),
@@ -89,3 +92,7 @@ def overview(
         history=history,
         history_interval_seconds=history_interval,
     )
+
+    if getattr(_, "role", None) == "user":
+        return JSONResponse(result.model_dump(mode="json", exclude={"servers": {"__all__": USER_HIDDEN_SERVER_FIELDS}}))
+    return result

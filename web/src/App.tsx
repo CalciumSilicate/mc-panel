@@ -1,3 +1,4 @@
+import { BASELINE_SESSION_EXPIRED } from '@/lib/baseline-http'
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 
 import { type CurrentUser, getAuthToken, getBootstrap, getMe } from '@/api/auth'
@@ -15,6 +16,8 @@ type Phase = 'loading' | 'setup' | 'login' | 'ready'
  * 应用根:鉴权门。先 /auth/bootstrap 判断是否需要首次引导建 owner;否则查登录态。
  */
 export default function App() {
+  useEffect(() => { const expire = () => { setUser(null); setPhase('login'); }; window.addEventListener(BASELINE_SESSION_EXPIRED, expire); return () => window.removeEventListener(BASELINE_SESSION_EXPIRED, expire) }, [])
+
   const [phase, setPhase] = useState<Phase>('loading')
   const [user, setUser] = useState<CurrentUser | null>(null)
   const [allowRegister, setAllowRegister] = useState(false)

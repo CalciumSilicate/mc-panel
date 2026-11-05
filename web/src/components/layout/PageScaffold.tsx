@@ -54,7 +54,7 @@ export function PageShell({
   description,
   actions,
   children,
-  width = '6xl',
+  width = 'full',
   className,
   headerClassName,
 }: PageShellProps) {

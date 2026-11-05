@@ -63,7 +63,7 @@ export function GlobalToastProvider({ children }: { children: ReactNode }) {
               <div className="flex w-full max-w-xl flex-col gap-3">
                 <AnimatePresence initial={false}>
                   {items.map((item) => (
-                    <ToastCard key={item.id} item={item} closeLabel={t('common.close')} onClose={() => dismissToast(item.id)} />
+                    <ToastCard key={item.id} item={item} closeLabel={t('common.close')} onClose={dismissToast} />
                   ))}
                 </AnimatePresence>
               </div>
@@ -75,11 +75,11 @@ export function GlobalToastProvider({ children }: { children: ReactNode }) {
   )
 }
 
-function ToastCard({ item, closeLabel, onClose }: { item: ToastItem; closeLabel: string; onClose: () => void }) {
+function ToastCard({ item, closeLabel, onClose }: { item: ToastItem; closeLabel: string; onClose: (id: string) => void }) {
   useEffect(() => {
-    const timer = window.setTimeout(onClose, 3200)
+    const timer = window.setTimeout(() => onClose(item.id), 3200)
     return () => window.clearTimeout(timer)
-  }, [onClose])
+  }, [onClose, item.id])
 
   return (
     <motion.div
@@ -100,7 +100,7 @@ function ToastCard({ item, closeLabel, onClose }: { item: ToastItem; closeLabel:
       <div className="min-w-0 flex-1 text-sm leading-5">{item.text}</div>
       <button
         type="button"
-        onClick={onClose}
+        onClick={() => onClose(item.id)}
         className="shrink-0 rounded-full p-1 text-current/60 transition hover:bg-black/5 hover:text-current dark:hover:bg-white/10"
         aria-label={closeLabel}
       >

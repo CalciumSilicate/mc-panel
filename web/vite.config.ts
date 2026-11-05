@@ -1,3 +1,4 @@
+import { appConfigPlugin } from './app-config-plugin'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
@@ -5,7 +6,7 @@ import path from 'path'
 const apiPort = process.env.MCPANEL_API_PORT || '16824'
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [appConfigPlugin(), react()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

@@ -1,0 +1,6 @@
+{
+  "shell": "Dashboard",
+  "authProvider": true,
+  "children": false,
+  "redirectLogout": false
+}

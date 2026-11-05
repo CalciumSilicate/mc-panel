@@ -34,6 +34,7 @@ async function authPost(path: string, username: string, password: string): Promi
     method: 'POST',
     body: JSON.stringify({ username, password }),
   })
+  if (!result || typeof result.token !== 'string' || !result.token.trim()) throw new Error('登录响应缺少有效令牌')
   setAuthToken(result.token)
 }
 
