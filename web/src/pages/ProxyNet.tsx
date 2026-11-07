@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Globe, Loader2, Network, Plug, Plus, RefreshCw, Server, X, Zap } from 'lucide-react'
+import { Globe, Loader2, Network, Plug, Plus, RefreshCw, Server, Settings2, ArrowUpRight, X, Zap } from 'lucide-react'
 
 import { ApiError } from '@/api/client'
 import {
@@ -23,6 +23,7 @@ import { PageShell, PageSurface } from '@/components/layout/PageScaffold'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useConfirm } from '@/components/ui/dialog-context'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useGlobalToast } from '@/components/ui/use-global-toast'
@@ -40,7 +41,10 @@ function StatusBadge({ s }: { s: ServerSummary }) {
 export default function ProxyNet() {
   const { showToast } = useGlobalToast()
   const confirm = useConfirm()
-  const { data, loading, error, refresh } = useResource(() => listServers(), [])
+  const { data, loading, refreshing, error, refresh } = useResource(() => listServers(), [])
+  const [selectedProxy, setSelectedProxy] = useState<number | null>(null)
+  const [configOpen, setConfigOpen] = useState(false)
+  const [addOpen, setAddOpen] = useState(false)
   const [busy, setBusy] = useState<number | null>(null)
   const [wireResults, setWireResults] = useState<Record<number, WiringStatus[]>>({})
   const [secrets, setSecrets] = useState<Record<number, string>>({})
@@ -198,11 +202,11 @@ export default function ProxyNet() {
   return (
     <PageShell
       title="代理网络"
-      description="管理主服与子服连接"
-      width="6xl"
+      description="查看代理入口、子服路由与转发配置"
+      width="7xl"
       actions={
-        <Button type="button" variant="outline" className="gap-2" onClick={refresh} disabled={loading}>
-          <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
+        <Button type="button" variant="outline" className="gap-2" onClick={refresh} disabled={refreshing}>
+          <RefreshCw className={cn('h-4 w-4', refreshing && 'animate-spin')} />
           刷新
         </Button>
       }
@@ -218,33 +222,46 @@ export default function ProxyNet() {
           </p>
         </PageSurface>
       ) : (
-        <div className="space-y-5">
-          {proxies.map((proxy) => {
+        <div className="grid min-w-0 gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
+          <nav aria-label="代理入口" className="min-w-0 space-y-2 lg:border-r lg:pr-5">
+            <div className="flex items-center justify-between px-3 pb-2 text-xs text-muted-foreground"><span>代理入口</span><span>{proxies.length}</span></div>
+            {proxies.map((entry) => {
+              const active = entry.id === (proxies.some(p => p.id === selectedProxy) ? selectedProxy : proxies[0]?.id)
+              return <button type="button" key={entry.id} aria-pressed={active} onClick={() => { setSelectedProxy(entry.id); setConfigOpen(false); setAddOpen(false) }} className={cn('group flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', active ? 'bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground')}>
+                <Network className={cn('h-4 w-4 shrink-0', active && 'text-primary')} />
+                <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{entry.name}</span><span className="mt-1 block font-mono text-[11px] text-muted-foreground">:{entry.port}</span></span>
+                <span aria-label={SERVER_STATUS_META[entry.status].label} title={SERVER_STATUS_META[entry.status].label} className={cn('h-1.5 w-1.5 shrink-0 rounded-full', entry.status === 'running' ? 'bg-success' : 'bg-muted-foreground/40')} />
+              </button>
+            })}
+          </nav>
+          {proxies.filter(p => p.id === (proxies.some(entry => entry.id === selectedProxy) ? selectedProxy : proxies[0]?.id)).map((proxy) => {
             const backends = (data ?? []).filter((s) => s.proxy_id === proxy.id)
             const proxyCustoms = customs[proxy.id] ?? []
             const results = wireResults[proxy.id] ?? []
             const draft = draftOf(proxy.id)
             return (
-              <PageSurface key={proxy.id} bodyClassName="p-0">
+              <section key={proxy.id} className="min-w-0">
                 {/* 主服节点 */}
-                <div className="flex flex-col gap-4 border-b border-border/70 bg-primary/5 px-4 py-5 sm:flex-row sm:items-center sm:px-5">
+                <div className="flex flex-col gap-4 border-b pb-6 sm:flex-row sm:items-center">
                   <div className="flex min-w-0 flex-1 items-center gap-3">
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-primary">
+                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-border/70 bg-muted/30 text-muted-foreground">
                       <Network className="h-5 w-5" />
                     </div>
                     <div className="min-w-0 flex-1 space-y-1">
-                      <h2 className="break-words text-lg font-semibold [overflow-wrap:anywhere]">{proxy.name}</h2>
+                      <h2 className="break-words text-2xl font-semibold tracking-tight [overflow-wrap:anywhere]">{proxy.name}</h2>
                       <div className="text-xs leading-relaxed text-muted-foreground">Velocity · 端口 {proxy.port} · {backends.length + proxyCustoms.length} 个子服</div>
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                     <StatusBadge s={proxy} />
                     <ServerLifecycleButton server={proxy} onChanged={refresh} />
+                    <Button variant="outline" size="sm" className="gap-2" onClick={() => setConfigOpen(true)}><Settings2 className="h-4 w-4" />网络配置</Button>
                   </div>
                 </div>
 
-                <details className="border-b border-border/70">
-                  <summary className="cursor-pointer px-4 py-3 text-sm font-medium marker:text-muted-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary sm:px-5">网络配置 <span className="ml-2 text-xs font-normal text-muted-foreground">转发与接线 · joinMOTD</span></summary>
+                <Dialog open={configOpen} onOpenChange={setConfigOpen}>
+                  <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
+                    <DialogHeader><DialogTitle>网络配置 · {proxy.name}</DialogTitle><DialogDescription>管理转发密钥、接线与入服欢迎消息。</DialogDescription></DialogHeader>
                   <div className="space-y-5 px-4 pb-5 sm:px-5">
                     <section className="space-y-3 border-t border-border/70 pt-4">
                       <h3 className="text-sm font-medium">转发与接线</h3>
@@ -289,25 +306,27 @@ export default function ProxyNet() {
                       ))}
                     </section>
                   </div>
-                </details>
+                  </DialogContent>
+                </Dialog>
 
                 {/* 子服 */}
-                <div className="space-y-3 px-4 py-5 sm:px-5">
-                  <div className="space-y-1">
-                    <h3 className="text-sm font-semibold">子服 <span className="ml-1 font-normal text-muted-foreground">{backends.length + proxyCustoms.length}</span></h3>
-                    <p className="text-xs leading-relaxed text-muted-foreground">运行状态与接线配置分别展示；配置验证不代表实际连接正常。</p>
+                <div className="py-6">
+                  <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+                    <div className="space-y-1"><h3 className="text-sm font-semibold">子服 <span className="ml-1 font-normal text-muted-foreground">{backends.length + proxyCustoms.length}</span></h3>
+                    <p className="text-xs leading-relaxed text-muted-foreground">运行状态与接线配置分别展示；配置验证不代表实际连接正常。</p></div>
+                    <Button size="sm" className="gap-1.5" onClick={() => setAddOpen(true)}><Plus className="h-4 w-4" />添加子服</Button>
                   </div>
                   {backends.length === 0 && proxyCustoms.length === 0 ? (
-                    <p className="py-2 text-center text-xs text-muted-foreground">还没有子服。</p>
+                    <p className="rounded-lg border border-dashed py-16 text-center text-sm text-muted-foreground">尚未连接子服，添加托管实例或外部服务器以建立路由。</p>
                   ) : (
                     <>
                       {backends.map((b) => {
                         const res = results.find((r) => !r.custom && r.id === b.id)
                         return (
-                          <div key={b.id} className="space-y-3 rounded-lg border border-border/70 bg-background/60 px-3 py-3">
+                          <div key={b.id} className="space-y-2 border-b border-border/60 px-2 py-4 transition-colors hover:bg-muted/25">
                             <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center">
                               <div className="flex min-w-0 flex-1 items-start gap-2">
-                                <Plug className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                                <Server className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                                 <div className="min-w-0 space-y-1">
                                   <h4 className="break-words text-sm font-medium [overflow-wrap:anywhere]">{b.name}</h4>
                                   <p className="text-xs text-muted-foreground">{TYPE_LABEL[b.server_type] ?? b.server_type} · 端口 <span className="font-mono">{b.port}</span></p>
@@ -322,21 +341,21 @@ export default function ProxyNet() {
                               </div>
                             </div>
                             {res ? (
-                              <details className="border-t border-border/50 pt-2 text-xs">
+                              <details className="pl-6 text-xs">
                                 <summary className={cn('cursor-pointer rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary', res.status === 'ok' ? 'text-emerald-600 dark:text-emerald-400' : res.status === 'unsupported' ? 'text-amber-600 dark:text-amber-400' : 'text-destructive')}>
                                   {res.status === 'ok' ? '磁盘配置已验证' : res.status === 'unsupported' ? '暂不支持自动接线' : '接线配置需注意'}
-                                  <span className="ml-2 text-muted-foreground">详情</span>
+                                  <ArrowUpRight className="ml-1 inline h-3 w-3 text-muted-foreground" />
                                 </summary>
                                 <p className="mt-2 leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">{res.detail}</p>
                               </details>
-                            ) : <p className="border-t border-border/50 pt-2 text-xs text-muted-foreground">接线配置未验证</p>}
+                            ) : <p className="pl-6 text-xs text-muted-foreground">接线配置未验证</p>}
                           </div>
                         )
                       })}
                       {proxyCustoms.map((c) => {
                         const res = results.find((r) => r.custom && r.id === c.id)
                         return (
-                          <div key={`custom-${c.id}`} className="space-y-3 rounded-lg border border-dashed border-border/70 bg-background/40 px-3 py-3">
+                          <div key={`custom-${c.id}`} className="space-y-2 border-b border-border/60 px-2 py-4 transition-colors hover:bg-muted/25">
                             <div className="flex min-w-0 items-start gap-2">
                               <Globe className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                               <div className="min-w-0 flex-1 space-y-1">
@@ -348,16 +367,16 @@ export default function ProxyNet() {
                               </Button>
                             </div>
                             {res ? (
-                              <details className="border-t border-border/50 pt-2 text-xs">
+                              <details className="pl-6 text-xs">
                                 <summary className={cn('cursor-pointer rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary', res.status === 'skipped' ? 'text-sky-600 dark:text-sky-400' : res.status === 'ok' ? 'text-emerald-600 dark:text-emerald-400' : 'text-destructive')}>
                                   {res.status === 'skipped' ? '远端配置需手动确认' : res.status === 'ok' ? '代理路由已验证' : '代理路由需注意'}
-                                  <span className="ml-2 text-muted-foreground">详情</span>
+                                  <ArrowUpRight className="ml-1 inline h-3 w-3 text-muted-foreground" />
                                 </summary>
                                 <p className="mt-2 leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">{res.detail}</p>
                                 <p className="mt-1 text-muted-foreground">远端配置与运行状态未验证。</p>
                               </details>
                             ) : (
-                              <p className="border-t border-border/50 pt-2 text-xs text-muted-foreground">路由未验证；远端配置与运行状态未验证</p>
+                              <p className="pl-6 text-xs text-muted-foreground">路由未验证；远端配置与运行状态未验证</p>
                             )}
                           </div>
                         )
@@ -365,8 +384,9 @@ export default function ProxyNet() {
                     </>
                   )}
 
-                  <details className="border-t border-border/70 pt-3">
-                    <summary className="cursor-pointer rounded-sm text-sm font-medium marker:text-muted-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">添加子服</summary>
+                  <Dialog open={addOpen} onOpenChange={setAddOpen}>
+                    <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
+                      <DialogHeader><DialogTitle>添加子服</DialogTitle><DialogDescription>将已有实例或外部服务器加入 {proxy.name}。</DialogDescription></DialogHeader>
                     <div className="space-y-4 pt-4">
                       {/* 添加托管子服 */}
                       <h4 className="text-xs font-medium text-muted-foreground">托管子服</h4>
@@ -424,9 +444,10 @@ export default function ProxyNet() {
                         </div>
                       </div>
                     </div>
-                  </details>
+                    </DialogContent>
+                  </Dialog>
                 </div>
-              </PageSurface>
+              </section>
             )
           })}
         </div>

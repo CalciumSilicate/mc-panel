@@ -1,0 +1,6 @@
+"""Compatibility entry point for the complete Java 26.3 preview extractor."""
+from pathlib import Path
+import runpy
+
+if __name__ == '__main__':
+    runpy.run_path(str(Path(__file__).with_name('extract-preview-assets.py')), run_name='__main__')

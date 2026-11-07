@@ -1,0 +1,17 @@
+[Unit]
+Description=MC Panel MCDR Host
+After=network.target
+
+[Service]
+Type=simple
+User=mc-panel
+WorkingDirectory=/opt/mc-panel
+Environment=MCPANEL_DATA_DIR=/srv/mc-panel
+ExecStart=/opt/mc-panel/.venv/bin/python /opt/mc-panel/runtime.py run
+KillMode=mixed
+TimeoutStopSec=100
+# A crashed host may leave MCDR alive: inspect host.log instead of restart loops.
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

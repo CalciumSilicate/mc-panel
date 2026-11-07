@@ -90,7 +90,7 @@ def list_archives(_: str = Depends(require_auth), db: Session = Depends(get_db))
     return list(db.scalars(select(Archive).order_by(Archive.id.desc())).all())
 
 
-async def _do_create(server_id: int, filename: str, job_id: str, owner_user_id: int) -> None:
+async def _do_create(server_id: int, filename: str, job_id: str, owner_user_id: int, operator_name: str = "") -> None:
     db = SessionLocal()
     try:
         server = db.get(Server, server_id)
@@ -118,6 +118,7 @@ async def _do_create(server_id: int, filename: str, job_id: str, owner_user_id: 
             source_server_id=server_id,
             mc_version=mc_version or server.mc_version,
             owner_user_id=owner_user_id,
+            operator_name=operator_name,
         ))
         db.commit()
         jobstore.finish(job_id, filename)
@@ -133,7 +134,7 @@ async def create_from_server(
     server = _get_server(db, server_id)
     await _prepare_server(server, bool(body and body.force), user, "请先停止实例再创建存档")
     job_id = jobstore.create()
-    asyncio.create_task(_do_create(server_id, am.new_archive_filename(), job_id, user.id))
+    asyncio.create_task(_do_create(server_id, am.new_archive_filename(), job_id, user.id, user.username))
     return {"job_id": job_id}
 
 
@@ -163,6 +164,7 @@ async def upload_archive(
         name=base or name, filename=filename, size=len(content),
         source="uploaded", mc_version=detected or mc_version.strip(),
         owner_user_id=user.id,
+        operator_name=user.username,
     )
     db.add(rec)
     db.commit()

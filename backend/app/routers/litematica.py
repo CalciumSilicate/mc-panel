@@ -2,18 +2,53 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import re
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
+from PIL import Image
 
 from .. import litematica as lm
 from ..deps import require_helper
+from ..net import client
 
 router = APIRouter(prefix="/litematica", tags=["litematica"])
 
 _PARSE_TASKS: set = set()
+
+
+@router.get('/skins/{texture_hash}')
+async def skin(texture_hash: str, _: str = Depends(require_helper)) -> Response:
+    """Only official content-addressed skins; no user-controlled host/redirect."""
+    if not re.fullmatch(r'[0-9a-f]{32,64}', texture_hash):
+        raise HTTPException(400, '无效的皮肤纹理')
+    path = lm.DATA_DIR / 'download_cache' / 'preview_skins' / f'{texture_hash}.png'
+    if path.exists():
+        return FileResponse(path, media_type='image/png')
+    try:
+        async with client(timeout=10, follow_redirects=False) as http:
+            async with http.stream('GET', f'https://textures.minecraft.net/texture/{texture_hash}') as response:
+                response.raise_for_status()
+                content = bytearray()
+                async for chunk in response.aiter_bytes():
+                    content.extend(chunk)
+                    if len(content) > 1024 * 1024:
+                        raise ValueError('Skin too large')
+        def normalize():
+            image = Image.open(io.BytesIO(content))
+            if image.width > 1024 or image.height > 1024 or image.width < 16:
+                raise ValueError('Invalid skin dimensions')
+            image = image.convert('RGBA')
+            output = io.BytesIO()
+            image.save(output, format='PNG')
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(output.getvalue())
+            return output.getvalue()
+        return Response(await asyncio.to_thread(normalize), media_type='image/png')
+    except Exception as exc:
+        raise HTTPException(502, '皮肤暂时无法加载') from exc
 
 
 def _safe_name(name: str) -> str:
@@ -81,3 +116,15 @@ def delete(name: str, _: str = Depends(require_helper)) -> dict:
     p.unlink(missing_ok=True)
     lm._cache_file(p).unlink(missing_ok=True)
     return {"ok": True}
+
+
+@router.get("/{name}/preview")
+async def preview(name: str, layer: int | None = None, region: str | None = None,
+                  _: str = Depends(require_helper)) -> dict:
+    path = _path(name)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="文件不存在")
+    try:
+        return await asyncio.to_thread(lm.preview, path, layer, region)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"预览失败：{exc}") from exc

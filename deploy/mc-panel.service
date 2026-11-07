@@ -1,0 +1,16 @@
+[Unit]
+Description=MC Panel Website
+After=network.target mc-panel-runtime.service
+Requires=mc-panel-runtime.service
+
+[Service]
+Type=simple
+User=mc-panel
+WorkingDirectory=/opt/mc-panel
+Environment=MCPANEL_DATA_DIR=/srv/mc-panel
+ExecStart=/opt/mc-panel/.venv/bin/python /opt/mc-panel/run.py --no-build
+Restart=on-failure
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

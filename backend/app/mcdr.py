@@ -5,7 +5,7 @@
   - 启停:以子进程方式运行 ``python -m mcdreforged``,通过 stdin 发送 ``stop``
   - 状态:由文件系统标记 + 进程存活情况派生
 
-进程句柄保存在内存(单进程部署)。重启面板会丢失句柄,届时实例显示为 stopped。
+独立托管服务持有进程句柄；面板通过本机 IPC 获取状态与控制台，重启面板不停止实例。
 """
 from __future__ import annotations
 
@@ -231,6 +231,11 @@ def _serialized(method):
 
 class MCDRManager:
     def __init__(self) -> None:
+        self._runtime = None
+        self._runtime_task = None
+        self._runtime_cursor = 0
+        self._runtime_epoch = None
+        self._runtime_error = None
         # server_id -> asyncio subprocess
         self._procs: dict[int, asyncio.subprocess.Process] = {}
         self._locks: dict[int, asyncio.Lock] = {}
@@ -264,6 +269,82 @@ class MCDRManager:
         # 逐行钩子(如玩家绑定验证):每条输出行都会调用,异常被吞掉
         self.line_hook: "Callable[[int, str], None] | None" = None
 
+    async def connect_runtime(self, client=None) -> None:
+        from .runtime_client import RuntimeClient
+        self._shutting_down = False
+        self._runtime = client or RuntimeClient()
+        await self._runtime.ensure_started()
+        snapshot = await self._runtime.call('bootstrap')
+        self._apply_runtime_snapshot(snapshot)
+        history = snapshot['history']
+        for sid, lines in history.items():
+            self._buffers[int(sid)] = deque(lines, maxlen=_CONSOLE_BUFFER_LINES)
+        # Historical lines must not replay player commands or startup commands.
+        self._runtime_cursor = snapshot['sequence']
+        self._runtime_task = asyncio.create_task(self._watch_runtime())
+
+    def _apply_runtime_snapshot(self, snapshot):
+        from .runtime_client import RemoteProcess, RuntimeUnavailable
+        if self._runtime_epoch is not None and self._runtime_epoch != snapshot['epoch']:
+            self._runtime_cursor = snapshot['sequence']
+        self._runtime_epoch = snapshot['epoch']
+        if snapshot.get('stopping'):
+            raise RuntimeUnavailable('MCDR 托管服务正在停止，已阻止操作')
+        current = {}
+        for state in snapshot['processes']:
+            sid = state['id']
+            old = self._procs.get(sid)
+            if isinstance(old, RemoteProcess) and old.generation == state['generation']:
+                old.state = state
+                current[sid] = old
+            else:
+                current[sid] = RemoteProcess(self._runtime, state)
+            if state['ready']:
+                self._ready.add(sid)
+            else:
+                self._ready.discard(sid)
+            if state['needs_restart']:
+                self._needs_restart.add(sid)
+            else:
+                self._needs_restart.discard(sid)
+        self._procs = current
+        self._queued = set(snapshot['queued'])
+        self._runtime_error = None
+
+    def _refresh_runtime(self):
+        if self._runtime:
+            self._apply_runtime_snapshot(self._runtime.request('snapshot'))
+
+    async def _watch_runtime(self):
+        from .runtime_client import RuntimeUnavailable
+        while True:
+            try:
+                update = await self._runtime.call('events', after=self._runtime_cursor)
+                epoch = self._runtime_epoch
+                self._apply_runtime_snapshot(update)
+                if epoch != update['epoch']:
+                    history = await self._runtime.call('history')
+                    self._buffers = {int(sid): deque(lines, maxlen=_CONSOLE_BUFFER_LINES) for sid, lines in history.items()}
+                else:
+                    if update['oldest'] > self._runtime_cursor + 1:
+                        for sid in self._procs:
+                            self._append_line(sid, '[mc-panel] 重连期间部分实时日志已超过缓冲上限，请查看实例日志文件')
+                    for sequence, sid, line in update['events']:
+                        self._append_line(sid, line)
+                        self._runtime_cursor = sequence
+            except (RuntimeUnavailable, RuntimeError) as exc:
+                self._runtime_error = str(exc)
+            await asyncio.sleep(.25)
+
+    async def _runtime_action(self, action, server_id, **payload):
+        self._refresh_runtime()
+        proc = self._procs.get(server_id)
+        if proc is None:
+            return
+        result = await self._runtime.call(action, server_id=server_id, generation=proc.generation, **payload)
+        self._refresh_runtime()
+        return result
+
     # ---------- 路径 ----------
     def lifecycle_lock(self, server_id: int) -> asyncio.Lock:
         return self._locks.setdefault(server_id, asyncio.Lock())
@@ -285,12 +366,16 @@ class MCDRManager:
                 )
 
     def is_running(self, server_id: int) -> bool:
+        self._refresh_runtime()
         p = self._procs.get(server_id)
         return p is not None and p.returncode is None
 
     def mark_needs_restart(self, server_id: int) -> None:
         """运行中的实例被改了配置/模组时调用,标记为需要重启。"""
         if self.is_running(server_id):
+            if self._runtime:
+                proc = self._procs[server_id]
+                self._runtime.request('mark_restart', server_id=server_id, generation=proc.generation)
             self._needs_restart.add(server_id)
 
     def needs_restart(self, server_id: int) -> bool:
@@ -308,6 +393,7 @@ class MCDRManager:
 
     # ---------- 状态 ----------
     def get_status(self, server: Server) -> str:
+        self._refresh_runtime()
         inst = self.instance_dir(server)
         task = self._install_tasks.get(server.id)
         if server.id in self._install_procs or (task is not None and not task.done()):
@@ -496,12 +582,12 @@ class MCDRManager:
         buf = self._buffers.setdefault(server_id, deque(maxlen=_CONSOLE_BUFFER_LINES))
         buf.append(line)
         # 检测服务端加载完成,把状态从「启动中」翻成「运行中」
-        if server_id not in self._ready and "Done (" in line and _DONE_RE.search(line):
+        if not self._runtime and server_id not in self._ready and "Done (" in line and _DONE_RE.search(line):
             self._ready.add(server_id)
             cmds = self._startup_cmds.get(server_id) or []
             if cmds:
                 try:
-                    asyncio.get_running_loop().create_task(self._send_startup(server_id, cmds))
+                    asyncio.get_running_loop().create_task(self._send_startup(server_id, cmds, self._procs.get(server_id)))
                 except RuntimeError:
                     pass
         # 广播给订阅者(实时控制台)
@@ -517,9 +603,11 @@ class MCDRManager:
             except Exception:  # noqa: BLE001 - 钩子异常不能影响日志读取
                 pass
 
-    async def _send_startup(self, server_id: int, cmds: list[str]) -> None:
+    async def _send_startup(self, server_id: int, cmds: list[str], process=None) -> None:
         for c in cmds:
             await asyncio.sleep(1)
+            if process is not None and (self._procs.get(server_id) is not process or process.returncode is not None):
+                break
             try:
                 await self.send_raw(server_id, c)
             except Exception:  # noqa: BLE001
@@ -809,6 +897,13 @@ class MCDRManager:
         if (self._shutting_down or server.id in self._install_procs
                 or (task is not None and not task.done())):
             raise RuntimeError("安装中或面板正在关闭")
+        if self._runtime:
+            values = {column.name: getattr(server, column.name) for column in Server.__table__.columns}
+            # Dates are not needed by process control and are not JSON values.
+            values = {key: value for key, value in values.items() if value is None or isinstance(value, (str, int, float, bool))}
+            await self._runtime.call('start', server=values, python=python_executable, java=java_path, timeout=30)
+            self._refresh_runtime()
+            return
         inst = self.instance_dir(server)
         if not self._core_installed(server):
             raise RuntimeError("核心尚未安装完成")
@@ -867,6 +962,11 @@ class MCDRManager:
         await self.send_raw(server_id, command)
 
     async def send_raw(self, server_id: int, command: str) -> None:
+        if self._runtime:
+            if not self.is_running(server_id):
+                raise RuntimeError('实例未在运行')
+            await self._runtime_action('command', server_id, command=command)
+            return
         proc = self._procs.get(server_id)
         if proc is None or proc.returncode is not None or proc.stdin is None:
             raise RuntimeError("实例未在运行")
@@ -881,6 +981,9 @@ class MCDRManager:
         await self._stop(server)
 
     async def _stop(self, server: Server) -> None:
+        if self._runtime:
+            await self._runtime_action('stop', server.id)
+            return
         self._needs_restart.discard(server.id)
         proc = self._procs.get(server.id)
         if proc is None or proc.returncode is not None:
@@ -897,6 +1000,9 @@ class MCDRManager:
         await self._force_stop(server)
 
     async def _force_stop(self, server: Server) -> None:
+        if self._runtime:
+            await self._runtime_action('kill', server.id, timeout=30)
+            return
         """强杀:连同子进程(MCDR 派生的 Java 服务端)一起 kill。"""
         self._needs_restart.discard(server.id)
         proc = self._procs.get(server.id)
@@ -938,6 +1044,9 @@ class MCDRManager:
         return processes
 
     async def _reap_previous(self, server: Server) -> None:
+        if self._runtime:
+            await self._runtime_action('reap', server.id, timeout=30)
+            return
         proc = self._procs.get(server.id)
         if proc is not None:
             await self._kill_tree(proc)
@@ -969,6 +1078,9 @@ class MCDRManager:
         self._process_trees.pop(proc.pid, None)
 
     async def _drain(self, server: Server, timeout: float) -> None:
+        if self._runtime:
+            await self._runtime_action('drain', server.id, grace=timeout, timeout=timeout+30)
+            return
         proc = self._procs.get(server.id)
         if proc is None:
             return
@@ -984,12 +1096,20 @@ class MCDRManager:
         self._procs.pop(server.id, None)
 
     async def shutdown(self, servers: list[Server], timeout: float = 60) -> None:
-        """Drain instances concurrently before the container's SIGKILL deadline."""
+        """Panel disconnects; only the independent host drains running instances."""
         self._shutting_down = True
         await asyncio.gather(*(self.cancel_install(server) for server in servers
                                if server.id in self._install_tasks or server.id in self._install_procs))
         await asyncio.gather(*(self._cancel_install_task(server_id)
                                for server_id in set(self._install_tasks) | set(self._install_procs)))
+
+        if self._runtime:
+            if self._runtime_task:
+                self._runtime_task.cancel()
+                await asyncio.gather(self._runtime_task, return_exceptions=True)
+            self._procs.clear()
+            self._ready.clear()
+            return
 
         async def drain(server: Server) -> None:
             async with self.lifecycle_lock(server.id):

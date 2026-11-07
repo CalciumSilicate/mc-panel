@@ -149,6 +149,7 @@ export default function Archives() {
                   <TableHead>名称</TableHead>
                   <TableHead>版本</TableHead>
                   <TableHead>来源</TableHead>
+                  <TableHead>操作人</TableHead>
                   <TableHead>大小</TableHead>
                   <TableHead>创建时间</TableHead>
                   <TableHead className="text-right">操作</TableHead>
@@ -164,6 +165,7 @@ export default function Archives() {
                         {a.source === 'uploaded' ? '上传' : serverName(a.source_server_id)}
                       </Badge>
                     </TableCell>
+                    <TableCell className="text-sm">{a.operator_name || (a.owner_user_id ? `用户 #${a.owner_user_id}` : '未记录')}</TableCell>
                     <TableCell className="text-muted-foreground">{fmtSize(a.size)}</TableCell>
                     <TableCell className="text-muted-foreground">{new Date(a.created_at).toLocaleString()}</TableCell>
                     <TableCell className="text-right">

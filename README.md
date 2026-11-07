@@ -23,7 +23,7 @@ mc-panel/
 │   │   ├── mcdr.py     MCDR 实例生命周期(创建/启停/状态)
 │   │   ├── versions.py Mojang 版本清单 + 服务端 jar 下载
 │   │   └── routers/    auth / system(仪表盘) / servers / settings
-│   └── requirements.txt
+│   └── tests/
 ├── web/                React 前端(详见 web/README.md 的内核约定)
 │   └── src/
 │       ├── api/        system / servers / settings(网络细节关在这里)
@@ -33,7 +33,7 @@ mc-panel/
 
 ## 快速开始(统一入口)
 
-**Docker 部署：** 已提供 [Compose、GHCR 镜像构建和迁移说明](docs/docker.md)。面板与运行环境打包进镜像，实例/世界/数据库等通过宿主机目录挂载保存。
+**本机部署：** MCDR 由独立后台服务托管，重启或更新网站不会停止游戏服务器。首次迁移、后台服务管理和系统服务配置见 [独立托管说明](docs/runtime.md)。
 
 一条命令同时托管 API 与前端页面,无需分别启动前后端:
 
@@ -68,13 +68,13 @@ uv run python run.py
 3. 写入 `server/eula.txt`(`eula=true`)与 `server/server.properties`(端口等)
 4. 从 Mojang 官方源下载对应版本的 `server.jar` 到 `server/`(后台进行,期间状态为「安装中」)
 
-启动时以子进程运行 `<python> -m mcdreforged`(工作目录为实例目录),停止时向其 stdin 写入 `stop`。
+独立托管服务运行 `<python> -m mcdreforged`（工作目录为实例目录），网站通过带认证的本机接口发送启停及控制台指令。网站退出仅断开连接，托管服务和 MCDR 继续运行。
 
 ## 实例控制台
 
 在「服务器实例」列表点 ⌨ 图标打开控制台:
 
-- 实时日志:后端把子进程 stdout/stderr 捕获进内存环形缓冲(每实例最近 500 行),经 WebSocket `GET /api/servers/{id}/console` 推送;连接时先回放历史,再流式追加。
+- 实时日志:独立托管服务持续收集 stdout/stderr 并保留最近 500 行，网站重连后恢复历史，经 WebSocket `GET /api/servers/{id}/console` 推送;连接时先回放历史,再流式追加。
 - 发送命令:输入框回车 → `{"command": "..."}` 经同一 WebSocket 写入实例 stdin(实例运行中才可用)。
 - 鉴权:WebSocket 无法自定义请求头,token 经 query 参数 `?token=` 传递并校验。
 - 为保证 stdio 管道行为,实例 `config.yml` 关闭了 MCDR 的 `advanced_console`。
@@ -82,7 +82,7 @@ uv run python run.py
 ## 前置依赖
 
 - Python 3.14+(后端，以 pyproject.toml 为准)
-- Node.js 18+(前端)
+- Node.js 22.13+ / 24 / 26（与 web/package.json 一致）
 - 被启动的实例需要:目标 `python` 环境已安装 `mcdreforged`,以及可用的 `java`
 
 ### Java 自动选择
@@ -104,7 +104,7 @@ uv run python run.py
 uv run python run.py --build            # 构建前端并启动(:16824 同时提供页面与 API)
 ```
 
-如需反代,可单独跑 `uvicorn app.main:app --host 0.0.0.0 --port 16824 --workers 1`(前端产物须已 `npm run build`);此时前端由后端托管,Nginx 仅做反代与 TLS 即可。同源部署可收紧后端 CORS。必须单 worker：实例进程句柄保存在内存中，不能多进程或多副本同时管理同一个数据目录。
+如需反代,可单独跑 `uvicorn app.main:app --host 0.0.0.0 --port 16824 --workers 1`(前端产物须已 `npm run build`);此时前端由后端托管,Nginx 仅做反代与 TLS 即可。同源部署可收紧后端 CORS。网站仍使用单 worker：安装任务、聊天桥接和文件操作尚未做跨进程协调。独立托管服务对每个数据目录使用系统锁保证只有一个进程；不要同时运行多个网站副本管理同一数据目录。
 
 ## 数据备份与恢复(换电脑搬家)
 
@@ -120,8 +120,11 @@ uv run python backup.py create --out D:/网盘/mc-panel-backups
 uv run python backup.py list
 
 # 恢复(请先停止面板与所有实例;旧 data 会自动留底为 data.bak-<时间戳>)
+uv run python runtime.py stop --stop-instances
 uv run python backup.py restore mcpanel-backup-20260626-130542.zip
 ```
 
 - 备份目录优先级:`--out` > 环境变量 `MCPANEL_BACKUP_DIR` > 仓库同级的 `../mc-panel-backups`。
 - 恢复会校验是否本工具备份(认 `backup-info.json`),非法 zip 会被拒绝;恢复前把旧 `data/` 原子改名留底,不直接覆盖。
+
+托管命令：`uv run python runtime.py status` 查看状态，`uv run python runtime.py start` 单独启动，`uv run python runtime.py stop --stop-instances` 停止所有实例并退出托管。网站正常启动会自动连接或启动托管服务；网站更新只需重启 `run.py`。

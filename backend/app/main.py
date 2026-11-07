@@ -18,10 +18,10 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from .config import API_PORT, WEB_DIST, ensure_dirs
 from .database import SessionLocal, init_db
 from .deps import get_settings_row
-from .java import choose_java, detect_installs, get_java_paths
 from . import bridge, onebot, verification
 from .mcdr import manager
 from .models import Server
+from .runtime_client import RuntimeUnavailable
 from .routers import archives, auth, chat, configs, groups, jobs, litematica, modconfigs, mods, pb, players as players_router, plugins, servers, settings, system, tools, users
 from .routers import server_files as server_files_router
 from .routers import uploads as uploads_router
@@ -41,65 +41,6 @@ def _line_hook(server_id: int, line: str) -> None:
 manager.line_hook = _line_hook
 
 
-async def _autostart() -> None:
-    """面板启动时按优先级分组拉起 auto_start 实例:同级并行,全部就绪后再下一级。"""
-    import asyncio
-    from collections import defaultdict
-
-    db = SessionLocal()
-    try:
-        servers_to_start = list(db.scalars(select(Server).where(Server.auto_start.is_(True))).all())
-        if not servers_to_start:
-            return
-        sys_settings = get_settings_row(db)
-        installs = detect_installs(get_java_paths(sys_settings))
-        python = sys_settings.python_executable
-        java_cmd = sys_settings.java_command
-    finally:
-        db.close()
-
-    groups: dict[int, list] = defaultdict(list)
-    for s in servers_to_start:
-        groups[getattr(s, "autostart_priority", 0) or 0].append(s)
-    # 全部先标记为「队列中」
-    for s in servers_to_start:
-        manager._queued.add(s.id)
-
-    async def _wait_ready(started: list, timeout: float = 300.0) -> None:
-        deadline = asyncio.get_event_loop().time() + timeout
-        while asyncio.get_event_loop().time() < deadline:
-            pending = [s for s in started if manager.is_running(s.id) and s.id not in manager._ready]
-            if not pending:
-                return
-            await asyncio.sleep(2)
-
-    print("[autostart] groups: " + ", ".join(f"prio{p}={[s.name for s in groups[p]]}" for p in sorted(groups)), flush=True)
-    try:
-        for prio in sorted(groups):
-            print(f"[autostart] starting prio {prio}: {[s.name for s in groups[prio]]}", flush=True)
-            started = []
-            for s in groups[prio]:
-                manager._queued.discard(s.id)
-                if manager.get_status(s) != "stopped":
-                    continue
-                if s.java_path_override:
-                    java_path = s.java_path_override
-                else:
-                    java_path, err = choose_java(s.mc_version, installs, java_cmd)
-                    if err:
-                        continue
-                try:
-                    await manager.start(s, python, java_path)
-                    started.append(s)
-                except Exception:  # noqa: BLE001 - 单实例失败不影响其它
-                    pass
-            await _wait_ready(started)
-            print(f"[autostart] prio {prio} all ready", flush=True)
-    finally:
-        for s in servers_to_start:
-            manager._queued.discard(s.id)
-
-
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     import asyncio
@@ -108,7 +49,7 @@ async def lifespan(_: FastAPI):
     from . import pb as pb_mod
     from . import plugin_scan
 
-    autostart_task = asyncio.create_task(_autostart())
+    await manager.connect_runtime()
     # 启动 QQ 互通客户端(OneBot 正向 ws)
     db = SessionLocal()
     try:
@@ -125,17 +66,17 @@ async def lifespan(_: FastAPI):
     try:
         yield
     finally:
-        tasks = (autostart_task, scan_task, pb_task, mod_task, host_task, upload_cleanup_task)
+        tasks = (scan_task, pb_task, mod_task, host_task, upload_cleanup_task)
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         await uploads.shutdown()
-        # Docker stop sends SIGTERM: save worlds before its grace period expires.
+        # Disconnect only: MCDR processes belong to the independent host.
 
         with SessionLocal() as db:
             instances = list(db.scalars(select(Server)).all())
         await manager.shutdown(instances)
-        print("[shutdown] Instance shutdown complete", flush=True)
+        print("[shutdown] Panel disconnected; hosted instances continue running", flush=True)
 
 
 app = FastAPI(title="mc-panel API", lifespan=lifespan)
@@ -226,3 +167,8 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+@app.exception_handler(RuntimeUnavailable)
+async def runtime_unavailable_handler(request: Request, exc: RuntimeUnavailable):
+    return JSONResponse(status_code=503, content={"error": str(exc)})

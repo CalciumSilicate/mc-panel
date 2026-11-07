@@ -10,6 +10,7 @@ export interface Archive {
   source_server_id: number | null
   mc_version: string
   owner_user_id: number | null
+  operator_name: string
   created_at: string
 }
 

@@ -1,47 +1,41 @@
-﻿# dev.ps1 - 一键启动 mc-panel(后端+前端),日志必落盘
-$repo = $PSScriptRoot; if (-not $repo) { $repo = (Get-Location).Path }
-New-Item -ItemType Directory -Force "$repo\logs" | Out-Null
-Start-Transcript -Path "$repo\logs\launcher.log" -Force | Out-Null
-try {
-  $uv = (Get-Command uv -ErrorAction SilentlyContinue).Source;  if (-not $uv)  { $uv  = "C:\Users\89366\.local\bin\uv.exe" }
-  $npm = (Get-Command npm.cmd -ErrorAction SilentlyContinue).Source; if (-not $npm) { $npm = "npm.cmd" }
-  Write-Host "repo=$repo"; Write-Host "uv=$uv"; Write-Host "npm=$npm"
-  # 用 localhost 而非 127.0.0.1:vite 可能只绑 IPv6 的 ::1,只探 IPv4 会误判没起而重复拉起
-  function Test-Port($p){ try{ $c=New-Object Net.Sockets.TcpClient; $c.Connect('localhost',$p); $c.Close(); $true }catch{ $false } }
-
-  if (Test-Port 16824) { Write-Host "[skip] 后端 16824 已在运行" -ForegroundColor Yellow }
-  else {
-    $env:PYTHONPATH = "$repo\backend"
-    # 用 watchfiles 包一层「无 --reload 的 uvicorn」来实现热重载:
-    # Windows 上 uvicorn 的 --reload 会强制 SelectorEventLoop,而它无法 create_subprocess_exec,
-    # 导致启动 MCDR 实例时抛空异常(前端见 {"error":""})。无 --reload 的 uvicorn 用 ProactorEventLoop,
-    # 可正常拉起子进程;watchfiles 负责监听 backend/ 改动后重启,兼得热重载与子进程管理。
-    # ArgumentList 用单字符串,避免数组拼接时丢引号(否则 --port 16824 会被 watchfiles 吃掉)
-    $be = Start-Process -FilePath $uv -ArgumentList 'run watchfiles --filter python --target-type command "uvicorn app.main:app --port 16824" backend' `
-      -WorkingDirectory $repo -PassThru -WindowStyle Hidden `
-      -RedirectStandardOutput "$repo\logs\backend.out.log" -RedirectStandardError "$repo\logs\backend.err.log"
-    Write-Host "后端已启动 PID=$($be.Id)  日志: logs\backend.err.log" -ForegroundColor Cyan
-  }
-
-  if (Test-Port 5278) { Write-Host "[skip] 前端 5278 已在运行" -ForegroundColor Yellow }
-  else {
-    $fe = Start-Process -FilePath $npm -ArgumentList 'run','dev' `
-      -WorkingDirectory "$repo\web" -PassThru -WindowStyle Hidden `
-      -RedirectStandardOutput "$repo\logs\frontend.out.log" -RedirectStandardError "$repo\logs\frontend.err.log"
-    Write-Host "前端已启动 PID=$($fe.Id)  日志: logs\frontend.out.log" -ForegroundColor Cyan
-  }
-
-  Write-Host -NoNewline "等待前端就绪 "
-  for ($i=0; $i -lt 60; $i++){ if (Test-Port 5278){ break }; Start-Sleep -Milliseconds 500; Write-Host -NoNewline "." }
-  Write-Host ""
-  if (Test-Port 5278) { Start-Process "http://localhost:5278"; Write-Host "OK -> http://localhost:5278 (密码 admin)" -ForegroundColor Green }
-  else { Write-Host "前端 30s 没起,看 logs\frontend.err.log / frontend.out.log" -ForegroundColor Yellow }
-
-  if (Test-Port 16824) { Write-Host "后端健康: 16824 在监听" -ForegroundColor Green }
-  else { Write-Host "后端没起,看 logs\backend.err.log" -ForegroundColor Yellow }
-} catch {
-  Write-Host "[启动器异常] $_" -ForegroundColor Red
-} finally {
-  Stop-Transcript | Out-Null
+# Start development website and connect the independent MCDR host.
+$ErrorActionPreference = 'Stop'
+$repo = $PSScriptRoot
+$python = Join-Path $repo '.venv\Scripts\python.exe'
+if (-not (Test-Path -LiteralPath $python)) { throw 'Run uv sync first.' }
+$npm = (Get-Command npm.cmd -ErrorAction Stop).Source
+$apiPort = if ($env:MCPANEL_API_PORT) { [int]$env:MCPANEL_API_PORT } else { 16824 }
+$env:PYTHONPATH = Join-Path $repo 'backend'
+$env:PYTHONUTF8 = '1'
+$env:PATH = (Join-Path $repo '.venv\Scripts') + ';' + $env:PATH
+$logDir = Join-Path $repo 'logs'
+New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+$statePath = Join-Path $logDir 'dev-processes.json'
+$records = @()
+if (Test-Path -LiteralPath $statePath) { $records = @(Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json) }
+function Test-Port([int]$port) {
+    try { $socket = New-Object Net.Sockets.TcpClient; $socket.Connect('localhost', $port); $socket.Close(); return $true }
+    catch { return $false }
 }
-Write-Host "服务在后台运行(隐藏窗口),日志在 logs\ 下。停止请运行 stop.cmd。"
+function Save-Process($process, $kind) {
+    $entry = Get-CimInstance Win32_Process -Filter "ProcessId=$($process.Id)"
+    $script:records += @{ pid = $entry.ProcessId; created = $entry.CreationDate.ToUniversalTime().ToString('o'); kind = $kind }
+    ConvertTo-Json -InputObject @($script:records) | Set-Content -LiteralPath $statePath -Encoding utf8
+}
+& $python (Join-Path $repo 'runtime.py') start
+if ($LASTEXITCODE -ne 0) { throw 'MCDR host failed to start. Check data/runtime/host.log.' }
+if (Test-Port $apiPort) {
+    Write-Host "Port $apiPort is already listening; backend was not started."
+} else {
+    $arguments = '-m watchfiles --filter python --target-type command "uvicorn app.main:app --host 127.0.0.1 --port ' + $apiPort + '" backend'
+    $backend = Start-Process -FilePath $python -ArgumentList $arguments -WorkingDirectory $repo -PassThru -WindowStyle Hidden -RedirectStandardOutput "$logDir\backend.out.log" -RedirectStandardError "$logDir\backend.err.log"
+    Save-Process $backend 'backend'
+}
+if (Test-Port 5278) {
+    Write-Host 'Port 5278 is already listening; frontend was not started.'
+} else {
+    $frontend = Start-Process -FilePath $npm -ArgumentList 'run dev -- --strictPort' -WorkingDirectory (Join-Path $repo 'web') -PassThru -WindowStyle Hidden -RedirectStandardOutput "$logDir\frontend.out.log" -RedirectStandardError "$logDir\frontend.err.log"
+    Save-Process $frontend 'frontend'
+}
+Write-Host "Website: http://localhost:5278  API: http://localhost:$apiPort"
+Write-Host 'stop.cmd stops only the recorded website processes. MCDR remains running.'

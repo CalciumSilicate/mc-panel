@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Box, Download, Info, Loader2, Trash2, Upload } from 'lucide-react'
 
 import { ApiError } from '@/api/client'
@@ -11,13 +11,14 @@ import {
   listLitematica,
   uploadLitematica,
 } from '@/api/litematica'
+import { LitematicaViewer } from '@/components/LitematicaViewer'
 import { InlineLoader } from '@/components/PageLoader'
 import { Pagination } from '@/components/Pagination'
 import { usePaged } from '@/lib/use-paged'
 import { PageShell, PageSurface } from '@/components/layout/PageScaffold'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { useConfirm } from '@/components/ui/dialog-context'
 import { useGlobalToast } from '@/components/ui/use-global-toast'
 import { useResource } from '@/lib/use-resource'
@@ -37,11 +38,16 @@ const blockName = (id: string) => id.replace(/^minecraft:/, '').replace(/_/g, ' 
 export default function Litematica() {
   const { showToast } = useGlobalToast()
   const confirm = useConfirm()
-  const { data: files, loading, refresh } = useResource(() => listLitematica(), [])
+  const { data: files, loading, error, refresh } = useResource(() => listLitematica(), [])
   const [busy, setBusy] = useState<string | null>(null)
   const [info, setInfo] = useState<{ name: string; data: LitematicaInfo } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const paged = usePaged(files ?? [], 20)
+  useEffect(() => {
+    if (!files?.some(file => !file.info)) return
+    const timer = window.setInterval(refresh, 5000)
+    return () => window.clearInterval(timer)
+  }, [files, refresh])
 
   const onUpload = async (file: File) => {
     setBusy('upload')
@@ -84,8 +90,8 @@ export default function Litematica() {
   return (
     <PageShell
       title="Litematica 投影"
-      description="管理投影与材料清单"
-      width="5xl"
+      description="三维预览、分层查看与材料清单"
+      width="7xl"
       actions={
         <>
           <input ref={fileRef} type="file" accept=".litematic" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) onUpload(f) }} />
@@ -95,6 +101,7 @@ export default function Litematica() {
         </>
       }
     >
+      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       <PageSurface bodyClassName="p-0">
         {loading ? (
           <div className="py-10"><InlineLoader /></div>
@@ -115,15 +122,15 @@ export default function Litematica() {
                 {paged.pageItems.map((f) => (
                   <TableRow key={f.name}>
                     <TableCell className="font-medium">
-                      <span className="flex items-center gap-2"><Box className="h-4 w-4 shrink-0 text-muted-foreground" />{f.name}</span>
+                      <button type="button" className="flex items-center gap-2 text-left hover:text-primary" onClick={() => showInfo(f)} disabled={busy === f.name}><Box className="h-4 w-4 shrink-0 text-muted-foreground" />{f.name}</button>
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground">
-                      {f.info ? `${f.info.size.join('×')} · ${f.info.total_blocks.toLocaleString()} 方块` : '解析中…'}
+                      {f.info ? `${f.info.size.join('×')} · ${f.info.total_blocks.toLocaleString()} 方块` : '待解析 · 点击查看'}
                     </TableCell>
                     <TableCell className="text-right font-mono text-xs text-muted-foreground">{fmtBytes(f.size_bytes)}</TableCell>
                     <TableCell>
                       <div className="flex items-center justify-end gap-1.5">
-                        <Button type="button" variant="ghost" size="icon" className="h-8 w-8" title="信息/材料" disabled={busy === f.name} onClick={() => showInfo(f)}>
+                        <Button type="button" variant="ghost" size="icon" className="h-8 w-8" title="预览与材料" aria-label={`预览 ${f.name}`} disabled={busy === f.name} onClick={() => showInfo(f)}>
                           {busy === f.name ? <Loader2 className="h-4 w-4 animate-spin" /> : <Info className="h-4 w-4" />}
                         </Button>
                         <Button type="button" variant="ghost" size="icon" className="h-8 w-8" title="下载" onClick={() => downloadLitematica(f.name)}>
@@ -145,14 +152,16 @@ export default function Litematica() {
 
       {/* 信息/材料 */}
       <Dialog open={info !== null} onOpenChange={(o) => (!o ? setInfo(null) : undefined)}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>{info?.name}</DialogTitle></DialogHeader>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-6xl">
+          <DialogHeader><DialogTitle>{info?.name}</DialogTitle><DialogDescription>查看投影结构、分层细节和所需材料。</DialogDescription></DialogHeader>
           {info ? (
-            <div className="space-y-3">
-              <div className="text-sm text-muted-foreground">
+            <div className="grid min-w-0 gap-6 lg:grid-cols-[minmax(0,1fr)_260px]">
+              <LitematicaViewer key={info.name} name={info.name} />
+              <aside className="min-w-0 space-y-3 lg:border-l lg:pl-5"><h3 className="text-sm font-semibold">材料清单</h3>
+              <div className="text-xs text-muted-foreground">
                 尺寸 {info.data.size.join(' × ')} · 区域 {info.data.regions} · 方块 {info.data.total_blocks.toLocaleString()}
               </div>
-              <div className="max-h-72 space-y-0.5 overflow-y-auto rounded-lg border border-border/60 p-2">
+              <div className="max-h-[480px] space-y-0.5 overflow-y-auto">
                 {info.data.materials.map((m) => (
                   <div key={m.id} className="flex items-center justify-between px-2 py-1 text-sm">
                     <span className="truncate capitalize">{blockName(m.id)}</span>
@@ -160,6 +169,7 @@ export default function Litematica() {
                   </div>
                 ))}
               </div>
+              </aside>
             </div>
           ) : null}
         </DialogContent>

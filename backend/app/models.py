@@ -149,6 +149,7 @@ class Archive(Base):
     mc_version: Mapped[str] = mapped_column(String(64), default="")
     # 上传/创建者用户 id;user 角色只能管理自己的存档
     owner_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    operator_name: Mapped[str] = mapped_column(String(120), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 

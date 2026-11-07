@@ -1,18 +1,28 @@
-# 停止 mc-panel 开发服务(后端 watchfiles+uvicorn 整树 + 前端 vite)。
-# 不动被托管的 MCDR 实例(停面板不等于关游戏服)。
-
-# 1) 后端:按命令行匹配 mc-panel 的 watchfiles / uvicorn,连子进程一起杀(整树)
-Get-CimInstance Win32_Process | Where-Object {
-  $_.Name -in @('watchfiles.exe', 'uvicorn.exe', 'python.exe') -and
-  $_.CommandLine -match 'mc-panel.*(watchfiles|uvicorn|app\.main)'
-} | ForEach-Object {
-  try { taskkill /F /T /PID $_.ProcessId 2>$null | Out-Null; Write-Host "已停止后端 PID$($_.ProcessId)" } catch {}
+# Stop only website processes recorded by dev.ps1. Never kill by port or kill a whole tree.
+$ErrorActionPreference = 'Stop'
+$statePath = Join-Path $PSScriptRoot 'logs\dev-processes.json'
+if (-not (Test-Path -LiteralPath $statePath)) {
+    Write-Host 'No recorded development website processes. MCDR host left running.'
+    return
 }
-
-# 2) 端口兜底:仍在监听 16824 / 5278 的进程(前端 vite 等)
-foreach ($p in 16824, 5278) {
-  Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue | ForEach-Object {
-    try { Stop-Process -Id $_.OwningProcess -Force; Write-Host "已停止 端口$p PID$($_.OwningProcess)" } catch {}
-  }
+$records = @(Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json)
+$processes = @(Get-CimInstance Win32_Process)
+function Stop-WebsiteBranch($process) {
+    # Exclude host/instance subtrees even if a previous launcher attached them here.
+    if ($process.CommandLine -match 'app\.runtime_host|runtime\.py|mcdreforged' -or $process.Name -match '^java(w)?\.exe$') { return }
+    $current = Get-CimInstance Win32_Process -Filter "ProcessId=$($process.ProcessId)" -ErrorAction SilentlyContinue
+    if ($current -and $current.CreationDate -eq $process.CreationDate) {
+        Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+        Write-Host "Stopped website PID $($process.ProcessId)"
+    }
+    # Stop the watcher before its children so it cannot spawn replacements.
+    foreach ($child in $processes | Where-Object { $_.ParentProcessId -eq $process.ProcessId -and $_.CreationDate -ge $process.CreationDate }) {
+        Stop-WebsiteBranch $child
+    }
 }
-Write-Host "done"
+foreach ($record in $records) {
+    $process = $processes | Where-Object { $_.ProcessId -eq $record.pid }
+    if ($process -and $process.CreationDate.ToUniversalTime().ToString('o') -eq $record.created) { Stop-WebsiteBranch $process }
+}
+Remove-Item -LiteralPath $statePath
+Write-Host 'Website stopped. MCDR host and game instances remain running.'

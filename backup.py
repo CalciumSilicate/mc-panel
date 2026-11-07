@@ -109,7 +109,7 @@ def cmd_create(args) -> int:
         print(f"✗ 数据目录不存在:{data_dir}")
         return 1
 
-    excludes: set[str] = set() if args.include_cache else set(DEFAULT_EXCLUDES)
+    excludes: set[str] = {'runtime'} | (set() if args.include_cache else set(DEFAULT_EXCLUDES))
     out_dir = resolve_backup_dir(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -219,6 +219,23 @@ def cmd_restore(args) -> int:
         return 1
 
     data_dir = config.DATA_DIR
+    # The host can remain alive after the website has stopped. --yes must never
+    # bypass this check or restore worlds underneath running MCDR processes.
+    from app.runtime_client import HostLock, RuntimeUnavailable
+    if (data_dir / 'runtime').exists():
+        try:
+            lock = HostLock(data_dir / 'runtime')
+        except RuntimeUnavailable:
+            print('请先执行 python runtime.py stop --stop-instances，托管服务运行时无法恢复。')
+            return 1
+        try:
+            from app.runtime_host import RuntimeHost
+            RuntimeHost(data_dir / 'runtime').check_orphans()
+        except RuntimeError as exc:
+            print(f'无法恢复：{exc}')
+            return 1
+        finally:
+            lock.close()
     print(f"准备恢复:{archive.name}")
     print(
         f"  备份时间 {info.get('created_at', '?')} | 实例 {len(info.get('servers', []))} 个 | "
@@ -229,8 +246,7 @@ def cmd_restore(args) -> int:
     # 面板可能在跑 —— 占用 db/secret 会导致恢复失败或脏数据
     if _port_in_use(config.API_PORT):
         print(f"⚠ 端口 {config.API_PORT} 被占用,面板可能正在运行。请先停止面板与所有实例再恢复。")
-        if not args.yes:
-            return 1
+        return 1
 
     data_nonempty = data_dir.exists() and any(data_dir.iterdir())
     if data_nonempty:
@@ -259,6 +275,8 @@ def cmd_restore(args) -> int:
         t0 = time.time()
         for m in members:
             rel = m.filename[len(prefix):]
+            if Path(rel).parts and Path(rel).parts[0] == 'runtime':
+                continue  # Never restore machine-local tokens, locks or PID records.
             dest = (data_dir / rel).resolve()
             # 防 zip-slip:解包目标必须仍在 data_dir 内
             if dest != data_root and data_root not in dest.parents:

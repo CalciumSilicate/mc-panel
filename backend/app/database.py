@@ -70,6 +70,7 @@ _COLUMN_MIGRATIONS = {
     },
     "archives": {
         "owner_user_id": "INTEGER",
+        "operator_name": "VARCHAR(120) NOT NULL DEFAULT ''",
     },
     "users": {
         "session_id": "VARCHAR(64) NOT NULL DEFAULT ''",
@@ -96,4 +97,9 @@ def _migrate_columns() -> None:
         conn.execute(text(
             "UPDATE users SET session_id = lower(hex(randomblob(32))) "
             "WHERE session_id IS NULL OR session_id = ''"
+        ))
+
+        conn.execute(text(
+            "UPDATE archives SET operator_name = COALESCE((SELECT username FROM users "
+            "WHERE users.id = archives.owner_user_id), '') WHERE operator_name = ''"
         ))
