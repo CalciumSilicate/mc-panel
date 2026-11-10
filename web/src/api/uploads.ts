@@ -128,3 +128,37 @@ export async function uploadFile(file: File, target: UploadTarget, onProgress: (
   await apiRequest(`/uploads/${state.id}`, { method: 'DELETE' }).catch(() => {})
   return state
 }
+
+export interface LocalDirectories { path: string; parent: string | null; directories: {name: string; path: string}[] }
+export function browseServerDirectories(path: string, signal?: AbortSignal): Promise<LocalDirectories> {
+  return apiRequest(`/uploads/local-directories?${new URLSearchParams({path})}`, {signal})
+}
+export function getTransfer(id: string, signal?: AbortSignal): Promise<UploadState> {
+  return apiRequest(`/uploads/${id}`, {signal})
+}
+export async function waitTransfer(state: UploadState, onProgress: (state: UploadState) => void, signal: AbortSignal): Promise<UploadState> {
+  onProgress(state)
+  while(state.status === 'processing') {
+    await delay(750, signal)
+    state = await getTransfer(state.id, signal)
+    onProgress(state)
+  }
+  if(state.status === 'error') throw new Error(state.message || '处理失败')
+  return state
+}
+export function importServerSource(source: 'url' | 'local', value: string): Promise<UploadState> {
+  return apiRequest('/uploads/import', {method:'POST',body:JSON.stringify({source,...(source==='url'?{url:value}:{path:value})})})
+}
+export function exportServerPackage(serverId: number): Promise<UploadState> {
+  return apiRequest(`/uploads/export/${serverId}`, {method:'POST'})
+}
+export async function downloadServerPackage(id: string): Promise<void> {
+  const {url} = await apiRequest<{url:string}>(`/uploads/${id}/download-link`, {method:'POST'})
+  // Browser streams directly to disk; never buffer a complete server ZIP in JS.
+  const anchor=document.createElement('a')
+  anchor.href=url
+  anchor.download=''
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+}

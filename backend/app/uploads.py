@@ -84,8 +84,10 @@ def create(payload: dict, user_id: int) -> dict:
             _, expected = server_files.upload_target(server, payload["directory"], payload["name"])
             if expected is not None and not payload.get("overwrite"):
                 raise HTTPException(409, "已存在同名文件，请勾选替换同名文件")
-    elif not payload["name"].lower().endswith(".zip"):
-        raise HTTPException(400, "服务器包仅支持 ZIP")
+    else:
+        from .server_import import PACKAGE_EXTENSIONS
+        if not payload['name'].lower().endswith(PACKAGE_EXTENSIONS):
+            raise HTTPException(400, '支持 ZIP、RAR、7Z、TAR.GZ、TAR 格式')
     with _guard:
         # Bound abandoned sessions and disk usage; expired sessions are cleaned
         # by the lifecycle worker, not while accepting a request.
@@ -170,6 +172,43 @@ async def _run(uid: str) -> None:
         await asyncio.to_thread(process, uid)
     finally:
         _tasks.pop(uid, None)
+
+
+async def _export(uid: str, server) -> None:
+    from .mcdr import manager
+    from .server_export import export_server
+    try:
+        async with manager.lifecycle_lock(server.id):
+            if manager.get_status(server) not in ('stopped', 'error', 'new_setup') or manager.is_running(server.id):
+                raise HTTPException(409, '请先停止服务器再整包导出')
+            task=asyncio.create_task(asyncio.to_thread(export_server,server,folder(uid)/'export.zip',lambda *args:progress(uid,*args)))
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                await task  # Keep the lifecycle lock until all reads finish.
+                raise
+            with _guard:
+                state=read(uid)
+                state.update(status='done',stage='可下载',size=(folder(uid)/'export.zip').stat().st_size)
+                save(state)
+    except Exception as exc:
+        with _guard:
+            state=read(uid)
+            state.update(status='error',stage='失败',message=str(exc.detail) if isinstance(exc,HTTPException) else str(exc))
+            save(state)
+        (folder(uid)/'export.zip').unlink(missing_ok=True)
+    finally:
+        _tasks.pop(uid,None)
+
+
+def export(server, user_id: int) -> dict:
+    state=create(dict(kind='export',name=f'server-{server.id}.zip',size=0,server_id=server.id),user_id)
+    with _guard:
+        state=read(state['id'])
+        state.update(status='processing',stage='准备导出')
+        save(state)
+        _tasks[state['id']]=asyncio.create_task(_export(state['id'],server))
+    return public(state)
 
 
 def complete(uid: str, user_id: int) -> dict:

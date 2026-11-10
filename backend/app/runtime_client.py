@@ -80,7 +80,7 @@ class RuntimeClient:
     async def call(self, action: str, **payload):
         return await asyncio.to_thread(self.request, action, **payload)
 
-    async def ensure_started(self):
+    async def ensure_started(self, *, autostart: bool = True):
         try:
             return await self.call('snapshot')
         except RuntimeIncompatible:
@@ -90,7 +90,8 @@ class RuntimeClient:
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         # Each candidate acquires the OS lock before touching endpoint/state files.
         env = {**os.environ, 'MCPANEL_DATA_DIR': str(self.data_dir),
-               'PYTHONPATH': str(PROJECT_ROOT / 'backend'), 'PYTHONUTF8': '1'}
+               'PYTHONPATH': str(PROJECT_ROOT / 'backend'), 'PYTHONUTF8': '1',
+               'MCPANEL_RUNTIME_AUTOSTART': '1' if autostart else '0'}
         options = {'start_new_session': True} if os.name != 'nt' else {
             'creationflags': subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
         }

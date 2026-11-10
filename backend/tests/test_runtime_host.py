@@ -28,7 +28,15 @@ class RuntimeHostTests(unittest.IsolatedAsyncioTestCase):
         (self.inst / 'server' / 'server.jar').touch()
         (self.inst / 'config.yml').write_text('start_command: [java, -jar, server.jar]\n', encoding='utf-8')
         # Simulate MCDR owning a Java child, stdout and a command input pipe.
-        (self.inst / 'mcdreforged.py').write_text('''import subprocess, sys, time
+        package = self.inst / 'mcdreforged'
+        (package / 'logging').mkdir(parents=True)
+        (package / '__init__.py').touch()
+        (package / 'logging/__init__.py').touch()
+        (package / 'logging/logger.py').write_text('ZippingDayRotatingFileHandler = object\n')
+        (package / 'executor').mkdir()
+        (package / 'executor/__init__.py').touch()
+        (package / 'executor/console_handler.py').write_text('class ConsoleHandler:\n    def loop(self): pass\n')
+        (package / '__main__.py').write_text('''import subprocess, sys, time
 child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(300)'])
 print('CHILD ' + str(child.pid), flush=True)
 time.sleep(.3)
@@ -197,6 +205,21 @@ asyncio.run(main())
                 with self.assertRaises(RuntimeIncompatible):
                     await self.client.ensure_started()
                 spawn.assert_not_called()
+
+    async def test_crashed_idle_host_recovers_without_panel_restart(self):
+        manager = await self.panel()
+        old_epoch = manager._runtime_epoch
+        try:
+            self.host_process.kill()
+            await asyncio.to_thread(self.host_process.wait, 5)
+            async def recovered():
+                return manager._runtime_epoch != old_epoch and manager._runtime_error is None
+            await self.wait_for(recovered)
+            endpoint = json.loads((self.client.root / 'endpoint.json').read_text())
+            self.host_process = psutil.Process(endpoint['pid'])
+            self.assertEqual((await self.client.call('snapshot'))['processes'], [])
+        finally:
+            await manager.shutdown([self.server])
 
     async def test_orphan_records_prevent_duplicate_hosting(self):
         from app.runtime_host import RuntimeHost

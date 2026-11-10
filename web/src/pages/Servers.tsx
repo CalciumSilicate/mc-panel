@@ -53,6 +53,7 @@ import { Label } from '@/components/ui/label'
 import { ServerConsoleDialog } from '@/components/ServerConsoleDialog'
 import { ServerFilesDialog } from '@/components/ServerFilesDialog'
 import { ServerImportDialog } from '@/components/ServerImportDialog'
+import { ServerExportDialog } from '@/components/ServerExportDialog'
 import { ServerLifecycleButton } from '@/components/ServerLifecycleButton'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
@@ -267,6 +268,7 @@ export default function Servers() {
   const { showToast } = useGlobalToast()
   const [createOpen, setCreateOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
+  const [exportServer, setExportServer] = useState<ServerSummary | null>(null)
   const [manageGroupsOpen, setManageGroupsOpen] = useState(false)
   const [busyId, setBusyId] = useState<number | null>(null)
   const [consoleServer, setConsoleServer] = useState<ServerSummary | null>(null)
@@ -366,7 +368,7 @@ export default function Servers() {
           ) : null}
           {canAdmin ? (
             <Button type="button" variant="outline" className="gap-2" onClick={() => setImportOpen(true)}>
-              <Download className="h-4 w-4" />导入服务器包
+              <Download className="h-4 w-4" />导入服务器
             </Button>
           ) : null}
           {canAdmin ? (
@@ -495,6 +497,7 @@ export default function Servers() {
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center justify-end gap-1.5">
+                            {canAdmin ? <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" title="整包导出" aria-label="整包导出" disabled={!['stopped','error','new_setup'].includes(server.status)} onClick={() => setExportServer(server)}><Download className="h-4 w-4" /></Button> : null}
                             {canAdmin ? <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" title="浏览服务器文件" aria-label="浏览服务器文件" onClick={() => setFilesServer(server)}><FolderOpen className="h-4 w-4" /></Button> : null}
                             {canAdmin ? <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" title="编辑开服自动执行指令" aria-label="编辑开服自动执行指令" disabled={installing} onClick={() => { setCommandsServer(server); setCommandsDraft((server.startup_commands ?? []).join('\n')) }}><MessageSquare className="h-4 w-4" /></Button> : null}
                             {canAdmin ? (
@@ -631,6 +634,7 @@ export default function Servers() {
         server={data?.find((s) => s.id === filesServer.id) ?? filesServer}
         onClose={() => setFilesServer(null)} /> : null}
       {importOpen && canAdmin ? <ServerImportDialog onClose={() => setImportOpen(false)} onImported={refresh} /> : null}
+      {exportServer && canAdmin ? <ServerExportDialog server={exportServer} onClose={() => setExportServer(null)} /> : null}
     </PageShell>
   )
 }

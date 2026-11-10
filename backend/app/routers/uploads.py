@@ -2,11 +2,14 @@ import asyncio
 from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
+from fastapi.responses import FileResponse
+from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field, model_validator
 
 from .. import uploads
 from ..deps import require_admin
-from ..models import User
+from ..models import User, Server
+from ..database import get_db
 
 router = APIRouter(prefix="/uploads", tags=["uploads"])
 
@@ -45,14 +48,72 @@ class CreateUpload(BaseModel):
     def required_target(self):
         if self.kind == "file" and self.server_id is None:
             raise ValueError("缺少目标实例")
-        if self.kind == "package" and self.options is None:
-            raise ValueError("缺少导入参数")
         return self
 
 
 @router.post("", status_code=201)
 def create(body: CreateUpload, user: User = Depends(require_admin)):
     return uploads.create(body.model_dump(), user.id)
+
+
+class ImportSource(BaseModel):
+    source: Literal['url', 'local']
+    path: str = Field(default='',max_length=4096)
+    url: str = Field(default='',max_length=8192)
+
+
+@router.get('/local-directories')
+def local_directories(path: str = '', _: User = Depends(require_admin)):
+    from ..server_transfer import browse
+    return browse(path)
+
+
+@router.post('/import',status_code=202)
+async def import_source(body: ImportSource, user: User = Depends(require_admin)):
+    from ..server_transfer import local_directory, url_name
+    if body.source=='local':
+        root=await asyncio.to_thread(local_directory,body.path.strip())
+        name='server.zip'
+        path=str(root)
+    else:
+        name=url_name(body.url.strip())
+        path=''
+    state=uploads.create(dict(kind='package',name=name,size=0,options=None,source=body.source,source_path=path,source_url=body.url.strip()),user.id)
+    return uploads.complete(state['id'],user.id)
+
+
+@router.post('/export/{server_id}',status_code=202)
+async def export_server(server_id: int,user: User = Depends(require_admin),db: Session = Depends(get_db)):
+    from ..mcdr import manager
+    server=db.get(Server,server_id)
+    if server is None:raise HTTPException(404,'服务器不存在')
+    if manager.get_status(server) not in ('stopped','error','new_setup') or manager.is_running(server_id) or manager.lifecycle_lock(server_id).locked():
+        raise HTTPException(409,'请先停止服务器再整包导出')
+    db.expunge(server)
+    return uploads.export(server,user.id)
+
+
+@router.post('/{uid}/download-link')
+def download_link(uid: str,user: User = Depends(require_admin)):
+    import secrets
+    import time
+    with uploads._guard:
+        state=uploads.owned(uid,user.id)
+        if state['kind']!='export' or state['status']!='done':raise HTTPException(409,'导出尚未完成')
+        ticket=secrets.token_urlsafe(32)
+        state.update(download_ticket=ticket,download_expires=time.time()+120)
+        uploads.save(state)
+    return {'url':f'/api/uploads/{uid}/download?ticket={ticket}'}
+
+
+@router.get('/{uid}/download')
+def download_export(uid: str,ticket: str):
+    import hmac
+    import time
+    state=uploads.read(uid)
+    if state.get('kind')!='export' or state['status']!='done' or time.time()>state.get('download_expires',0) or not hmac.compare_digest(ticket,state.get('download_ticket','')):
+        raise HTTPException(403,'下载链接已失效，请重新下载')
+    return FileResponse(uploads.folder(uid)/'export.zip',filename=state['name'],media_type='application/zip')
 
 
 @router.get("/{uid}")

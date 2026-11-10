@@ -18,12 +18,13 @@ dependencies = [
     "nbtlib>=2.0",
     # Litematica 投影解析(.litematic → 材料清单)
     "litemapy>=0.9",
-    # 被管理的 MCDR 实例以 `<python> -m mcdreforged` 启动;装进同一环境,
+    # 被管理的 MCDR 实例通过 mcdr_bootstrap.py 启动;装进同一环境,
     # 默认即用后端自身解释器(见 config.DEFAULT_PYTHON_EXECUTABLE),开箱即用。
     "mcdreforged>=2.13",
     "websockets",
     "pillow",
     "numpy",
+    "libarchive-c>=5.3",
 ]
 
 # 应用而非可发布的库:代码在 backend/app,由 run.py 运行时把 backend 加入 sys.path 后导入。

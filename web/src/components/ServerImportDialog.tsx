@@ -1,133 +1,129 @@
-import { EnumSelect } from '@/components/ui/enum-select'
 import { useEffect, useRef, useState } from 'react'
-import { FileArchive, Upload } from 'lucide-react'
-import { uploadFile, type ImportOptions, type UploadState } from '@/api/uploads'
-import { getSuggestedPort } from '@/api/servers'
+import { ArrowUp, FileArchive, Folder, FolderOpen, Loader2, Upload } from 'lucide-react'
+import { browseServerDirectories, getTransfer, importServerSource, uploadFile, waitTransfer, type LocalDirectories, type UploadState } from '@/api/uploads'
 import { UploadProgress } from '@/components/UploadProgress'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { cn } from '@/lib/utils'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { nsKey } from '@/config'
 
-function packageSize(bytes: number) {
-  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GiB`
-  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MiB`
-  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KiB`
-  return `${bytes} B`
-}
+const EXTENSIONS = ['.zip', '.rar', '.7z', '.tar.gz', '.tar']
+const TASK_KEY = nsKey('server-import-task')
 
 export function ServerImportDialog({ onClose, onImported }: { onClose: () => void; onImported: () => void }) {
+  const [mode, setMode] = useState<'package' | 'local'>('package')
+  const [source, setSource] = useState<'upload' | 'url'>('upload')
   const [file, setFile] = useState<File | null>(null)
-  const [options, setOptions] = useState<ImportOptions>({ name: '', server_type: 'vanilla', mc_version: '', port: 25565, min_memory: '1G', max_memory: '2G', launch_jar: '' })
+  const [url, setUrl] = useState('')
+  const [path, setPath] = useState('')
+  const [directory, setDirectory] = useState<LocalDirectories | null>(null)
+  const [browsing, setBrowsing] = useState(false)
   const [progress, setProgress] = useState<UploadState | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const controller = useRef<AbortController | null>(null)
+  const browserController = useRef<AbortController | null>(null)
   const fileInput = useRef<HTMLInputElement | null>(null)
-  const dragDepth = useRef(0)
-  const [dragging, setDragging] = useState(false)
-  const locked = busy || (progress !== null && progress.status !== 'error' && progress.status !== 'done')
+  const imported = useRef(onImported)
+  imported.current = onImported
   useEffect(() => {
-    const abort = new AbortController()
-    void getSuggestedPort().then(port => { if (!abort.signal.aborted) setOptions(current => ({ ...current, port })) }).catch(() => {})
-    return () => { abort.abort(); controller.current?.abort() }
-  }, [])
-
-  const selectFile = (next: File | undefined) => {
-    if (!next || locked) return
-    if (!next.name.toLowerCase().endsWith('.zip')) {
-      setError('请选择 ZIP 文件')
-      return
-    }
-    if (next.size > 20 * 1024 ** 3) {
-      setError('文件不能超过 20 GiB')
-      return
-    }
-    setFile(next)
-    setProgress(null)
-    setError('')
-    setOptions(current => ({
-      ...current,
-      name: !current.name || current.name === file?.name.replace(/\.zip$/i, '')
-        ? next.name.replace(/\.zip$/i, '') : current.name,
-    }))
-  }
-
-  const start = async () => {
-    if (!file || busy) return
+    const id = localStorage.getItem(TASK_KEY)
     const abort = new AbortController()
     controller.current = abort
-    setBusy(true)
-    setError('')
-    try {
-      const result = await uploadFile(file, { kind: 'package', options }, value => { if (!abort.signal.aborted) setProgress(value) }, abort.signal)
-      setProgress(result)
-      onImported()
-    } catch (err) {
-      if (!abort.signal.aborted) setError(err instanceof Error ? err.message : '导入失败')
-    } finally { if (controller.current === abort) setBusy(false) }
-  }
+    if(id) {
+      setBusy(true)
+      void getTransfer(id, abort.signal).then(state=>waitTransfer(state,setProgress,abort.signal)).then(()=>{
+        localStorage.removeItem(TASK_KEY)
+        imported.current()
+      }).catch(err=>{
+        if(!abort.signal.aborted) {
+          setError(err instanceof Error?err.message:'读取导入进度失败')
+          if(err?.status===404) localStorage.removeItem(TASK_KEY)
+        }
+      }).finally(()=>{if(!abort.signal.aborted)setBusy(false)})
+    }
+    return ()=>{controller.current?.abort();browserController.current?.abort()}
+  }, [])
 
-  return <Dialog open onOpenChange={open => { if (!open && !busy) onClose() }}>
-    <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-xl" onInteractOutside={event => { if (busy) event.preventDefault() }}>
-      <DialogHeader><DialogTitle>导入服务器包</DialogTitle><DialogDescription>ZIP · 服务端目录或 MCDR 实例包</DialogDescription></DialogHeader>
-      <div className="min-w-0 space-y-4">
-        <div className="min-w-0" onDragEnter={event => {
-          event.preventDefault()
-          if (!locked && event.dataTransfer.types.includes('Files')) {
-            dragDepth.current += 1
-            setDragging(true)
-          }
-        }} onDragOver={event => {
-          event.preventDefault()
-          event.dataTransfer.dropEffect = locked ? 'none' : 'copy'
-        }} onDragLeave={event => {
-          event.preventDefault()
-          dragDepth.current = Math.max(0, dragDepth.current - 1)
-          if (!dragDepth.current) setDragging(false)
-        }} onDrop={event => {
-          event.preventDefault()
-          dragDepth.current = 0
-          setDragging(false)
-          if (locked) return
-          if (event.dataTransfer.files.length > 1) { setError('每次请选择一个服务器包'); return }
-          selectFile(event.dataTransfer.files[0])
-        }}>
-          <input ref={fileInput} type="file" accept=".zip" aria-label="服务器包" className="hidden" disabled={locked} onChange={event => {
-            selectFile(event.target.files?.[0])
-            event.target.value = ''
-          }} />
-          <button type="button" disabled={locked} aria-label={file ? '更换服务器包' : '选择服务器包'}
-            onClick={() => fileInput.current?.click()}
-            className={cn(
-              'flex min-w-0 w-full items-center gap-3 rounded-xl border px-3 py-4 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50 sm:px-4',
-              file ? 'border-border bg-muted/20' : 'border-dashed border-border bg-muted/10',
-              dragging ? 'border-primary bg-primary/10' : 'enabled:hover:border-primary/50 enabled:hover:bg-primary/5',
-            )}>
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><FileArchive className="h-5 w-5" /></span>
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-medium" title={file?.name}>{dragging ? '松开以选择文件' : file?.name || '选择服务器包'}</span>
-              <span className="mt-1 block text-xs text-muted-foreground">{file ? packageSize(file.size) : 'ZIP · 支持拖拽'}</span>
-            </span>
-            <span className="shrink-0 rounded-md bg-accent px-2.5 py-1.5 text-xs font-medium text-accent-foreground">{file ? '更换' : '浏览'}</span>
-          </button>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="col-span-2 space-y-1.5"><Label htmlFor="import-name">实例名称</Label><Input id="import-name" value={options.name} disabled={locked} onChange={e => setOptions({ ...options, name: e.target.value })} /></div>
-          <div className="space-y-1.5"><Label htmlFor="import-type">类型</Label><EnumSelect id="import-type" className="h-10 w-full rounded-md border bg-background px-3 text-sm" value={options.server_type} disabled={locked} onValueChange={value => setOptions({ ...options, server_type: value as ImportOptions['server_type'] })}>{['vanilla', 'fabric', 'forge', 'velocity'].map(value => <option key={value} value={value}>{value}</option>)}</EnumSelect></div>
-          <div className="space-y-1.5"><Label htmlFor="import-port">端口</Label><Input id="import-port" type="number" min={1} max={65535} value={options.port} disabled={locked} onChange={e => setOptions({ ...options, port: Number(e.target.value) })} /></div>
-          <div className="space-y-1.5"><Label htmlFor="import-min">最小内存</Label><Input id="import-min" value={options.min_memory} disabled={locked} onChange={e => setOptions({ ...options, min_memory: e.target.value })} /></div>
-          <div className="space-y-1.5"><Label htmlFor="import-max">最大内存</Label><Input id="import-max" value={options.max_memory} disabled={locked} onChange={e => setOptions({ ...options, max_memory: e.target.value })} /></div>
-          <div className="space-y-1.5"><Label htmlFor="import-version">MC 版本</Label><Input id="import-version" placeholder="自动识别" value={options.mc_version} disabled={locked} onChange={e => setOptions({ ...options, mc_version: e.target.value })} /></div>
-          <div className="space-y-1.5"><Label htmlFor="import-jar">启动 JAR</Label><Input id="import-jar" placeholder="自动识别" value={options.launch_jar} disabled={locked} onChange={e => setOptions({ ...options, launch_jar: e.target.value })} /></div>
-        </div>
-        {progress && <UploadProgress state={progress} />}
-        {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+  const browse = async (value: string) => {
+    browserController.current?.abort()
+    const abort=new AbortController()
+    browserController.current=abort
+    setBrowsing(true);setError('')
+    try {
+      const result=await browseServerDirectories(value,abort.signal)
+      setDirectory(result);setPath(result.path)
+    } catch(err) {if(!abort.signal.aborted)setError(err instanceof Error?err.message:'读取目录失败')}
+    finally {if(!abort.signal.aborted)setBrowsing(false)}
+  }
+  const selectFile = (next?: File) => {
+    if(!next || busy)return
+    if(!EXTENSIONS.some(ext=>next.name.toLowerCase().endsWith(ext))) {setError('支持 ZIP、RAR、7Z、TAR.GZ、TAR 格式');return}
+    if(next.size>20*1024**3) {setError('文件不能超过 20 GiB');return}
+    setFile(next);setProgress(null);setError('')
+  }
+  const start = async () => {
+    if(busy)return
+    const abort=new AbortController()
+    controller.current=abort
+    setBusy(true);setError('')
+    try {
+      const saved=localStorage.getItem(TASK_KEY)
+      if(saved) {
+        const state=await getTransfer(saved,abort.signal)
+        if(state.status==='error') localStorage.removeItem(TASK_KEY)
+        else {
+          await waitTransfer(state,setProgress,abort.signal)
+          localStorage.removeItem(TASK_KEY)
+          imported.current()
+          return
+        }
+      }
+      if(mode==='package' && source==='upload') {
+        if(!file)return
+        await uploadFile(file,{kind:'package'},setProgress,abort.signal)
+      } else {
+        const state=await importServerSource(mode==='local'?'local':'url',mode==='local'?path:url)
+        localStorage.setItem(TASK_KEY,state.id)
+        await waitTransfer(state,setProgress,abort.signal)
+        localStorage.removeItem(TASK_KEY)
+      }
+      imported.current()
+    } catch(err) {if(!abort.signal.aborted)setError(err instanceof Error?err.message:'导入失败')}
+    finally {if(!abort.signal.aborted)setBusy(false)}
+  }
+  const valid=mode==='local'?!!path.trim():source==='upload'?!!file:!!url.trim()
+  return <Dialog open onOpenChange={open=>{if(!open&&!busy)onClose()}}>
+    <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-xl" onInteractOutside={e=>{if(busy)e.preventDefault()}}>
+      <DialogHeader><DialogTitle>导入服务器</DialogTitle><DialogDescription>支持 MCDR 实例与原版服务端。</DialogDescription></DialogHeader>
+      <div className="space-y-4 min-w-0">
+        <Tabs value={mode} onValueChange={value=>{setMode(value as typeof mode);setProgress(null);setError('');if(value==='local'&&!directory)void browse('')}}>
+          <TabsList className="grid w-full grid-cols-2"><TabsTrigger value="package" disabled={busy}>服务器包</TabsTrigger><TabsTrigger value="local" disabled={busy}>本地文件夹</TabsTrigger></TabsList>
+        </Tabs>
+        {mode==='package'? <div className="space-y-3">
+          <div className="flex gap-2"><Button variant={source==='upload'?'secondary':'ghost'} size="sm" disabled={busy} onClick={()=>setSource('upload')}>上传文件</Button><Button variant={source==='url'?'secondary':'ghost'} size="sm" disabled={busy} onClick={()=>setSource('url')}>下载直链</Button></div>
+          {source==='upload'? <div onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();selectFile(e.dataTransfer.files[0])}}>
+            <input ref={fileInput} type="file" accept={EXTENSIONS.join(',')} aria-label="服务器包" className="hidden" disabled={busy} onChange={e=>{selectFile(e.target.files?.[0]);e.target.value=''}} />
+            <button type="button" aria-label="选择服务器包" disabled={busy} onClick={()=>fileInput.current?.click()} className="flex w-full min-w-0 items-center gap-3 rounded-xl border border-dashed p-5 text-left hover:bg-muted/40 disabled:opacity-50">
+              <FileArchive className="h-6 w-6 shrink-0 text-primary"/><span className="min-w-0"><span className="block truncate font-medium">{file?.name??'选择或拖入服务器包'}</span><span className="mt-1 block text-xs text-muted-foreground">{file?`${(file.size/1024**2).toFixed(1)} MiB`:'ZIP / RAR / 7Z / TAR.GZ / TAR · 最大 20 GiB'}</span></span>
+            </button>
+          </div>:<div className="space-y-2"><Label htmlFor="import-url">下载直链</Label><Input id="import-url" value={url} disabled={busy} placeholder="https://example.com/server.zip" onChange={e=>setUrl(e.target.value)}/><p className="text-xs text-muted-foreground">由面板下载并导入，无需先下载到浏览器。</p></div>}
+        </div>:<div className="space-y-3">
+          <div className="flex gap-2"><Input id="import-path" aria-label="服务器文件夹" className="h-8 text-xs" value={path} disabled={busy} placeholder="输入绝对路径，或在下方浏览" onChange={e=>setPath(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();void browse(path)}}}/><Button variant="outline" size="sm" className="h-8 text-xs" disabled={busy||browsing} onClick={()=>void browse(path)}>浏览</Button></div>
+          <div className="rounded-lg border">
+            <div className="flex h-8 items-center gap-2 border-b px-2 text-xs text-muted-foreground"><FolderOpen className="h-3.5 w-3.5 shrink-0"/><span className="min-w-0 flex-1 truncate" title={directory?.path}>{directory?.path||'本机磁盘'}</span><Button variant="ghost" size="icon" className="h-6 w-6" disabled={busy||browsing||directory?.parent==null} aria-label="上一级目录" onClick={()=>void browse(directory?.parent??'')}><ArrowUp className="h-3.5 w-3.5"/></Button></div>
+            <div className="h-48 overflow-y-auto p-1">{browsing?<div className="flex h-full items-center justify-center"><Loader2 className="h-4 w-4 animate-spin"/></div>:directory?.directories.length?directory.directories.map(item=><button key={item.path} type="button" disabled={busy} className="flex h-7 w-full items-center gap-2 rounded px-2 text-left text-xs leading-4 hover:bg-muted disabled:opacity-50" onClick={()=>void browse(item.path)}><Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground"/><span className="truncate">{item.name}</span></button>):<p className="p-2 text-xs text-muted-foreground">没有子文件夹，可以导入当前目录。</p>}</div>
+          </div>
+        </div>}
+        {progress&&<UploadProgress state={progress}/>}
+        {progress?.status==='done'&&<p className="text-sm text-muted-foreground">导入完成，可在实例列表查看并启动服务器。</p>}
+        {error&&<p role="alert" className="text-sm text-destructive">{error}</p>}
         <div className="flex justify-end gap-2">
-          {busy && progress?.status === 'uploading' ? <Button variant="outline" onClick={() => controller.current?.abort()}>暂停</Button> : null}
-          {!busy && <Button variant="outline" onClick={onClose}>关闭</Button>}
-          {progress?.status !== 'done' && <Button disabled={busy || !file || !options.name.trim()} className="gap-2" onClick={() => void start()}><Upload className="h-4 w-4" />{busy ? '处理中' : progress && progress.status !== 'error' ? '继续' : '开始导入'}</Button>}
+          {busy&&progress?.status==='uploading'?<Button variant="outline" onClick={()=>{controller.current?.abort();setBusy(false)}}>暂停</Button>:null}
+          <Button variant="outline" disabled={busy} onClick={onClose}>关闭</Button>
+          {progress?.status!=='done'&&<Button disabled={busy||!valid} className="gap-2" onClick={()=>void start()}>{busy?<Loader2 className="h-4 w-4 animate-spin"/>:<Upload className="h-4 w-4"/>}{busy?'导入中…':'导入服务器'}</Button>}
         </div>
       </div>
     </DialogContent>

@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.14"
 
 [[package]]
@@ -295,6 +295,15 @@ wheels = [
 ]
 
 [[package]]
+name = "libarchive-c"
+version = "5.3"
+source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
+sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/26/23/e72434d5457c24113e0c22605cbf7dd806a2561294a335047f5aa8ddc1ca/libarchive_c-5.3.tar.gz", hash = "sha256:5ddb42f1a245c927e7686545da77159859d5d4c6d00163c59daff4df314dae82", size = 54349, upload-time = "2025-05-22T08:08:04.604Z" }
+wheels = [
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/88/3f/ff00c588ebd7eae46a9d6223389f5ae28a3af4b6d975c0f2a6d86b1342b9/libarchive_c-5.3-py3-none-any.whl", hash = "sha256:651550a6ec39266b78f81414140a1e04776c935e72dfc70f1d7c8e0a3672ffba", size = 17035, upload-time = "2025-05-22T08:08:03.045Z" },
+]
+
+[[package]]
 name = "litemapy"
 version = "0.11.0b0"
 source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
@@ -315,6 +324,7 @@ dependencies = [
     { name = "bcrypt" },
     { name = "fastapi" },
     { name = "httpx", extra = ["socks"] },
+    { name = "libarchive-c" },
     { name = "litemapy" },
     { name = "mcdreforged" },
     { name = "nbtlib" },
@@ -335,6 +345,7 @@ requires-dist = [
     { name = "bcrypt", specifier = ">=4.1" },
     { name = "fastapi", specifier = ">=0.110" },
     { name = "httpx", extras = ["socks"], specifier = ">=0.27" },
+    { name = "libarchive-c", specifier = ">=5.3" },
     { name = "litemapy", specifier = ">=0.9" },
     { name = "mcdreforged", specifier = ">=2.13" },
     { name = "nbtlib", specifier = ">=2.0" },

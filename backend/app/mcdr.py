@@ -2,7 +2,7 @@
 
 本面板把每个 MCDR 实例当作「外部被管理对象」:
   - 创建:生成实例目录结构 + config.yml/permission.yml/eula + 下载 vanilla 服务端 jar
-  - 启停:以子进程方式运行 ``python -m mcdreforged``,通过 stdin 发送 ``stop``
+  - 启停:通过 mcdr_bootstrap.py 启动 MCDR,通过 stdin 发送 ``stop``
   - 状态:由文件系统标记 + 进程存活情况派生
 
 独立托管服务持有进程句柄；面板通过本机 IPC 获取状态与控制台，重启面板不停止实例。
@@ -44,6 +44,7 @@ _FAILED_MARKER = ".install_failed"
 # 控制台:每个实例在内存里保留的最近日志行数,以及订阅队列的上限。
 _CONSOLE_BUFFER_LINES = 500
 _SUBSCRIBER_QUEUE_MAXSIZE = 1000
+_CONSOLE_LINE_BYTES = 16 * 1024
 
 
 def sanitize_dir_name(name: str) -> str:
@@ -313,10 +314,18 @@ class MCDRManager:
 
     def _refresh_runtime(self):
         if self._runtime:
-            self._apply_runtime_snapshot(self._runtime.request('snapshot'))
+            from .runtime_client import RuntimeUnavailable
+            if self._runtime_error:
+                raise RuntimeUnavailable(self._runtime_error)
+            try:
+                self._apply_runtime_snapshot(self._runtime.request('snapshot', timeout=.5))
+            except RuntimeUnavailable as exc:
+                self._runtime_error = str(exc)
+                raise
 
     async def _watch_runtime(self):
-        from .runtime_client import RuntimeUnavailable
+        from .runtime_client import HostLock, RuntimeUnavailable, RuntimeIncompatible
+        retry_at = 0
         while True:
             try:
                 update = await self._runtime.call('events', after=self._runtime_cursor)
@@ -334,6 +343,18 @@ class MCDRManager:
                         self._runtime_cursor = sequence
             except (RuntimeUnavailable, RuntimeError) as exc:
                 self._runtime_error = str(exc)
+                now = asyncio.get_running_loop().time()
+                # A clean shutdown removes the endpoint. Only recover crashed
+                # hosts, and only when their OS lock is free. The new host still
+                # validates orphan PID identities before accepting any work.
+                if not isinstance(exc, RuntimeIncompatible) and now >= retry_at and (self._runtime.root / 'endpoint.json').exists():
+                    retry_at = now + 30
+                    try:
+                        lock = HostLock(self._runtime.root)
+                        lock.close()
+                        await self._runtime.ensure_started(autostart=False)
+                    except RuntimeError as recovery_error:
+                        self._runtime_error = str(recovery_error)
             await asyncio.sleep(.25)
 
     async def _runtime_action(self, action, server_id, **payload):
@@ -629,11 +650,33 @@ class MCDRManager:
     async def _read_output(self, server_id: int, proc: asyncio.subprocess.Process) -> None:
         """持续读取子进程输出,逐行写入缓冲并广播给订阅者。"""
         assert proc.stdout is not None
-        while True:
-            raw = await proc.stdout.readline()
-            if not raw:
-                break
-            self._append_line(server_id, raw.decode("utf-8", errors="replace").rstrip("\r\n"))
+        pending = bytearray()
+        truncated = False
+
+        def emit():
+            line = pending.decode('utf-8', errors='replace').rstrip('\r')
+            if truncated:
+                line += ' … [mc-panel: 超长日志已截断]'
+            self._append_line(server_id, line)
+
+        try:
+            # readline() raises ValueError above StreamReader's line limit and
+            # leaves nobody draining the pipe. Keep draining even huge lines.
+            while chunk := await proc.stdout.read(16 * 1024):
+                parts = chunk.split(b'\n')
+                for index, part in enumerate(parts):
+                    available = _CONSOLE_LINE_BYTES - len(pending)
+                    pending.extend(part[:available])
+                    truncated |= len(part) > available
+                    if index < len(parts) - 1:
+                        emit()
+                        pending.clear()
+                        truncated = False
+            if pending or truncated:
+                emit()
+        except OSError as exc:
+            self._append_line(server_id, f'[mc-panel] 控制台读取失败: {exc}；请查看 logs/console-fallback.log')
+        # An output failure does not mean the game process exited.
         await proc.wait()
         rc = proc.returncode
         if self._procs.get(server_id) is proc:
@@ -641,8 +684,7 @@ class MCDRManager:
         self._append_line(server_id, f"[mc-panel] 进程已退出 (return code: {rc})")
 
     def _reconcile_config(self, inst: Path) -> None:
-        """启动前同步实例 config.yml 的编码字段,让早于编码修复创建的实例也受益。
-        只改 encoding/decoding,不动用户可能自定义的 start_command。"""
+        """同步托管所需的编码与普通管道控制台,保留自定义 start_command。"""
         config_path = inst / "config.yml"
         if not config_path.exists():
             return
@@ -650,10 +692,16 @@ class MCDRManager:
             data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
         except Exception:  # noqa: BLE001 - 配置损坏时不阻塞启动
             return
-        if data.get("encoding") == "utf8" and data.get("decoding") == ["utf8", "gbk"]:
+        if not isinstance(data, dict):
+            return
+        if (data.get("encoding") == "utf8" and data.get("decoding") == ["utf8", "gbk"]
+                and data.get("advanced_console") is False):
             return
         data["encoding"] = "utf8"
         data["decoding"] = ["utf8", "gbk"]
+        # prompt_toolkit's Windows console API is incompatible with hosted
+        # stdin/stdout pipes. Old/imported MCDR configs may have this enabled.
+        data["advanced_console"] = False
         config_path.write_text(
             yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8"
         )
@@ -889,6 +937,23 @@ class MCDRManager:
             raise
 
     # ---------- 启停 ----------
+    @staticmethod
+    def _check_unmanaged_processes(inst: Path) -> None:
+        """Old panel versions may have left live processes outside the host registry."""
+        import psutil
+
+        root = inst.resolve()
+        for process in psutil.process_iter(['name']):
+            if not any(name in (process.info['name'] or '').lower()
+                       for name in ('python', 'java', 'mcdreforged')):
+                continue
+            try:
+                cwd = Path(process.cwd()).resolve()
+            except (psutil.Error, OSError):
+                continue
+            if cwd.is_relative_to(root):
+                raise RuntimeError(f'实例目录中仍有未托管进程 PID {process.pid}，请先正常停止旧进程再启动')
+
     @_serialized
     async def start(
         self, server: Server, python_executable: str, java_path: str | None = None
@@ -905,6 +970,11 @@ class MCDRManager:
             self._refresh_runtime()
             return
         inst = self.instance_dir(server)
+        existing = self._procs.get(server.id)
+        if existing is not None and existing.returncode is None:
+            return  # 已在运行
+        await self._reap_previous(server)
+        self._check_unmanaged_processes(inst)
         if not self._core_installed(server):
             raise RuntimeError("核心尚未安装完成")
         if server.server_type == "velocity":
@@ -912,10 +982,6 @@ class MCDRManager:
         self._reconcile_config(inst)
         # 用所选 java + 当前内存/额外参数重建启动命令
         self.apply_start_command(server, java=java_path)
-        existing = self._procs.get(server.id)
-        if existing is not None and existing.returncode is None:
-            return  # 已在运行
-        await self._reap_previous(server)
         self._needs_restart.discard(server.id)
         self._queued.discard(server.id)
         try:
@@ -929,8 +995,8 @@ class MCDRManager:
         proc = await self._spawn(
             self._procs, server.id,
             python_executable,
-            "-m",
-            "mcdreforged",
+            "-u",
+            str(Path(__file__).with_name('mcdr_bootstrap.py').resolve()),
             cwd=str(inst),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,

@@ -208,6 +208,8 @@ class RuntimeHost:
             await asyncio.sleep(1)
 
     async def autostart(self):
+        if os.environ.get('MCPANEL_RUNTIME_AUTOSTART', '1') == '0':
+            return
         from .autostart import autostart
         from .database import init_db
         init_db()
