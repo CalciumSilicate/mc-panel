@@ -1,6 +1,7 @@
 """端口工具:空闲探测 + 自动分配。"""
 from __future__ import annotations
 
+import os
 import socket
 
 
@@ -10,6 +11,11 @@ def is_port_free(port: int, host: str = "0.0.0.0") -> bool:
         return False
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            # POSIX servers can reuse their port while closed connections remain
+            # in TIME_WAIT. A live listener still prevents this bind. Windows'
+            # SO_REUSEADDR can share a live listener, so keep its default here.
+            if os.name != "nt":
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             s.bind((host, port))
         return True
     except OSError:

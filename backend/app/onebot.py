@@ -331,6 +331,10 @@ async def _process_group_message(payload: dict) -> None:
                     targets.append((s.id, s.mc_version))
     finally:
         db.close()
+    # Commands and media processing must obey the same QQ group bindings as
+    # chat forwarding. A bound group may legitimately have no MC servers yet.
+    if not feed_groups:
+        return
     if not base_url:
         base_url = f"http://localhost:{API_PORT}"
 
