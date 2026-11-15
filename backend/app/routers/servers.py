@@ -751,6 +751,7 @@ async def reinstall_server(
 ) -> dict:
     """重新下载服务端核心(用于安装失败/中断后的重试)。"""
     server = _get_server_or_404(db, server_id)
+    ensure_not_protected(server)
     if (manager.get_status(server) in ("running", "starting", "installing", "queued")
             or manager.is_running(server.id) or manager.lifecycle_lock(server.id).locked()):
         raise HTTPException(status_code=400, detail="运行中或安装中,无法重新安装")
@@ -857,7 +858,7 @@ async def console_ws(websocket: WebSocket, server_id: int, token: str = Query(de
     await websocket.accept()
     queue = manager.subscribe(server_id)
 
-    async def authorized() -> bool:
+    async def authorized() -> User | None:
         with SessionLocal() as session:
             current = authenticate_token(token, session)
             code = 4401 if current is None else (
@@ -865,8 +866,8 @@ async def console_ws(websocket: WebSocket, server_id: int, token: str = Query(de
             )
         if code is not None:
             await websocket.close(code=code)
-            return False
-        return True
+            return None
+        return current
 
     async def watch_session() -> None:
         while await authorized():
@@ -884,8 +885,14 @@ async def console_ws(websocket: WebSocket, server_id: int, token: str = Query(de
             command = (data or {}).get("command")
             if not command:
                 continue
-            if not await authorized():
+            current = await authorized()
+            if current is None:
                 return
+            # Raw commands have console privileges (including OP, bans and stop).
+            # Helpers may read logs, but cannot bypass admin-only actions here.
+            if not role_at_least(current, "admin"):
+                await websocket.send_json({"type": "error", "message": "仅管理员可发送控制台命令"})
+                continue
             try:
                 await manager.send_command(server, command)
             except RuntimeError as exc:

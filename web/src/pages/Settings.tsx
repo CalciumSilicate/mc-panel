@@ -4,6 +4,7 @@ import { Plus, Save, Send, Trash2 } from 'lucide-react'
 import { ApiError } from '@/api/client'
 import { type SettingsPatch, getSettings, testOneBotPrivate, updateSettings } from '@/api/settings'
 import { InlineLoader } from '@/components/PageLoader'
+import { RuntimeControls } from '@/components/RuntimeControls'
 import { PageSurface } from '@/components/layout/PageScaffold'
 import { TabbedSettingsPage } from '@/components/layout/TabbedSettingsPage'
 import { Badge } from '@/components/ui/badge'
@@ -174,6 +175,7 @@ export default function Settings() {
         </Button>
       }
     >
+      {activeTab === 'mcdr' && <RuntimeControls />}
       {activeTab === 'mcdr' ? (
         <PageSurface title="MCDR 运行参数" description="新建/启动实例时使用的命令与默认值。">
           <div className="grid gap-5 sm:max-w-2xl">

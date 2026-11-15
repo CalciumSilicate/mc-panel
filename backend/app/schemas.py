@@ -304,12 +304,12 @@ class DashboardOverview(BaseModel):
     servers: list[ServerSummary]
     sampled_at: datetime
     cpu_threads: int
-    host_uptime_seconds: int
+    host_uptime_seconds: int | None = None
     available_memory_gb: float
     free_disk_gb: float
-    archive_count: int
-    archive_bytes: int
-    recent_archives: list[DashboardArchive]
+    archive_count: int | None = None
+    archive_bytes: int | None = None
+    recent_archives: list[DashboardArchive] | None = None
     history: list[HostResourcePoint]
     history_interval_seconds: int
 
@@ -325,6 +325,7 @@ class ArchiveOut(BaseModel):
     source: str
     source_server_id: int | None
     mc_version: str
+    notes: str = ""
     owner_user_id: int | None = None
     operator_name: str = ""
     created_at: datetime

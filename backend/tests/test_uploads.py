@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
-from app import server_files, server_import, uploads
+from app import fs_ops, server_files, server_import, uploads
 from app.database import Base
 from app.deps import get_current_user
 from app.models import Server
@@ -147,6 +147,66 @@ class UploadTests(unittest.TestCase):
             finally:
                 release.set()
             self.assertEqual(self.finish(uid)["status"], "done")
+
+    def test_progress_throttles_disk_writes_but_persists_stage_changes_and_completion(self):
+        uid = self.create(size=0)
+        state = uploads.read(uid)
+        state['status'] = 'processing'
+        uploads.save(state)
+        with patch.object(uploads, 'write_json_atomic', wraps=fs_ops.write_json_atomic) as write:
+            with patch.object(uploads.time, 'monotonic', return_value=100):
+                for count in range(100):
+                    uploads.progress(uid, '解压中', count, 1000)
+                self.assertEqual(write.call_count, 1)
+                uploads.progress(uid, '初始化实例')
+                self.assertEqual(write.call_count, 2)
+            with patch.object(uploads.time, 'monotonic', return_value=100.3):
+                uploads.progress(uid, '初始化实例', 500, 1000)
+                self.assertEqual(write.call_count, 3)
+                uploads.progress(uid, '初始化实例', 1000, 1000)
+                self.assertEqual(write.call_count, 4)
+        state = uploads.read(uid)
+        self.assertEqual((state['processed'], state['total']), (1000, 1000))
+        state['status'] = 'done'
+        uploads.save(state)
+        self.assertNotIn(uid, uploads._progress_writes)
+
+    def test_import_retries_busy_progress_file_and_destination_directory(self):
+        import errno
+        import os
+
+        data = self.make_package()
+        uid = self.create(name='pack.zip', size=len(data), kind='package', server_id=None)
+        self.assertEqual(self.chunk(uid, data).status_code, 200)
+        replace = os.replace
+        faults = {'progress': 0, 'directory': 0}
+
+        def sometimes_locked(source, target):
+            target = Path(target)
+            category = None
+            if target.name == 'state.json':
+                state = json.loads(Path(source).read_text(encoding='utf-8'))
+                if state['stage'] == '解压中':
+                    category = 'progress'
+            elif target.parent == self.servers:
+                category = 'directory'
+            if category and faults[category] < 2:
+                faults[category] += 1
+                error = PermissionError(errno.EACCES, 'temporarily held open')
+                error.winerror = 5
+                raise error
+            replace(source, target)
+
+        with patch.object(fs_ops.os, 'replace', side_effect=sometimes_locked):
+            result = self.finish(uid)
+        self.assertEqual(result['status'], 'done', result)
+        self.assertEqual(faults, {'progress': 2, 'directory': 2})
+        with self.sessions() as db:
+            self.assertEqual(len(db.scalars(select(Server)).all()), 2)
+            imported = db.get(Server, result['server_id'])
+            root = self.servers / imported.dir_name
+        self.assertEqual((root / 'server/world/level.dat').read_bytes(), b'world-data')
+        self.assertFalse(list(uploads.folder(uid).glob('*.tmp')))
 
     def make_package(self, extra=None):
         jar = io.BytesIO()

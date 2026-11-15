@@ -27,6 +27,18 @@ class SendBody(BaseModel):
     text: str
 
 
+class ChatRoom(BaseModel):
+    id: int
+    name: str
+
+
+@router.get("/rooms", response_model=list[ChatRoom])
+def list_rooms(_: User = Depends(require_auth), db: Session = Depends(get_db)) -> list[ChatRoom]:
+    """Expose room choices without the groups' bridge settings or QQ bindings."""
+    return [ChatRoom(id=group.id, name=group.name)
+            for group in db.scalars(select(ServerGroup).order_by(ServerGroup.id)).all()]
+
+
 @router.get("/img/{name}")
 def chat_image(name: str) -> FileResponse:
     """缓存的 QQ 图片(无鉴权,供 <img> 直接加载)。带目录穿越防护。"""

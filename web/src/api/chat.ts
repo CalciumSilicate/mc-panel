@@ -1,5 +1,9 @@
 import { apiRequest, getAuthToken } from '@/api/client'
 
+export function listChatRooms(): Promise<{ id: number; name: string }[]> {
+  return apiRequest('/chat/rooms')
+}
+
 export interface ChatSegment {
   type: 'text' | 'image' | 'at' | 'face' | 'reply'
   text?: string

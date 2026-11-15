@@ -266,11 +266,14 @@ export default function Servers() {
   const { data, loading, error, refresh } = useResource(() => listServers(), [])
   const { data: groups, refresh: refreshGroups } = useResource(() => canHelper ? listGroups() : Promise.resolve([]), [canHelper])
   const { showToast } = useGlobalToast()
+  const confirm = useConfirm()
   const [createOpen, setCreateOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [exportServer, setExportServer] = useState<ServerSummary | null>(null)
   const [manageGroupsOpen, setManageGroupsOpen] = useState(false)
   const [busyId, setBusyId] = useState<number | null>(null)
+  const [deletingId, setDeletingId] = useState<number | null>(null)
+  const deletePending = useRef(false)
   const [consoleServer, setConsoleServer] = useState<ServerSummary | null>(null)
   const [filesServer, setFilesServer] = useState<ServerSummary | null>(null)
   const [editServer, setEditServer] = useState<ServerSummary | null>(null)
@@ -346,6 +349,24 @@ export default function Servers() {
       showToast('error', err instanceof ApiError ? err.message : '操作失败')
     } finally {
       setBusyId(null)
+    }
+  }
+
+  const removeServer = async (server: ServerSummary) => {
+    if (!canAdmin || server.protected || server.status === 'installing' || busyId !== null || deletePending.current) return
+    deletePending.current = true
+    try {
+      if (!await confirm({
+        title: `删除服务器「${server.name}」?`,
+        description: '将删除该服务器的世界、配置、插件及其他所有文件，且不可恢复。',
+        confirmText: '删除服务器',
+        destructive: true,
+      })) return
+      setDeletingId(server.id)
+      await runAction(server.id, () => deleteServer(server.id), '服务器已删除')
+    } finally {
+      setDeletingId(null)
+      deletePending.current = false
     }
   }
 
@@ -546,11 +567,25 @@ export default function Servers() {
                                 variant="ghost"
                                 size="icon"
                                 className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                                disabled={busy}
-                                title="重试安装"
+                                disabled={busy || server.protected}
+                                title={server.protected ? '实例受保护，请先取消保护' : '重试安装'}
                                 onClick={() => runAction(server.id, () => reinstallServer(server.id), '已开始重新安装')}
                               >
                                 <Download className="h-4 w-4" />
+                              </Button>
+                            ) : null}
+                            {canAdmin ? (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                title={server.protected ? '实例受保护，请先取消保护' : installing ? '请先终止安装' : '删除服务器'}
+                                aria-label="删除服务器"
+                                disabled={busyId !== null || server.protected || installing}
+                                onClick={() => void removeServer(server)}
+                              >
+                                {deletingId === server.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                               </Button>
                             ) : null}
                           </div>
@@ -1569,7 +1604,7 @@ function EditServerDialog({
                 <label className="flex items-center justify-between gap-4">
                   <span>
                     <span className="block text-sm font-medium">启用 RCON</span>
-                    <span className="block text-xs text-muted-foreground">世界地图位置采集依赖 RCON。开启后自动分配端口+随机密码,改动需重启实例后生效。</span>
+                    <span className="block text-xs text-muted-foreground">开启后自动分配端口和随机密码，改动需重启实例后生效。</span>
                   </span>
                   <Switch checked={rconInfo?.enabled ?? false} disabled={rconBusy || submitting || locked || !rconInfo} onCheckedChange={doToggleRcon} />
                 </label>

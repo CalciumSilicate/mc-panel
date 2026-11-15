@@ -19,6 +19,39 @@ from ..schemas import JavaInstall, OneBotPrivateTestRequest, SettingsResponse, S
 router = APIRouter(prefix="/settings", tags=["settings"])
 
 
+@router.get('/runtime')
+async def runtime_status(_: object = Depends(require_admin)):
+    from ..runtime_client import RuntimeClient, RuntimeUnavailable
+    client = RuntimeClient()
+    try:
+        snapshot = await client.call('snapshot')
+        return {'status': 'stopping' if snapshot['stopping'] else 'running',
+                'processes': snapshot['processes'], 'queued': snapshot['queued']}
+    except RuntimeUnavailable as exc:
+        return {'status': 'unavailable' if (client.root / 'endpoint.json').exists() else 'stopped',
+                'message': str(exc), 'processes': [], 'queued': []}
+
+
+@router.post('/runtime/start')
+async def runtime_start(_: object = Depends(require_admin)):
+    from ..runtime_client import RuntimeClient
+    try:
+        await RuntimeClient().ensure_started(autostart=False)
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return await runtime_status(_)
+
+
+@router.post('/runtime/stop')
+async def runtime_stop(stop_instances: bool = False, _: object = Depends(require_admin)):
+    from ..runtime_client import RuntimeClient
+    try:
+        await RuntimeClient().call('shutdown', stop_instances=stop_instances)
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {'status': 'stopping'}
+
+
 def _to_response(row) -> SettingsResponse:
     installs = [JavaInstall(**i) for i in detect_installs(get_java_paths(row))]
     return SettingsResponse(

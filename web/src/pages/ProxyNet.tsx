@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Globe, Loader2, Network, Plug, Plus, RefreshCw, Server, Settings2, ArrowUpRight, X, Zap } from 'lucide-react'
+import { Globe, Loader2, Network, Plug, Plus, RefreshCw, Server, Settings2, ChevronDown, X, Zap } from 'lucide-react'
 
 import { ApiError } from '@/api/client'
 import {
@@ -20,6 +20,7 @@ import {
 import { InlineLoader } from '@/components/PageLoader'
 import { ServerLifecycleButton } from '@/components/ServerLifecycleButton'
 import { PageShell, PageSurface } from '@/components/layout/PageScaffold'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { useConfirm } from '@/components/ui/dialog-context'
@@ -36,6 +37,18 @@ const TYPE_LABEL: Record<string, string> = { vanilla: '原版', fabric: 'Fabric'
 function StatusBadge({ s }: { s: ServerSummary }) {
   const meta = SERVER_STATUS_META[s.status]
   return <Badge variant="outline" className={cn('shrink-0 whitespace-nowrap text-[11px]', meta.tone)}>{meta.label}</Badge>
+}
+
+function WiringDetail({ result, external = false }: { result?: WiringStatus; external?: boolean }) {
+  if (!result) return <span className="text-xs text-muted-foreground">未验证</span>
+  const ok = result.status === 'ok'
+  const manual = result.status === 'unsupported' || result.status === 'skipped'
+  return <details className="max-w-72 text-xs">
+    <summary className={cn('flex w-fit cursor-pointer list-none items-center gap-1 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden', ok ? 'text-muted-foreground' : manual ? 'text-muted-foreground' : 'text-destructive')}>
+      {ok ? '已验证' : manual ? '需手动配置' : '需检查'}<ChevronDown className="h-3 w-3" />
+    </summary>
+    <p className="mt-2 leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">{result.detail}{external && ' 远端配置与运行状态未验证。'}</p>
+  </details>
 }
 
 export default function ProxyNet() {
@@ -204,6 +217,7 @@ export default function ProxyNet() {
       title="代理网络"
       description="查看代理入口、子服路由与转发配置"
       width="7xl"
+      headerClassName="[&>div:first-child]:basis-auto"
       actions={
         <Button type="button" variant="outline" className="gap-2" onClick={refresh} disabled={refreshing}>
           <RefreshCw className={cn('h-4 w-4', refreshing && 'animate-spin')} />
@@ -222,18 +236,7 @@ export default function ProxyNet() {
           </p>
         </PageSurface>
       ) : (
-        <div className="grid min-w-0 gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
-          <nav aria-label="代理入口" className="min-w-0 space-y-2 lg:border-r lg:pr-5">
-            <div className="flex items-center justify-between px-3 pb-2 text-xs text-muted-foreground"><span>代理入口</span><span>{proxies.length}</span></div>
-            {proxies.map((entry) => {
-              const active = entry.id === (proxies.some(p => p.id === selectedProxy) ? selectedProxy : proxies[0]?.id)
-              return <button type="button" key={entry.id} aria-pressed={active} onClick={() => { setSelectedProxy(entry.id); setConfigOpen(false); setAddOpen(false) }} className={cn('group flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', active ? 'bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground')}>
-                <Network className={cn('h-4 w-4 shrink-0', active && 'text-primary')} />
-                <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{entry.name}</span><span className="mt-1 block font-mono text-[11px] text-muted-foreground">:{entry.port}</span></span>
-                <span aria-label={SERVER_STATUS_META[entry.status].label} title={SERVER_STATUS_META[entry.status].label} className={cn('h-1.5 w-1.5 shrink-0 rounded-full', entry.status === 'running' ? 'bg-success' : 'bg-muted-foreground/40')} />
-              </button>
-            })}
-          </nav>
+        <div className="min-w-0 space-y-5">
           {proxies.filter(p => p.id === (proxies.some(entry => entry.id === selectedProxy) ? selectedProxy : proxies[0]?.id)).map((proxy) => {
             const backends = (data ?? []).filter((s) => s.proxy_id === proxy.id)
             const proxyCustoms = customs[proxy.id] ?? []
@@ -241,21 +244,19 @@ export default function ProxyNet() {
             const draft = draftOf(proxy.id)
             return (
               <section key={proxy.id} className="min-w-0">
-                {/* 主服节点 */}
-                <div className="flex flex-col gap-4 border-b pb-6 sm:flex-row sm:items-center">
-                  <div className="flex min-w-0 flex-1 items-center gap-3">
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-border/70 bg-muted/30 text-muted-foreground">
-                      <Network className="h-5 w-5" />
-                    </div>
-                    <div className="min-w-0 flex-1 space-y-1">
-                      <h2 className="break-words text-2xl font-semibold tracking-tight [overflow-wrap:anywhere]">{proxy.name}</h2>
-                      <div className="text-xs leading-relaxed text-muted-foreground">Velocity · 端口 {proxy.port} · {backends.length + proxyCustoms.length} 个子服</div>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Select value={String(proxy.id)} onValueChange={value => { setSelectedProxy(Number(value)); setConfigOpen(false); setAddOpen(false) }}>
+                      <SelectTrigger aria-label="选择代理" className="w-56"><div className="flex min-w-0 items-center gap-2"><Network className="h-4 w-4 shrink-0 text-muted-foreground" /><SelectValue /></div></SelectTrigger>
+                      <SelectContent>{proxies.map(entry => <SelectItem key={entry.id} value={String(entry.id)}>{entry.name}</SelectItem>)}</SelectContent>
+                    </Select>
                     <StatusBadge s={proxy} />
+                    <span className="text-xs text-muted-foreground">Velocity · <span className="font-mono">:{proxy.port}</span></span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
                     <ServerLifecycleButton server={proxy} onChanged={refresh} />
-                    <Button variant="outline" size="sm" className="gap-2" onClick={() => setConfigOpen(true)}><Settings2 className="h-4 w-4" />网络配置</Button>
+                    <Button variant="outline" size="sm" onClick={() => setConfigOpen(true)}><Settings2 className="h-4 w-4" />网络配置</Button>
+                    <Button size="sm" onClick={() => setAddOpen(true)}><Plus className="h-4 w-4" />添加子服</Button>
                   </div>
                 </div>
 
@@ -309,80 +310,37 @@ export default function ProxyNet() {
                   </DialogContent>
                 </Dialog>
 
-                {/* 子服 */}
-                <div className="py-6">
-                  <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-                    <div className="space-y-1"><h3 className="text-sm font-semibold">子服 <span className="ml-1 font-normal text-muted-foreground">{backends.length + proxyCustoms.length}</span></h3>
-                    <p className="text-xs leading-relaxed text-muted-foreground">运行状态与接线配置分别展示；配置验证不代表实际连接正常。</p></div>
-                    <Button size="sm" className="gap-1.5" onClick={() => setAddOpen(true)}><Plus className="h-4 w-4" />添加子服</Button>
-                  </div>
-                  {backends.length === 0 && proxyCustoms.length === 0 ? (
-                    <p className="rounded-lg border border-dashed py-16 text-center text-sm text-muted-foreground">尚未连接子服，添加托管实例或外部服务器以建立路由。</p>
-                  ) : (
-                    <>
-                      {backends.map((b) => {
-                        const res = results.find((r) => !r.custom && r.id === b.id)
-                        return (
-                          <div key={b.id} className="space-y-2 border-b border-border/60 px-2 py-4 transition-colors hover:bg-muted/25">
-                            <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center">
-                              <div className="flex min-w-0 flex-1 items-start gap-2">
-                                <Server className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                                <div className="min-w-0 space-y-1">
-                                  <h4 className="break-words text-sm font-medium [overflow-wrap:anywhere]">{b.name}</h4>
-                                  <p className="text-xs text-muted-foreground">{TYPE_LABEL[b.server_type] ?? b.server_type} · 端口 <span className="font-mono">{b.port}</span></p>
-                                </div>
-                              </div>
-                              <div className="flex flex-wrap items-center gap-2">
-                                <StatusBadge s={b} />
-                                <ServerLifecycleButton server={b} onChanged={refresh} />
-                                <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" title="移出代理" aria-label={`将 ${b.name} 移出代理`} disabled={busy === b.id} onClick={() => run(b.id, () => updateServer(b.id, { proxy_id: null }), '已移出')}>
-                                  <X className="h-4 w-4" />
-                                </Button>
-                              </div>
-                            </div>
-                            {res ? (
-                              <details className="pl-6 text-xs">
-                                <summary className={cn('cursor-pointer rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary', res.status === 'ok' ? 'text-emerald-600 dark:text-emerald-400' : res.status === 'unsupported' ? 'text-amber-600 dark:text-amber-400' : 'text-destructive')}>
-                                  {res.status === 'ok' ? '磁盘配置已验证' : res.status === 'unsupported' ? '暂不支持自动接线' : '接线配置需注意'}
-                                  <ArrowUpRight className="ml-1 inline h-3 w-3 text-muted-foreground" />
-                                </summary>
-                                <p className="mt-2 leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">{res.detail}</p>
-                              </details>
-                            ) : <p className="pl-6 text-xs text-muted-foreground">接线配置未验证</p>}
-                          </div>
-                        )
-                      })}
-                      {proxyCustoms.map((c) => {
-                        const res = results.find((r) => r.custom && r.id === c.id)
-                        return (
-                          <div key={`custom-${c.id}`} className="space-y-2 border-b border-border/60 px-2 py-4 transition-colors hover:bg-muted/25">
-                            <div className="flex min-w-0 items-start gap-2">
-                              <Globe className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                              <div className="min-w-0 flex-1 space-y-1">
-                                <h4 className="break-words text-sm font-medium [overflow-wrap:anywhere]">{c.name}</h4>
-                                <p className="text-xs text-muted-foreground">外部子服 · <span className="break-all font-mono">{c.host}:{c.port}</span></p>
-                              </div>
-                              <Button type="button" variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive" title="移除自定义子服" aria-label={`移除外部子服 ${c.name}`} onClick={() => removeCustom(proxy.id, c.id)}>
-                                <X className="h-4 w-4" />
-                              </Button>
-                            </div>
-                            {res ? (
-                              <details className="pl-6 text-xs">
-                                <summary className={cn('cursor-pointer rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary', res.status === 'skipped' ? 'text-sky-600 dark:text-sky-400' : res.status === 'ok' ? 'text-emerald-600 dark:text-emerald-400' : 'text-destructive')}>
-                                  {res.status === 'skipped' ? '远端配置需手动确认' : res.status === 'ok' ? '代理路由已验证' : '代理路由需注意'}
-                                  <ArrowUpRight className="ml-1 inline h-3 w-3 text-muted-foreground" />
-                                </summary>
-                                <p className="mt-2 leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">{res.detail}</p>
-                                <p className="mt-1 text-muted-foreground">远端配置与运行状态未验证。</p>
-                              </details>
-                            ) : (
-                              <p className="pl-6 text-xs text-muted-foreground">路由未验证；远端配置与运行状态未验证</p>
-                            )}
-                          </div>
-                        )
-                      })}
-                    </>
-                  )}
+                <div>
+                  <PageSurface bodyClassName="p-0">
+                    <div className="ops-table-shell border-0">
+                      <Table>
+                        <TableHeader><TableRow><TableHead>名称</TableHead><TableHead>类型</TableHead><TableHead>地址 / 端口</TableHead><TableHead>状态</TableHead><TableHead>接线配置</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader>
+                        <TableBody>
+                          {backends.map(b => <TableRow key={b.id}>
+                            <TableCell className="font-medium">{b.name}</TableCell>
+                            <TableCell><Badge variant="outline" className="text-[11px]">{TYPE_LABEL[b.server_type] ?? b.server_type}</Badge></TableCell>
+                            <TableCell className="font-mono text-xs text-muted-foreground">{b.port}</TableCell>
+                            <TableCell><StatusBadge s={b} /></TableCell>
+                            <TableCell><WiringDetail result={results.find(r => !r.custom && r.id === b.id)} /></TableCell>
+                            <TableCell><div className="flex items-center justify-end gap-2">
+                              <ServerLifecycleButton server={b} onChanged={refresh} />
+                              <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" title="移出代理" aria-label={`将 ${b.name} 移出代理`} disabled={busy === b.id} onClick={() => run(b.id, () => updateServer(b.id, { proxy_id: null }), '已移出')}><X className="h-4 w-4" /></Button>
+                            </div></TableCell>
+                          </TableRow>)}
+                          {proxyCustoms.map(c => <TableRow key={`custom-${c.id}`}>
+                            <TableCell className="font-medium">{c.name}</TableCell>
+                            <TableCell><Badge variant="outline" className="text-[11px]">外部子服</Badge></TableCell>
+                            <TableCell className="max-w-64 break-all font-mono text-xs text-muted-foreground">{c.host}:{c.port}</TableCell>
+                            <TableCell className="text-xs text-muted-foreground">未监测</TableCell>
+                            <TableCell><WiringDetail external result={results.find(r => r.custom && r.id === c.id)} /></TableCell>
+                            <TableCell className="text-right"><Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" title="移除自定义子服" aria-label={`移除外部子服 ${c.name}`} onClick={() => removeCustom(proxy.id, c.id)}><X className="h-4 w-4" /></Button></TableCell>
+                          </TableRow>)}
+                          {!backends.length && !proxyCustoms.length && <TableRow><TableCell colSpan={6} className="py-14 text-center text-muted-foreground">暂无子服，点击「添加子服」连接服务器。</TableCell></TableRow>}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </PageSurface>
+                  <div className="mt-3 flex flex-wrap justify-between gap-2 text-xs text-muted-foreground"><span>{backends.length} 个托管子服 · {proxyCustoms.length} 个外部子服</span><span>配置验证不代表实际连接状态</span></div>
 
                   <Dialog open={addOpen} onOpenChange={setAddOpen}>
                     <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-xl">

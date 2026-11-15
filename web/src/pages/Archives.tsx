@@ -15,6 +15,7 @@ import {
 import { pollJob } from '@/api/jobs'
 import { type ServerSummary, listServers } from '@/api/servers'
 import { useAuth } from '@/components/auth-context'
+import { ArchiveVersionSelect } from '@/components/ArchiveVersionSelect'
 import { useConfirm } from '@/components/ui/dialog-context'
 import { InlineLoader } from '@/components/PageLoader'
 import { PageShell, PageSurface } from '@/components/layout/PageScaffold'
@@ -33,6 +34,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Textarea } from '@/components/ui/textarea'
 import { useGlobalToast } from '@/components/ui/use-global-toast'
 import { useResource } from '@/lib/use-resource'
 import { cn } from '@/lib/utils'
@@ -148,6 +150,7 @@ export default function Archives() {
                 <TableRow>
                   <TableHead>名称</TableHead>
                   <TableHead>版本</TableHead>
+                  <TableHead>备注</TableHead>
                   <TableHead>来源</TableHead>
                   <TableHead>操作人</TableHead>
                   <TableHead>大小</TableHead>
@@ -160,6 +163,9 @@ export default function Archives() {
                   <TableRow key={a.id}>
                     <TableCell className="font-medium">{a.name}</TableCell>
                     <TableCell className="text-muted-foreground">{a.mc_version || '—'}</TableCell>
+                    <TableCell className="min-w-32 max-w-64 text-sm text-muted-foreground">
+                      <span className="line-clamp-2 whitespace-pre-wrap break-words" title={a.notes || undefined}>{a.notes || '—'}</span>
+                    </TableCell>
                     <TableCell>
                       <Badge variant="outline" className="text-[11px]">
                         {a.source === 'uploaded' ? '上传' : serverName(a.source_server_id)}
@@ -175,17 +181,17 @@ export default function Archives() {
                             {busy === a.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
                           </Button>
                         ) : null}
-                        {canOperate ? (
+                        {canOperate && mine(a) ? (
                           <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" disabled={busy === a.id} title="恢复" onClick={() => setRestoreFor(a)}>
                             <RotateCcw className="h-4 w-4" />
                           </Button>
                         ) : null}
-                        {mine(a) ? (
+                        {canOperate && mine(a) ? (
                           <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" disabled={busy === a.id} title="编辑" onClick={() => setEditFor(a)}>
                             <Pencil className="h-4 w-4" />
                           </Button>
                         ) : null}
-                        {mine(a) ? (
+                        {canOperate && mine(a) ? (
                           <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" disabled={busy === a.id} title="删除" onClick={() => onDelete(a)}>
                             <Trash2 className="h-4 w-4" />
                           </Button>
@@ -254,20 +260,22 @@ function EditArchiveDialog({
   const { showToast } = useGlobalToast()
   const [name, setName] = useState('')
   const [mcVersion, setMcVersion] = useState('')
+  const [notes, setNotes] = useState('')
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     if (archive) {
       setName(archive.name)
       setMcVersion(archive.mc_version)
+      setNotes(archive.notes ?? '')
     }
   }, [archive])
 
   const save = async () => {
-    if (!archive) return
+    if (!archive || busy) return
     setBusy(true)
     try {
-      await updateArchive(archive.id, { name: name.trim(), mc_version: mcVersion.trim() })
+      await updateArchive(archive.id, { name: name.trim(), mc_version: mcVersion.trim(), notes: notes.trim() })
       showToast('success', '已保存')
       onSaved()
     } catch (err) {
@@ -278,19 +286,22 @@ function EditArchiveDialog({
   }
 
   return (
-    <Dialog open={archive !== null} onOpenChange={(o) => (!o ? onClose() : undefined)}>
+    <Dialog open={archive !== null} onOpenChange={(o) => (!o && !busy ? onClose() : undefined)}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>编辑存档</DialogTitle>
+          <DialogDescription>修改存档名称、版本和备注。</DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 py-2">
           <div className="space-y-2">
             <Label htmlFor="arc-name">名称</Label>
-            <Input id="arc-name" value={name} onChange={(e) => setName(e.target.value)} />
+            <Input id="arc-name" value={name} disabled={busy} onChange={(e) => setName(e.target.value)} />
           </div>
+          {archive ? <ArchiveVersionSelect key={archive.id} value={mcVersion} onChange={setMcVersion} disabled={busy} /> : null}
           <div className="space-y-2">
-            <Label htmlFor="arc-ver">MC 版本</Label>
-            <Input id="arc-ver" value={mcVersion} onChange={(e) => setMcVersion(e.target.value)} placeholder="如 1.20.1" />
+            <Label htmlFor="arc-notes">备注</Label>
+            <Textarea id="arc-notes" value={notes} onChange={event => setNotes(event.target.value)} disabled={busy}
+              maxLength={2000} rows={3} placeholder="可选，最多 2000 字" />
           </div>
         </div>
         <DialogFooter>

@@ -16,6 +16,7 @@ from pathlib import Path, PureWindowsPath
 import nbtlib
 
 from .config import ARCHIVES_DIR
+from .fs_ops import retry_windows_lock
 from .models import Server
 
 # 支持的上传/恢复压缩扩展名(顺序:长扩展在前,便于精确匹配 .tar.gz 这类双扩展)
@@ -205,18 +206,18 @@ def restore_archive(archive_path: Path, instance_dir: Path, progress=None) -> No
         try:
             if target.exists():
                 if backup.exists():
-                    backup.rename(previous_backup)
+                    retry_windows_lock(lambda: backup.rename(previous_backup))
                     saved_backup = True
-                target.rename(backup)
+                retry_windows_lock(lambda: target.rename(backup))
                 saved_world = True
-            staged.rename(target)
+            retry_windows_lock(lambda: staged.rename(target))
         except OSError:
             # Keep recovery directories if rollback itself fails; never delete
             # the last intact world just to clean up a failed restore.
             if saved_world:
-                backup.rename(target)
+                retry_windows_lock(lambda: backup.rename(target))
             if saved_backup:
-                previous_backup.rename(backup)
+                retry_windows_lock(lambda: previous_backup.rename(backup))
             raise
         if saved_backup:
             shutil.rmtree(previous_backup, ignore_errors=True)

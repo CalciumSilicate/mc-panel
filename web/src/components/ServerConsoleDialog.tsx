@@ -32,7 +32,7 @@ interface ServerConsoleDialogProps {
 }
 
 export function ServerConsoleDialog({ server, onClose, onChanged }: ServerConsoleDialogProps) {
-  const { roleAtLeast, canOperate } = useAuth()
+  const { roleAtLeast } = useAuth()
   const canAdmin = roleAtLeast('admin')
   const [lines, setLines] = useState<string[]>([])
   const [connected, setConnected] = useState(false)
@@ -44,7 +44,6 @@ export function ServerConsoleDialog({ server, onClose, onChanged }: ServerConsol
 
   const serverId = server?.id ?? null
   const status = server?.status
-  const canStop = server?.protected ? canAdmin : canOperate
 
   useEffect(() => {
     if (serverId === null) return
@@ -89,7 +88,7 @@ export function ServerConsoleDialog({ server, onClose, onChanged }: ServerConsol
     if (el && following.current) el.scrollTop = el.scrollHeight
   }, [lines])
 
-  const canSend = canStop && connected && status === 'running'
+  const canSend = canAdmin && connected && status === 'running'
 
   const sendCommand = () => {
     const command = input.trim()
@@ -181,7 +180,7 @@ export function ServerConsoleDialog({ server, onClose, onChanged }: ServerConsol
             onChange={(event) => setInput(event.target.value)}
             onKeyDown={onTextareaKeyDown}
             rows={1}
-            placeholder={canSend ? '输入命令,Enter 发送,Shift+Enter 换行' : '实例未运行,无法发送命令'}
+            placeholder={!canAdmin ? '仅管理员可发送控制台命令' : !connected ? '控制台未连接' : status !== 'running' ? '实例未运行,无法发送命令' : '输入命令,Enter 发送,Shift+Enter 换行'}
             disabled={!canSend}
             className="max-h-40 min-h-11 flex-1 resize-y py-2.5 font-mono leading-5"
           />

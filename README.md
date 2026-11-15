@@ -88,8 +88,8 @@ uv run python run.py
 在「服务器实例」列表点 ⌨ 图标打开控制台:
 
 - 实时日志:独立托管服务持续收集 stdout/stderr 并保留最近 500 行，网站重连后恢复历史，经 WebSocket `GET /api/servers/{id}/console` 推送;连接时先回放历史,再流式追加。
-- 发送命令:输入框回车 → `{"command": "..."}` 经同一 WebSocket 写入实例 stdin(实例运行中才可用)。
-- 鉴权:WebSocket 无法自定义请求头,token 经 query 参数 `?token=` 传递并校验。
+- 发送命令:仅管理员和所有者可用；输入框回车 → `{"command": "..."}` 经同一 WebSocket 写入实例 stdin(实例运行中才可用)。协管可查看日志，启停仍按实例保护规则校验。
+- 鉴权:WebSocket 无法自定义请求头,token 经 query 参数 `?token=` 传递并校验。连接要求协管及以上，每次发送命令重新检查当前账号权限，降级、注销或改密后旧连接不能继续越权操作。
 - 为保证 stdio 管道行为,实例 `config.yml` 关闭了 MCDR 的 `advanced_console`。
 
 ## 前置依赖

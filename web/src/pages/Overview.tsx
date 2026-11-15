@@ -44,6 +44,7 @@ export default function Overview({ onNavigate }: { onNavigate: (page: Destinatio
   const canHelper = useAuth().roleAtLeast("helper")
   const [minutes, setMinutes] = useState(5)
   const { data, loading, refreshing, error, refresh } = useResource(() => getDashboardOverview(minutes), [minutes], { keepPreviousData: true })
+  const recentArchives = data?.recent_archives ?? []
   const history: Sample[] = []
   for (const point of data?.history ?? []) {
     const time = point.time * 1000
@@ -95,7 +96,7 @@ export default function Overview({ onNavigate }: { onNavigate: (page: Destinatio
             {canHelper ? <>
             <PageStat label="待处理实例" value={attention.length} note={`异常 ${counts('error')} · 待安装 ${counts('new_setup')} · 待重启 ${restarts}`} />
             <PageStat label="自动启动" value={data.servers.filter((server) => server.auto_start).length} />
-            <PageStat label="世界存档" value={data.archive_count} note={formatBytes(data.archive_bytes)} />
+            <PageStat label="世界存档" value={data.archive_count ?? 0} note={formatBytes(data.archive_bytes ?? 0)} />
             </> : null}
           </PageStatStrip>}
 
@@ -138,7 +139,7 @@ export default function Overview({ onNavigate }: { onNavigate: (page: Destinatio
               {alerts.map((alert) => <p key={alert} className="text-sm text-amber-700 dark:text-amber-300">{alert}</p>)}
               {attention.length > 0 && <ul className="space-y-2 text-sm">{attention.slice(0, 3).map((server) => <li key={server.id} className="flex justify-between gap-3"><span className="truncate" title={server.name}>{server.name}</span><span className="shrink-0 text-muted-foreground">{server.needs_restart ? '待重启' : SERVER_STATUS_META[server.status].label}</span></li>)}{attention.length > 3 && <li className="text-xs text-muted-foreground">另有 {attention.length - 3} 个实例需要关注</li>}</ul>}
               <dl className="space-y-2 border-t pt-4 text-sm">
-                <div className="flex justify-between gap-3"><dt className="text-muted-foreground">宿主机运行时长</dt><dd className="text-right tabular-nums">{uptime(data.host_uptime_seconds)}</dd></div>
+                <div className="flex justify-between gap-3"><dt className="text-muted-foreground">宿主机运行时长</dt><dd className="text-right tabular-nums">{uptime(data.host_uptime_seconds ?? 0)}</dd></div>
                 <div className="flex justify-between gap-3"><dt className="text-muted-foreground">受保护实例</dt><dd>{data.servers.filter((server) => server.protected).length} 个</dd></div>
               </dl>
               {navigate('servers', '管理服务器实例')}
@@ -165,7 +166,7 @@ export default function Overview({ onNavigate }: { onNavigate: (page: Destinatio
 
           {canHelper && <div className="grid gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(260px,1fr)]">
             <PageSurface title="最近存档" actions={navigate('archives', '管理存档')}>
-              {data.recent_archives.length ? <ul className="divide-y">{data.recent_archives.map((archive) => <li key={archive.id} className="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
+              {recentArchives.length ? <ul className="divide-y">{recentArchives.map((archive) => <li key={archive.id} className="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
                 <Archive className="h-4 w-4 shrink-0 text-muted-foreground" /><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium" title={archive.name}>{archive.name}</p><p className="mt-1 text-xs text-muted-foreground">{archive.source === 'uploaded' ? '上传存档' : '实例存档'} · {asDate(archive.created_at).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })}</p></div><span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatBytes(archive.size)}</span>
               </li>)}</ul> : <div className="flex flex-col items-center gap-2 py-8 text-center text-sm text-muted-foreground"><Archive className="h-7 w-7 opacity-50" /><p>暂无世界存档</p></div>}
             </PageSurface>

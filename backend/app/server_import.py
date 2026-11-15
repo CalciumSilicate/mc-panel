@@ -18,6 +18,7 @@ from sqlalchemy import func, select
 from .config import SERVERS_ROOT
 from .database import SessionLocal
 from .deps import get_settings_row
+from .fs_ops import replace_path
 from .mcdr import _eula_text, _mcdr_config, _permission_text, _resolve_launch
 from .models import Server
 from .server_files import _parts
@@ -298,14 +299,14 @@ def prepare(root: Path, staging: Path, options: dict, java: str) -> str:
                 destination.mkdir(exist_ok=True)
                 for plugin in path.iterdir():
                     if (destination/plugin.name).exists():raise HTTPException(400,'多个插件目录包含同名文件，请整理后导入')
-                    os.replace(plugin,destination/plugin.name)
+                    replace_path(plugin,destination/plugin.name)
         relative = working.relative_to(root)
-        os.replace(root, staging)
+        replace_path(root, staging)
         if relative.as_posix() != 'server':
-            os.replace(staging/relative, staging/'server')
+            replace_path(staging/relative, staging/'server')
     else:
         staging.mkdir()
-        os.replace(root, staging / "server")
+        replace_path(root, staging / "server")
     sd = staging / "server"
     launch_jar = options.get("launch_jar", "").strip()
     if launch_jar:
@@ -473,7 +474,7 @@ def import_package(state: dict, session_dir: Path, report) -> int:
             final = SERVERS_ROOT / server.dir_name
             if final.exists() or final.resolve().parent != SERVERS_ROOT.resolve():
                 raise HTTPException(409, "实例目录冲突")
-            os.replace(work / "instance", final)
+            replace_path(work / "instance", final)
             published = True
             db.commit()
             committed = True

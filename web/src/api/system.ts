@@ -18,12 +18,12 @@ export interface DashboardOverview {
   servers: ServerSummary[]
   sampled_at: string
   cpu_threads: number
-  host_uptime_seconds: number
+  host_uptime_seconds?: number
   available_memory_gb: number
   free_disk_gb: number
-  archive_count: number
-  archive_bytes: number
-  recent_archives: { id: number; name: string; size: number; source: string; created_at: string }[]
+  archive_count?: number
+  archive_bytes?: number
+  recent_archives?: { id: number; name: string; size: number; source: string; created_at: string }[]
   history: { time: number; cpu: number; memory: number }[]
   history_interval_seconds: number
 }

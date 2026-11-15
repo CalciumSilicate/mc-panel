@@ -94,5 +94,11 @@ def overview(
     )
 
     if getattr(_, "role", None) == "user":
-        return JSONResponse(result.model_dump(mode="json", exclude={"servers": {"__all__": USER_HIDDEN_SERVER_FIELDS}}))
+        return JSONResponse(result.model_dump(mode="json", exclude={
+            "servers": {"__all__": USER_HIDDEN_SERVER_FIELDS | {"needs_restart"}},
+            "host_uptime_seconds": True,
+            "archive_count": True,
+            "archive_bytes": True,
+            "recent_archives": True,
+        }))
     return result

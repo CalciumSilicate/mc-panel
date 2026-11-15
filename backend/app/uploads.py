@@ -18,6 +18,7 @@ from fastapi import HTTPException
 from .config import DATA_DIR
 from .database import SessionLocal
 from .deps import ensure_not_protected
+from .fs_ops import replace_path, retry_windows_lock, write_json_atomic
 from .models import Server
 from . import server_files
 
@@ -27,6 +28,8 @@ MAX_BYTES = 20 * 1024 ** 3
 TTL = 24 * 3600
 _guard = threading.RLock()
 _tasks: dict[str, asyncio.Task] = {}
+_progress_writes: dict[str, tuple[str, float]] = {}
+_PROGRESS_INTERVAL = .25
 logger = logging.getLogger(__name__)
 
 
@@ -41,16 +44,18 @@ def read(uid: str) -> dict:
     # the old file during that replacement can fail with a sharing violation.
     with _guard:
         try:
-            return json.loads((folder(uid) / "state.json").read_text(encoding="utf-8"))
+            path = folder(uid) / 'state.json'
+            return retry_windows_lock(lambda: json.loads(path.read_text(encoding='utf-8')))
         except FileNotFoundError:
             raise HTTPException(404, "上传任务不存在") from None
 
 
 def save(state: dict) -> None:
-    state["updated_at"] = time.time()
-    temp = folder(state["id"]) / "state.tmp"
-    temp.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
-    os.replace(temp, temp.with_name("state.json"))
+    with _guard:
+        state["updated_at"] = time.time()
+        write_json_atomic(folder(state['id']) / 'state.json', state)
+        if state['status'] != 'processing':
+            _progress_writes.pop(state['id'], None)
 
 
 def public(state: dict) -> dict:
@@ -133,9 +138,26 @@ def append(uid: str, user_id: int, offset: int, data: bytes, digest: str) -> dic
 
 def progress(uid: str, stage: str, processed: int = 0, total: int = 0) -> None:
     with _guard:
+        now = time.monotonic()
+        previous = _progress_writes.get(uid)
+        # Archive readers can report thousands of chunks per second. Persist
+        # at most four updates/sec, but always publish a new stage or completion.
+        if (previous is not None and previous[0] == stage
+                and now - previous[1] < _PROGRESS_INTERVAL
+                and not (total > 0 and processed >= total)):
+            return
         state = read(uid)
         state.update(stage=stage, processed=processed, total=total)
         save(state)
+        _progress_writes[uid] = stage, now
+
+
+def failure_message(exc: Exception) -> str:
+    if isinstance(exc, HTTPException):
+        return str(exc.detail)
+    if isinstance(exc, PermissionError):
+        return '文件持续被占用或没有写入权限，请稍后重试；详细原因请查看面板日志'
+    return str(exc) or '处理失败'
 
 
 def process(uid: str) -> None:
@@ -162,8 +184,7 @@ def process(uid: str) -> None:
         logger.exception("Upload finalization failed: %s", uid)
         with _guard:
             state = read(uid)
-            message = str(exc.detail) if isinstance(exc, HTTPException) else str(exc)
-            state.update(status="error", stage="失败", message=message or "处理失败")
+            state.update(status="error", stage="失败", message=failure_message(exc))
             save(state)
 
 
@@ -192,9 +213,10 @@ async def _export(uid: str, server) -> None:
                 state.update(status='done',stage='可下载',size=(folder(uid)/'export.zip').stat().st_size)
                 save(state)
     except Exception as exc:
+        logger.exception('Server export failed: %s', uid)
         with _guard:
             state=read(uid)
-            state.update(status='error',stage='失败',message=str(exc.detail) if isinstance(exc,HTTPException) else str(exc))
+            state.update(status='error',stage='失败',message=failure_message(exc))
             save(state)
         (folder(uid)/'export.zip').unlink(missing_ok=True)
     finally:
@@ -233,7 +255,8 @@ def discard(uid: str, user_id: int) -> Path:
         if target.parent != ROOT.resolve():
             raise HTTPException(400, "上传目录不合法")
         trash = target.with_name(f"trash-{uid}")
-        os.replace(target, trash)
+        replace_path(target, trash)
+        _progress_writes.pop(uid, None)
         return trash
 
 

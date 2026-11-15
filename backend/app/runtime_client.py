@@ -93,7 +93,7 @@ class RuntimeClient:
                'PYTHONPATH': str(PROJECT_ROOT / 'backend'), 'PYTHONUTF8': '1',
                'MCPANEL_RUNTIME_AUTOSTART': '1' if autostart else '0'}
         options = {'start_new_session': True} if os.name != 'nt' else {
-            'creationflags': subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+            'creationflags': subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP,
         }
         with (self.root / 'host.log').open('ab') as log:
             child = subprocess.Popen([sys.executable, '-m', 'app.runtime_host'],

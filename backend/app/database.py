@@ -71,6 +71,7 @@ _COLUMN_MIGRATIONS = {
     "archives": {
         "owner_user_id": "INTEGER",
         "operator_name": "VARCHAR(120) NOT NULL DEFAULT ''",
+        "notes": "TEXT NOT NULL DEFAULT ''",
     },
     "users": {
         "session_id": "VARCHAR(64) NOT NULL DEFAULT ''",

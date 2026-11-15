@@ -2,28 +2,31 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .. import archive_manager as am
 from .. import jobs as jobstore
 from .. import superflat
+from .. import versions as versions_mod
 from ..database import SessionLocal, get_db
 from ..deps import ensure_not_protected, require_auth, require_helper, require_operate, role_at_least
 from ..mcdr import manager as mcdr_manager
 from ..models import Archive, Server, User
-from ..schemas import ArchiveOut
+from ..schemas import ArchiveOut, VersionList
 
 router = APIRouter(prefix="/archives", tags=["archives"])
 
 
 class ArchiveUpdate(BaseModel):
     name: str | None = None
-    mc_version: str | None = None
+    mc_version: str | None = Field(default=None, max_length=64)
+    notes: str | None = Field(default=None, max_length=2000)
 
 
 class ArchiveOperation(BaseModel):
@@ -88,6 +91,19 @@ def _ensure_own_or_helper(user: User, arc: Archive) -> None:
 @router.get("", response_model=list[ArchiveOut])
 def list_archives(_: str = Depends(require_auth), db: Session = Depends(get_db)) -> list[Archive]:
     return list(db.scalars(select(Archive).order_by(Archive.id.desc())).all())
+
+
+@router.get("/versions", response_model=VersionList)
+async def archive_versions(
+    channel: Literal['release', 'snapshot', 'experimental'] = 'release',
+    refresh: bool = False,
+    _: User = Depends(require_auth),
+) -> VersionList:
+    """Archive owners can read the same Minecraft catalog used by server creation."""
+    try:
+        return VersionList(versions=await versions_mod.list_mc_versions(channel, force=refresh))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"获取版本列表失败: {exc}") from exc
 
 
 async def _do_create(server_id: int, filename: str, job_id: str, owner_user_id: int, operator_name: str = "") -> None:
@@ -176,7 +192,7 @@ async def upload_archive(
 def update_archive(
     archive_id: int,
     body: ArchiveUpdate,
-    user: User = Depends(require_auth),
+    user: User = Depends(require_operate),
     db: Session = Depends(get_db),
 ) -> Archive:
     arc = _get_archive(db, archive_id)
@@ -185,6 +201,8 @@ def update_archive(
         arc.name = body.name.strip()
     if body.mc_version is not None:
         arc.mc_version = body.mc_version.strip()
+    if body.notes is not None:
+        arc.notes = body.notes.strip()
     db.commit()
     db.refresh(arc)
     return arc
@@ -206,7 +224,7 @@ def download_archive(
 
 @router.delete("/{archive_id}")
 def delete_archive(
-    archive_id: int, user: User = Depends(require_auth), db: Session = Depends(get_db)
+    archive_id: int, user: User = Depends(require_operate), db: Session = Depends(get_db)
 ) -> dict:
     arc = _get_archive(db, archive_id)
     _ensure_own_or_helper(user, arc)
@@ -243,7 +261,8 @@ async def restore_archive(
     archive_id: int, server_id: int, user: User = Depends(require_operate), db: Session = Depends(get_db),
     body: ArchiveOperation | None = None,
 ) -> dict:
-    _get_archive(db, archive_id)
+    arc = _get_archive(db, archive_id)
+    _ensure_own_or_helper(user, arc)
     server = _get_server(db, server_id)
     ensure_not_protected(server)
     await _prepare_server(server, bool(body and body.force), user, "请先停止目标实例再恢复存档")

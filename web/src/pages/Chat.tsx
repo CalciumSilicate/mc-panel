@@ -8,9 +8,9 @@ import {
   type ChatSegment,
   chatWsUrl,
   getChatMembers,
+  listChatRooms,
   sendChat,
 } from '@/api/chat'
-import { listGroups } from '@/api/groups'
 import { useAuth } from '@/components/auth-context'
 import { PageShell } from '@/components/layout/PageScaffold'
 import { Button } from '@/components/ui/button'
@@ -134,7 +134,7 @@ function RoleIcon({ role }: { role?: string }) {
 export default function Chat() {
   const { user, canOperate } = useAuth()
   const { showToast } = useGlobalToast()
-  const { data: groups } = useResource(() => listGroups(), [])
+  const { data: groups, loading, error, refresh } = useResource(() => listChatRooms(), [])
   const [groupId, setGroupId] = useState<number | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [members, setMembers] = useState<{ players: ChatMember[]; qq: ChatMember[] }>({ players: [], qq: [] })
@@ -250,7 +250,7 @@ export default function Chat() {
       actions={
         hasGroups ? (
           <Select value={groupId === null ? undefined : String(groupId)} onValueChange={(v) => setGroupId(Number(v))}>
-            <SelectTrigger className="w-48"><SelectValue placeholder="选择互联组" /></SelectTrigger>
+            <SelectTrigger className="w-48"><SelectValue placeholder="选择聊天室" /></SelectTrigger>
             <SelectContent>
               {(groups ?? []).map((g) => (<SelectItem key={g.id} value={String(g.id)}>{g.name}</SelectItem>))}
             </SelectContent>
@@ -258,9 +258,14 @@ export default function Chat() {
         ) : null
       }
     >
-      {!hasGroups ? (
+      {error ? (
+        <div role="alert" className="ops-surface p-4 text-sm text-destructive">
+          聊天室加载失败
+          <Button variant="ghost" size="sm" onClick={refresh}>重试</Button>
+        </div>
+      ) : loading || !hasGroups ? (
         <div className="ops-surface py-12 text-center text-sm text-muted-foreground">
-          还没有互联组,先在「服务器实例 → 互联组」里创建。
+          {loading ? '加载聊天室…' : '暂无聊天室'}
         </div>
       ) : (
         <div className="flex h-[68vh] gap-4">

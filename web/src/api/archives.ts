@@ -1,4 +1,5 @@
 import { ApiError, apiRequest, apiUpload, getAuthToken } from '@/api/client'
+import type { VersionChannel } from '@/api/servers'
 
 /** 世界存档管理。 */
 export interface Archive {
@@ -9,6 +10,7 @@ export interface Archive {
   source: string
   source_server_id: number | null
   mc_version: string
+  notes: string
   owner_user_id: number | null
   operator_name: string
   created_at: string
@@ -16,6 +18,12 @@ export interface Archive {
 
 export function listArchives(): Promise<Archive[]> {
   return apiRequest<Archive[]>('/archives')
+}
+
+export function listArchiveVersions(channel: VersionChannel, refresh = false, signal?: AbortSignal): Promise<string[]> {
+  const params = new URLSearchParams({ channel })
+  if (refresh) params.set('refresh', 'true')
+  return apiRequest<{ versions: string[] }>(`/archives/versions?${params}`, { signal }).then(result => result.versions)
 }
 
 export function createArchiveFromServer(serverId: number, force = false): Promise<{ job_id: string }> {
@@ -62,7 +70,7 @@ export function deleteArchive(id: number) {
   return apiRequest(`/archives/${id}`, { method: 'DELETE' })
 }
 
-export function updateArchive(id: number, patch: { name?: string; mc_version?: string }): Promise<Archive> {
+export function updateArchive(id: number, patch: { name?: string; mc_version?: string; notes?: string }): Promise<Archive> {
   return apiRequest<Archive>(`/archives/${id}`, { method: 'PATCH', body: JSON.stringify(patch) })
 }
 

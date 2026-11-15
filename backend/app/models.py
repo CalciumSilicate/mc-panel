@@ -147,6 +147,7 @@ class Archive(Base):
     source: Mapped[str] = mapped_column(String(16), default="server")  # server / uploaded
     source_server_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     mc_version: Mapped[str] = mapped_column(String(64), default="")
+    notes: Mapped[str] = mapped_column(Text, default="", server_default="", nullable=False)
     # 上传/创建者用户 id;user 角色只能管理自己的存档
     owner_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     operator_name: Mapped[str] = mapped_column(String(120), default="")

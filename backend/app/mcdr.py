@@ -1078,6 +1078,9 @@ class MCDRManager:
         self._procs.pop(server.id, None)
 
     async def _spawn(self, registry: dict, server_id: int, *args, **kwargs):
+        if os.name == 'nt':
+            import subprocess
+            kwargs['creationflags'] = kwargs.get('creationflags', 0) | subprocess.CREATE_NO_WINDOW
         # Cancellation during spawn must not lose the newly created handle.
         task = asyncio.create_task(asyncio.create_subprocess_exec(*args, **kwargs))
         try:

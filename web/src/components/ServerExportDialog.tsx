@@ -27,7 +27,7 @@ export function ServerExportDialog({server,onClose}:{server:{id:number;name:stri
     finally{setBusy(false)}
   }
   return <Dialog open onOpenChange={open=>{if(!open&&!busy)onClose()}}><DialogContent onInteractOutside={e=>{if(busy)e.preventDefault()}}>
-    <DialogHeader><DialogTitle>整包导出 · {server.name}</DialogTitle><DialogDescription>包含核心、世界、配置、插件和日志。请先停止实例；导出的 ZIP 可以再次导入。</DialogDescription></DialogHeader>
+    <DialogHeader><DialogTitle>整包导出 · {server.name}</DialogTitle><DialogDescription>包含核心、世界、配置、插件和日志。导出的 ZIP 可以再次导入。</DialogDescription></DialogHeader>
     {state&&<UploadProgress state={state}/>}
     {error&&<p role="alert" className="text-sm text-destructive">{error}</p>}
     <DialogFooter><Button variant="outline" disabled={busy} onClick={onClose}>关闭</Button>{state?.status==='done'?<Button disabled={busy} onClick={()=>void download()} className="gap-2"><Download className="h-4 w-4"/>下载 ZIP</Button>:<Button disabled={busy} onClick={()=>void start()} className="gap-2">{busy?<Loader2 className="h-4 w-4 animate-spin"/>:null}{busy?'打包中…':'开始导出'}</Button>}</DialogFooter>

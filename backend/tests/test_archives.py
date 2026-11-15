@@ -137,6 +137,26 @@ class ArchiveRestoreTests(unittest.TestCase):
         self.assert_world(self.backup, b"current valid world")
         self.assert_clean()
 
+    def test_brief_windows_locks_are_retried_during_world_switch(self):
+        rename = Path.rename
+        blocked = set()
+
+        def held_once(path, dest):
+            operation = (path, dest)
+            if operation not in blocked:
+                blocked.add(operation)
+                error = PermissionError('temporary Windows lock')
+                error.winerror = 5
+                raise error
+            return rename(path, dest)
+
+        with patch.object(Path, 'rename', held_once):
+            archives.restore_archive(self.archive, self.instance)
+        self.assertEqual(len(blocked), 3)
+        self.assert_world(self.target, b'restored world')
+        self.assert_world(self.backup, b'current valid world')
+        self.assert_clean()
+
     def test_archive_without_world_preserves_existing_worlds(self):
         with zipfile.ZipFile(self.archive, "w") as stream:
             stream.writestr("not-a-world.txt", b"invalid world")
