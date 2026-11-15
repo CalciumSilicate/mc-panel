@@ -119,6 +119,103 @@ class TransferTests(unittest.TestCase):
         self.assertEqual(cfg['working_directory'],'server')
         self.assertIn('-Dfile.encoding=UTF-8',cfg['start_command'])
 
+    def fabric_package(self, *, mcdr=True, properties='serverJar=server.jar\n', extra=None):
+        import yaml
+        launcher = io.BytesIO()
+        with zipfile.ZipFile(launcher, 'w') as jar:
+            jar.writestr('META-INF/MANIFEST.MF',
+                         'Main-Class: net.fabricmc.loader.impl.launch.server.FabricServerLauncher\n')
+        game = io.BytesIO()
+        with zipfile.ZipFile(game, 'w') as jar:
+            jar.writestr('version.json', json.dumps({'id': '26.2'}))
+        package = io.BytesIO()
+        prefix = 'pack/server/' if mcdr else 'pack/'
+        with zipfile.ZipFile(package, 'w') as archive:
+            archive.writestr(prefix+'fabric-server-launch.jar', launcher.getvalue())
+            archive.writestr(prefix+'server.jar', game.getvalue())
+            archive.writestr(prefix+'world/region/r.0.0.mca', b'existing world')
+            if properties is not None:
+                archive.writestr(prefix+'fabric-server-launcher.properties', properties)
+            if extra:
+                archive.writestr(prefix+extra[0], extra[1])
+            if mcdr:
+                archive.writestr('pack/config.yml', yaml.safe_dump({
+                    'working_directory': 'server', 'plugin_directories': ['plugins'],
+                    'start_command': 'java -Xms1G -Xmx2G -jar fabric-server-launch.jar nogui',
+                }))
+        return package.getvalue(), game.getvalue(), launcher.getvalue()
+
+    def assert_fabric_core(self, server, game, launcher):
+        import yaml
+        sd = self.servers/server.dir_name/'server'
+        properties = (sd/'fabric-server-launcher.properties').read_text()
+        core = next(line.split('=', 1)[1] for line in properties.splitlines()
+                    if line.startswith('serverJar='))
+        self.assertNotEqual(core, 'server.jar')
+        self.assertEqual((sd/core).read_bytes(), game)
+        self.assertEqual((sd/'server.jar').read_bytes(), launcher)
+        self.assertEqual((sd/'fabric-server-launch.jar').read_bytes(), launcher)
+        self.assertEqual((sd/'world/region/r.0.0.mca').read_bytes(), b'existing world')
+        cfg = yaml.safe_load((sd.parent/'config.yml').read_text())
+        self.assertEqual(cfg['start_command'][-3:], ['-jar', 'server.jar', 'nogui'])
+
+    def test_fabric_mcdr_import_preserves_game_core_through_export_roundtrip(self):
+        from app.server_export import export_server
+        data, game, launcher = self.fabric_package(properties='# keep comment\nserverJar=./server.jar\nother=keep\n')
+        server = self.automatic(data, 'fabric.zip')
+        self.assertEqual(server.server_type, 'fabric')
+        self.assert_fabric_core(server, game, launcher)
+        props = (self.servers/server.dir_name/'server/fabric-server-launcher.properties').read_text()
+        self.assertIn('# keep comment', props)
+        self.assertIn('other=keep', props)
+        package = self.root/'export.zip'
+        export_server(server, package, lambda *args: None)
+        restored = self.automatic(package.read_bytes(), 'restored.zip')
+        self.assert_fabric_core(restored, game, launcher)
+
+    def test_fabric_raw_import_without_properties_preserves_existing_filenames(self):
+        data, game, launcher = self.fabric_package(mcdr=False, properties=None,
+                                                  extra=('minecraft-server.jar', b'unrelated jar'))
+        server = self.automatic(data, 'raw-fabric.zip')
+        self.assert_fabric_core(server, game, launcher)
+        self.assertEqual((self.servers/server.dir_name/'server/minecraft-server.jar').read_bytes(), b'unrelated jar')
+
+    def test_fabric_custom_game_path_is_preserved(self):
+        data, game, launcher = self.fabric_package(properties='serverJar=custom/game.jar\n',
+                                                  extra=('custom/game.jar', b'custom core'))
+        server = self.automatic(data, 'custom-fabric.zip')
+        sd = self.servers/server.dir_name/'server'
+        self.assertEqual((sd/'fabric-server-launcher.properties').read_text(), 'serverJar=custom/game.jar\n')
+        self.assertEqual((sd/'custom/game.jar').read_bytes(), b'custom core')
+        self.assertEqual((sd/'minecraft-server.jar').read_bytes(), game)
+        self.assertEqual((sd/'server.jar').read_bytes(), launcher)
+
+    def test_fabric_local_folder_import_does_not_modify_source(self):
+        data, game, launcher = self.fabric_package()
+        source = self.root/'local-fabric'
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            archive.extractall(source)
+        response = self.client.post('/uploads/import', json={'source': 'local', 'path': str(source/'pack')})
+        self.assertEqual(response.status_code, 202, response.text)
+        state = self.wait(response.json()['id'])
+        self.assertEqual(state['status'], 'done', state)
+        with self.sessions() as db:
+            self.assert_fabric_core(db.get(Server, state['server_id']), game, launcher)
+        self.assertEqual((source/'pack/server/server.jar').read_bytes(), game)
+        self.assertEqual((source/'pack/server/fabric-server-launcher.properties').read_text(), 'serverJar=server.jar\n')
+
+    def test_fabric_single_launcher_jar_remains_unchanged(self):
+        _, game, launcher = self.fabric_package()
+        package = io.BytesIO()
+        with zipfile.ZipFile(package, 'w') as archive:
+            archive.writestr('pack/server.jar', launcher)
+            archive.writestr('pack/.fabric/server/26.2-server.jar', game)
+        server = self.automatic(package.getvalue(), 'single-fabric.zip')
+        sd = self.servers/server.dir_name/'server'
+        self.assertEqual((sd/'server.jar').read_bytes(), launcher)
+        self.assertEqual((sd/'.fabric/server/26.2-server.jar').read_bytes(), game)
+        self.assertFalse((sd/'fabric-server-launcher.properties').exists())
+
     def test_legacy_core_reads_world_version(self):
         import nbtlib
         source=self.root/'legacy'

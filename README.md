@@ -79,6 +79,8 @@ uv run python run.py
 
 两种模式均识别 MCDR 与原版服务端。名称、版本、启动 JAR、内存及端口从包内配置、启动脚本和核心信息读取，无需填写；缺省内存采用面板设置，重名及端口冲突自动分配。MCDR 配置和插件会保留并迁移到新实例，原版目录会自动配置 MCDR 托管。导入不会自动开服或执行包内脚本。无法唯一识别核心时会提示整理文件后重试，而不是猜测执行任意脚本。
 
+Fabric 包同时包含独立启动器和原版 `server.jar` 时，导入会将原版核心保留为 `minecraft-server.jar`（重名时自动编号），同步更新 `fabric-server-launcher.properties`，再将启动器复制到面板统一使用的 `server.jar`。本地源目录不变，已有核心不会被启动器覆盖丢失。
+
 操作列的「整包导出」将已停止实例的核心、世界、配置、插件、日志打包成 ZIP；后台完成后点击下载，可直接重新导入。包内包含实例原有的配置和凭据，请按完整备份保管。压缩包上传/下载上限 20 GiB，解压或本地目录上限 80 GiB / 100000 个文件；不接受加密包、多卷包、链接及特殊文件。
 
 解压使用 `libarchive-c` 与系统 libarchive。Windows 使用系统的 `archiveint.dll`；Linux 安装 `libarchive13`（Debian/Ubuntu）或 `libarchive`（其他发行版），macOS 可通过 Homebrew 安装 libarchive。自定义库路径可通过 `LIBARCHIVE` 环境变量指定。依赖更新后执行 `uv sync --frozen`。

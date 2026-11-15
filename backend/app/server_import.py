@@ -282,6 +282,36 @@ def detect(root: Path, fallback_name: str, defaults: dict) -> dict:
     return options
 
 
+def _normalize_launch_jar(sd: Path, candidate: Path, server_type: str) -> None:
+    """Keep Fabric's game jar when publishing its launcher as server.jar."""
+    target = sd / "server.jar"
+    if candidate == target or server_type == "forge":
+        return
+    if server_type == "fabric" and target.is_file():
+        # The classic Fabric launcher reads serverJar from this properties file
+        # (default: server.jar). Copying the launcher over that jar loses the
+        # Minecraft core and makes Fabric try to load itself as the game.
+        retained = sd / "minecraft-server.jar"
+        suffix = 2
+        while retained.exists():
+            retained = sd / f"minecraft-server-{suffix}.jar"
+            suffix += 1
+        replace_path(target, retained)
+        properties = sd / "fabric-server-launcher.properties"
+        text = properties.read_text(encoding="utf-8") if properties.exists() else ""
+        pattern = r"(?m)^[ \t]*serverJar(?:[ \t]*[=:][ \t]*|[ \t]+)(.*?)[ \t]*$"
+        matches = list(re.finditer(pattern, text))
+        game_jar = matches[-1][1].strip() if matches else "server.jar"
+        if game_jar.replace("\\", "/").removeprefix("./") == "server.jar":
+            setting = f"serverJar={retained.name}"
+            if matches:
+                text = re.sub(pattern, lambda _: setting, text)
+            else:
+                text = text.rstrip("\n") + "\n" + setting + "\n"
+            properties.write_text(text, encoding="utf-8")
+    shutil.copy2(candidate, target)
+
+
 def prepare(root: Path, staging: Path, options: dict, java: str) -> str:
     """Normalize raw server and MCDR layouts into a panel instance."""
     working, config = layout(root)
@@ -328,8 +358,8 @@ def prepare(root: Path, staging: Path, options: dict, java: str) -> str:
     has_forge_args = any(forge_args.glob("*/win_args.txt")) or any(forge_args.glob("*/unix_args.txt"))
     if candidate is None and not (options["server_type"] == "forge" and has_forge_args):
         raise HTTPException(400, "无法识别唯一服务端核心，请在目录内保留服务端 JAR 和对应启动脚本后重新导入")
-    if candidate and candidate.name != "server.jar" and options["server_type"] != "forge":
-        shutil.copy2(candidate, sd / "server.jar")
+    if candidate:
+        _normalize_launch_jar(sd, candidate, options["server_type"])
     if options["server_type"] == "forge":
         native_args = "win_args.txt" if os.name == "nt" else "unix_args.txt"
         if has_forge_args and not any(forge_args.glob(f"*/{native_args}")):
